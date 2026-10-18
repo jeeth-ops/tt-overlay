@@ -578,7 +578,7 @@ async function boot(user) {
     $('historyBtn').hidden = false;
     const resumeId = (() => { try { return sessionStorage.getItem('merge-op'); } catch (e) { return null; } })();
     if (resumeId) {
-      try { const r = await api('GET', '/ops/' + encodeURIComponent(resumeId)); if (r.op && r.op.status === 'running') { S.op = r.op; return showProgress(); } } catch (e) { /* fall through */ }
+      try { const r = await api('GET', '/ops/' + encodeURIComponent(resumeId)); if (r.op && inFlight(r.op)) { S.op = r.op; return showProgress(); } } catch (e) { /* fall through */ }
       try { sessionStorage.removeItem('merge-op'); } catch (e) {}
     }
     go('select');
@@ -1119,6 +1119,8 @@ const STAGE_TEXT = {
   analyzing: 'Analyzing', validating: 'Validating & backing up', transferring: 'Transferring', recalculating: 'Recalculating', verifying: 'Verifying', completed: 'Completed'
 };
 function statusText(s) { return ({ running: 'running', completed: 'completed', rolled_back: 'rolled back', failed: 'failed', interrupted: 'interrupted', pending_cleanup: 'clean-up pending', rejected: 'not started' })[s] || s; }
+// still moving on the server: running, or a failed merge being rolled back
+function inFlight(op) { return op.status === 'running' || !!(op.rollback && op.rollback.state === 'running'); }
 function stageDetail(op, k) {
   const c = op.counters || {};
   if (k === 'analyzing') return 'Both tournaments read; your choices checked again';
@@ -1171,6 +1173,8 @@ function paintProgress(op) {
   if (bar) { bar.firstElementChild.style.width = pct + '%'; bar.setAttribute('aria-valuenow', String(pct)); }
   const sl = $('stageList');
   if (sl) sl.innerHTML = stagesHtml(op);
+  const chip = $('progChip');
+  if (chip && op.status === 'failed' && inFlight(op)) { chip.className = 'chip amber'; chip.innerHTML = '<span class="pulse"></span>Failed — rolling back'; }
   if (op.stage !== lastStage) { lastStage = op.stage; const live = $('toasts'); if (live) live.setAttribute('aria-label', 'Stage: ' + (STAGE_TEXT[op.stage] || op.stage)); }
 }
 function poll() {
@@ -1182,7 +1186,7 @@ function poll() {
       S.op = r.op;
       misses = 0;
       paintProgress(S.op);
-      if (S.op.status === 'running') { S.pollTimer = setTimeout(tick, 650); return; }
+      if (inFlight(S.op)) { S.pollTimer = setTimeout(tick, 650); return; }
       try { sessionStorage.removeItem('merge-op'); } catch (e) {}
       setTimeout(() => showResult(S.op), 500);
     } catch (e) {
@@ -1248,7 +1252,7 @@ async function opAction(opId, act) {
     const r = await api('POST', `/ops/${encodeURIComponent(opId)}/${act}`, {});
     S.op = r.op;
     closeSheet();
-    if (S.op.status === 'running') { try { sessionStorage.setItem('merge-op', opId); } catch (e) {} return showProgress(); }
+    if (inFlight(S.op)) { try { sessionStorage.setItem('merge-op', opId); } catch (e) {} return showProgress(); }
     showResult(S.op);
     if (act === 'undo-players') toast('Player changes undone — scorecards and leaderboards are back as they were.', 'ok');
   } catch (e) {
@@ -1262,7 +1266,7 @@ async function openOp(opId) {
     const r = await api('GET', '/ops/' + encodeURIComponent(opId));
     S.op = r.op;
     closeSheet();
-    if (S.op.status === 'running') return showProgress();
+    if (inFlight(S.op)) return showProgress();
     showResult(S.op);
   } catch (e) { toast(e.message, 'err'); }
 }

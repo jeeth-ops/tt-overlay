@@ -108,7 +108,7 @@ async function seed(c) {
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
 (async () => {
-    const { port, c } = await bootServer(seed);
+    const { port, c, mem } = await bootServer(seed);
     const base = `http://127.0.0.1:${port}`;
     const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 
@@ -313,6 +313,93 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
         check(await page.evaluate(() => document.getElementById('sheet').hidden && document.activeElement.classList.contains('empty-slot')), 'Escape closes it, focus returns');
         const labelled = await page.$$eval('button', (bs) => bs.filter(b => b.offsetParent !== null).every(b => (b.getAttribute('aria-label') || b.textContent || '').trim().length > 0));
         check(labelled, 'every visible button has a name');
+        await ctx.close();
+    }
+
+    // ---------------------------------------------------------------
+    section('A player ID another account holds (the production failure)');
+    const pickBoth = async (page, keep, from) => {
+        await page.goto(base + '/merge-tournaments');
+        await page.waitForSelector('.empty-slot', { timeout: 8000 });
+        await page.click('.slot.keep .empty-slot');
+        await page.waitForSelector('#sheet.open .pick');
+        await page.click(`#sheet .pick:has(b:text-is("${keep}"))`);
+        await page.waitForSelector(`.slot.keep .tcard h3:text-is("${keep}")`);
+        await page.click('.slot.from .empty-slot');
+        await page.waitForSelector('#sheet.open .pick');
+        await page.click(`#sheet .pick:has(b:text-is("${from}"))`);
+        await page.waitForSelector(`.slot.from .tcard h3:text-is("${from}")`);
+        await page.waitForFunction(() => !document.getElementById('abNext').disabled);
+        await page.click('#abNext');
+        await page.waitForSelector('details.acc', { timeout: 8000 });
+    };
+    const confirmAndMerge = async (page, typed) => {
+        await page.waitForSelector('#typed', { timeout: 8000 });
+        await page.fill('#typed', typed);
+        await page.check('#understood');
+        await page.click('#abNext');
+        await page.waitForSelector('#progBar', { timeout: 8000 });
+    };
+    const team = (name, short, id, players) => ({ name, short, teamId: id, players, bowlers: players.slice(-2) });
+    const TX = () => team('Thunder XI', 'TX', 'team-tx', [P('Vikram Singh', 'p-vikram'), P('Nikhil Jain', 'p-nikhil'), P('Arjun Mehta', 'p-arjun'), P('Dev Sharma', 'p-dev'), P('Om Prakash', 'p-om')]);
+    const BH = () => team('Blue Hawks', 'BH', 'team-bh', [P('Harsh Vora', 'p-harsh'), P('Ishan Roy', 'p-ishan'), P('Manav Das', 'p-manav'), P('Yash Pal', 'p-yash'), P('Zaid Ali', 'p-zaid')]);
+    {
+        // the destination's Jeeth carries an ID whose profile is in the
+        // owner's account: keeping it stopped the merge half way (E11000)
+        const FOREIGN = '8b2afad7e813';
+        const RS = (j) => team('Royal Strikers', 'RS', 'team-rs', [j, P('Rahul Patil', 'p-rahul'), P('Amit Shah', 'p-amit'), P('Kunal Rao', 'p-kunal'), P('Sameer Khan', 'p-sameer')]);
+        await F.addProfile(c, USERS.owner.uid, FOREIGN, 'Jeeth');
+        await F.addLeague(c, { ownerUid: W, leagueKey: 'mca president cup 2026-27', name: 'MCA President Cup 2026-27', token: 'tokMcaD' });
+        await F.addLeague(c, { ownerUid: W, leagueKey: 'mca president cup 2026', name: 'MCA President Cup 2026', token: 'tokMcaS' });
+        await F.addMatch(c, { ownerUid: W, leagueKey: 'mca president cup 2026-27', matchId: 'm-mca-d1', roomId: 'room-mca-d1', teamA: RS(P('Jeeth', FOREIGN)), teamB: TX(), seed: 2, date: '2026-10-05', matchNo: 1 });
+        await F.addMatch(c, { ownerUid: W, leagueKey: 'mca president cup 2026-27', matchId: 'm-mca-d2', roomId: 'room-mca-d2', teamA: BH(), teamB: RS(P('Jeeth', FOREIGN)), seed: 6, date: '2026-10-06', matchNo: 2 });
+        await F.addMatch(c, { ownerUid: W, leagueKey: 'mca president cup 2026', matchId: 'm-mca-s1', roomId: 'room-mca-s1', teamA: RS(P('Jeeth', 'PLAYER_A')), teamB: TX(), seed: 8, date: '2026-10-07', matchNo: 1 });
+        const foreignBefore = JSON.stringify(await c.players.findOne({ playerId: FOREIGN }));
+        const { ctx, page, errors } = await newPage(browser, port, 'work');
+        await pickBoth(page, 'MCA President Cup 2026-27', 'MCA President Cup 2026');
+        await page.click('#abNext');
+        await page.waitForSelector('.pair');
+        const jeeth = page.locator('.pair:has(h4:text-is("Jeeth"))').first();
+        const destChoice = (await jeeth.locator('.choice:has(input[value="dest"])').textContent()) || '';
+        check(await jeeth.locator('input[value="dest"]').isDisabled() && destChoice.includes(FOREIGN) && /another account/.test(destChoice), `keeping ${FOREIGN} is disabled, the reason shown`);
+        check(await jeeth.locator('input[value="source"]').isChecked() && await jeeth.locator('.choice:has(input[value="source"]) .chip:text("Recommended")').count() === 1, 'this account\'s PLAYER_A is pre-selected as recommended');
+        await page.screenshot({ path: path.join(OUT, 'merge-other-account-id.png'), fullPage: true });
+        await page.click('#abNext');
+        await confirmAndMerge(page, 'MCA President Cup 2026');
+        await page.waitForSelector('.result h2', { timeout: 15000 });
+        check(await page.textContent('.result h2') === 'Merged', 'result: "Merged"');
+        const finalD = await c.records.find({ ownerUid: W, leagueKey: 'mca president cup 2026-27' }).toArray();
+        check(finalD.length === 3 && !JSON.stringify(finalD).includes(FOREIGN) && finalD.every(r => JSON.stringify(r).includes('PLAYER_A')), 'database: 3 matches, Jeeth is PLAYER_A in every one');
+        check(JSON.stringify(await c.players.findOne({ playerId: FOREIGN })) === foreignBefore, 'database: the other account\'s profile untouched');
+        check(!errors.length, 'no script errors (' + errors.join('; ') + ')');
+        await ctx.close();
+    }
+    {
+        // a merge failing half way: the page follows the automatic rollback
+        // to its end instead of stopping on "failed" with a stale Roll back
+        await F.addLeague(c, { ownerUid: W, leagueKey: 'autumn cup', name: 'Autumn Cup', token: 'tokAD' });
+        await F.addLeague(c, { ownerUid: W, leagueKey: 'autumn cup b', name: 'Autumn Cup B', token: 'tokAS' });
+        await F.addMatch(c, { ownerUid: W, leagueKey: 'autumn cup', matchId: 'm-au-d1', roomId: 'room-au-d1', teamA: TX(), teamB: BH(), seed: 1, date: '2026-10-08', matchNo: 1 });
+        await F.addMatch(c, { ownerUid: W, leagueKey: 'autumn cup b', matchId: 'm-au-s1', roomId: 'room-au-s1', teamA: BH(), teamB: TX(), seed: 3, date: '2026-10-09', matchNo: 1 });
+        const recsBefore = JSON.stringify(await c.records.find({ leagueKey: { $in: ['autumn cup', 'autumn cup b'] } }).toArray());
+        const { ctx, page, errors } = await newPage(browser, port, 'work');
+        await pickBoth(page, 'Autumn Cup', 'Autumn Cup B');
+        await page.click('#abNext');
+        // the move fails once; every write of the rollback after it is slow
+        let slow = false;
+        const replaceOne = c.records.replaceOne;
+        c.records.replaceOne = async function (...args) { if (slow) await new Promise(r => setTimeout(r, 1500)); return replaceOne.apply(this, args); };
+        mem.fail('matchRecords', 'replaceOne', { times: 1, when: () => { slow = true; return true; } });
+        await confirmAndMerge(page, 'Autumn Cup B');
+        const followed = await page.waitForFunction(() => /rolling back/i.test((document.getElementById('progChip') || {}).textContent || ''), null, { timeout: 8000 }).then(() => true, () => false);
+        check(followed, 'while it rolls back, the progress screen says so');
+        await page.waitForSelector('.result h2', { timeout: 15000 });
+        c.records.replaceOne = replaceOne;
+        mem.clearFaults();
+        const h2 = await page.textContent('.result h2');
+        check(h2 === 'Merge undone — nothing changed' && !(await page.$('[data-act="rollback"]')), 'result: "Merge undone — nothing changed", no stale Roll back button (' + h2 + ')');
+        check(JSON.stringify(await c.records.find({ leagueKey: { $in: ['autumn cup', 'autumn cup b'] } }).toArray()) === recsBefore, 'database: both tournaments exactly as before');
+        check(!errors.length, 'no script errors (' + errors.join('; ') + ')');
         await ctx.close();
     }
 

@@ -650,8 +650,10 @@ function buildUnits(entries, role, ctx, pk) {
     for (const u of byRoot.values()) {
         u.name = topOf(u.recNames.size ? u.recNames : u.allNames) || [...u.keys][0] || '';
         u.key = pk(u.name) || [...u.keys].sort()[0] || null;
-        // the id to keep for this player: one with a profile, most used
-        const ids = [...u.ids].sort((a, b) => ((ctx.profiles.has(b) ? 1 : 0) - (ctx.profiles.has(a) ? 1 : 0))
+        // the id to keep for this player: one with a profile, then one no
+        // other account holds (it can still get a profile here), most used
+        const rank = (id) => (ctx.profiles.has(id) ? 2 : ctx.otherAccountIds.has(id) ? 0 : 1);
+        const ids = [...u.ids].sort((a, b) => (rank(b) - rank(a))
             || ((u.idUse.get(b) || 0) - (u.idUse.get(a) || 0)) || (a < b ? -1 : a > b ? 1 : 0));
         u.primaryId = ids[0] || null;
         u.teamName = topOf(u.teamNames) || '';
@@ -849,21 +851,29 @@ function planMerge(ctx, decisions, pk, opts) {
     const unitLiveRecs = (u) => [...u.sidesByRec.keys()].filter(recId => ctx.liveRecIds.has(recId));
     const canonOf = (u, others) => {
         let id = u.primaryId || ctx.keyOwners.get(u.key) || null;
+        if (!id) for (const o of others) if (o.primaryId && !ctx.otherAccountIds.has(o.primaryId)) { id = o.primaryId; break; }
         if (!id) for (const o of others) if (o.primaryId) { id = o.primaryId; break; }
         return { id, name: u.name, key: u.key };
     };
     // can this side's id be the one that stays?
     const optionCheck = (keepU, otherU) => {
         const c = canonOf(keepU, [otherU]);
+        // a refused option still names its id (the page shows which one)
+        const no = (reason) => ({ ok: false, id: c.id, name: c.name, reason });
         if (keepU.role === 'source') {
             const liveRecs = unitLiveRecs(otherU);
-            if (liveRecs.length) return { ok: false, reason: `"${otherU.name}" is in a destination match that is live right now — keep the destination ID, or merge after the match.` };
+            if (liveRecs.length) return no(`"${otherU.name}" is in a destination match that is live right now — keep the destination ID, or merge after the match.`);
         }
         if (c.id && !ctx.profiles.has(c.id)) {
             const owner = ctx.keyOwners.get(c.key);
             const folding = new Set([...otherU.ids, ...keepU.ids]);
             if (owner && owner !== c.id && !folding.has(owner)) {
-                return { ok: false, reason: `ID ${c.id} has no player profile, and the name "${c.name}" already belongs to profile ${owner} — keeping ${c.id} would make new duplicates. Keep the other ID instead.` };
+                return no(`ID ${c.id} has no player profile, and the name "${c.name}" already belongs to profile ${owner} — keeping ${c.id} would make new duplicates. Keep the other ID instead.`);
+            }
+            // another account's id: this account's profiles cannot be linked
+            // into it, nor can it get one of its own here
+            if (ctx.otherAccountIds.has(c.id) && [...folding].some(id => ctx.profiles.has(id))) {
+                return no(`ID ${c.id} belongs to a player in another account, so "${c.name}" cannot keep it in this account. Keep the other ID instead.`);
             }
         }
         return { ok: true, id: c.id, name: c.name };
@@ -1049,7 +1059,9 @@ function planMerge(ctx, decisions, pk, opts) {
     const profiles = [];
     components.forEach(comp => {
         const into = comp.canon.id;
-        if (!into) return;
+        // another account's id gets no profile here (optionCheck keeps this
+        // account's own profiles out of such a player)
+        if (!into || ctx.otherAccountIds.has(into)) return;
         const fromIds = new Set();
         comp.units.forEach(u => u.ids.forEach(id => { if (id !== into && ctx.profiles.has(id) && !ctx.profiles.get(id).mergedInto) fromIds.add(id); }));
         const owner = ctx.keyOwners.get(comp.canon.key);
@@ -1379,6 +1391,13 @@ function createTournamentMerge(deps) {
             const owners = await db.players.find({ ownerUid, nameKeys: { $in: keyList } }).toArray();
             owners.forEach(p => { (p.nameKeys || []).forEach(k => keyOwners.set(k, p.playerId)); if (!profiles.has(p.playerId)) profiles.set(p.playerId, p); });
         }
+        // a player id is unique across ALL accounts (players index playerId_1),
+        // and a match can carry one another account registered (its panel
+        // resolved the players under that account) — such an id can never get
+        // a profile in this account
+        const unowned = [...new Set([...rawIds].flatMap(i => [i, canon(i)]))].filter(i => !profiles.has(i));
+        const otherAccountIds = new Set(unowned.length
+            ? (await db.players.find({ playerId: { $in: unowned }, ownerUid: { $ne: ownerUid } }).toArray()).map(p => p.playerId) : []);
         const sLive = liveMatchIdsOf(sDoc, sRecs);
         const dLive = liveMatchIdsOf(dDoc, dRecs);
         const liveRecIds = new Set(dRecs.filter(r => dLive.includes(r.matchId) || dLive.includes(r.roomId)).map(r => String(r._id)));
@@ -1388,7 +1407,7 @@ function createTournamentMerge(deps) {
             return (r.matchTitle ? r.matchTitle + ' · ' : (r.matchNo ? 'Match ' + r.matchNo + ' · ' : '')) + (t || r.matchId);
         };
         return {
-            ownerUid, sDoc, dDoc, sRecs, dRecs, att, ownKeys, shared, clash, unscopedBalls, profiles, canon, keyOwners,
+            ownerUid, sDoc, dDoc, sRecs, dRecs, att, ownKeys, shared, clash, unscopedBalls, profiles, canon, keyOwners, otherAccountIds,
             sLive, dLive, liveRecIds, sPrivate, dPrivate, title,
             footprint: deps.footprintTotalBalls || (() => 0)
         };
@@ -1756,9 +1775,21 @@ function createTournamentMerge(deps) {
         return clipBelongs({ matchId: entry.matchId, ownKeys: entry.ownKeys || [], clash: !!entry.clash }, c);
     }
 
+    // A kept id must not be another account's (player ids are unique across
+    // accounts, so its profile could never be written here). Checked before
+    // anything is written — a plan made before such an id turned up stops
+    // cleanly instead of half way through.
+    async function checkKeptIds(op) {
+        for (const p of op.plan.profiles || []) {
+            const held = await db.players.findOne({ playerId: p.intoId, ownerUid: { $ne: op.ownerUid } });
+            if (held) throw new Error(`Player ID ${p.intoId} ("${p.intoName}") belongs to a player in another account, so it cannot be kept here — analyze the merge again and keep the other ID.`);
+        }
+    }
+
     async function stageValidate(op) {
         const plan = op.plan;
         const opId = op._id;
+        await checkKeptIds(op);
         let n = 0;
         const sDoc = await db.leagues.findOne({ ownerUid: op.ownerUid, leagueKey: op.source.leagueKey });
         const dDoc = await db.leagues.findOne({ ownerUid: op.ownerUid, leagueKey: op.dest.leagueKey });
@@ -1814,6 +1845,7 @@ function createTournamentMerge(deps) {
         const plan = op.plan;
         const opId = op._id;
         const kd = op.dest.leagueKey;
+        await checkKeptIds(op); // again: a resumed merge starts here
         let moved = 0, destRw = 0, balls = 0, clips = 0;
         const all = [...plan.entries, ...plan.destEntries];
         for (const e of all) {
@@ -2161,7 +2193,10 @@ function createTournamentMerge(deps) {
                 await patchOp(opId, { status: 'interrupted', error: { message: 'Stopped during ' + stage, stage, at: now() } });
                 return;
             }
-            await patchOp(opId, { status: 'failed', error: { message: (err && err.message) || 'Merge failed', stage, at: now() }, [`stages.${stage || 'validating'}`]: { state: 'failed', at: now() } });
+            // the automatic rollback below is marked running, so the page
+            // keeps following it instead of offering a rollback of its own
+            await patchOp(opId, Object.assign({ status: 'failed', error: { message: (err && err.message) || 'Merge failed', stage, at: now() }, [`stages.${stage || 'validating'}`]: { state: 'failed', at: now() } },
+                stage === 'validating' ? {} : { rollback: { state: 'running', at: now() } }));
             // nothing was written before transferring began → just unlock
             if (stage === 'validating') {
                 await releaseLocks(opId);
@@ -2458,6 +2493,12 @@ function createTournamentMerge(deps) {
         for (const op of stuck) {
             if (running.has(op._id)) continue;
             await patchOp(op._id, { status: 'interrupted', error: { message: 'The server restarted during the merge — resume it or roll it back.', stage: op.stage, at: now() } });
+        }
+        // cut off while rolling a failed merge back: it can be rolled back again
+        const undoing = await db.merges.find({ status: 'failed', 'rollback.state': 'running' }).toArray();
+        for (const op of undoing) {
+            if (running.has(op._id)) continue;
+            await patchOp(op._id, { rollback: { state: 'failed', at: now(), error: 'The server restarted during the rollback — roll it back again.' } });
         }
         await loadState();
         return stuck.length;

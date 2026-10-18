@@ -606,6 +606,94 @@ const jeethRuns = (recs, key) => recs.reduce((n, r) => n + ['A', 'B'].reduce((m,
     }
 
     // ---------------------------------------------------------------
+    section('A player ID another account holds (ids are unique across accounts)');
+    {
+        // the production failure: the destination's Jeeth carries an ID whose
+        // profile is in another account — keeping it tried to create a second
+        // profile under that ID (E11000 on players playerId_1, mid-transfer)
+        const FOREIGN = '8b2afad7e813';
+        const w = await world({ destJeeth: P('Jeeth', FOREIGN), noProfileA: true, sourceJeethProfile: true });
+        await F.addProfile(w.c, USERS.owner.uid, FOREIGN, 'Jeeth');
+        const foreignBefore = JSON.stringify(await w.c.players.findOne({ playerId: FOREIGN }));
+        const E = engine(w);
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        const jc = a.players.candidates.find(x => x.dest.name === 'Jeeth');
+        check(jc && !jc.options.dest.ok && jc.options.dest.id === FOREIGN && /another account/.test(jc.options.dest.reason), 'keeping the other account\'s ID is refused, and the option still names it');
+        check(jc && jc.options.source.ok && jc.recommended === 'source', 'this account\'s ID (PLAYER_B) is recommended instead');
+        const before = await snapshot(w.c);
+        const d = defaults(a);
+        d.players[jc.pairId] = { same: true, keep: 'dest' };
+        const r = await expectReject(E.execute(viewer, { source: sRef, dest: dRef, decisions: d, fingerprint: a.fingerprint, idempotencyKey: 'x1', confirm: { deleteSource: true, typedName: 'Summer Cup 2026 B' } }), 400, 'ID_NOT_RETAINABLE');
+        check(r.ok && sameSnap(await snapshot(w.c), before), 'choosing it anyway is refused before anything changes');
+        const { op } = await merge(E, viewer);
+        check(op.status === 'completed' && op.verification.passed, 'merge completed with PLAYER_B kept (' + op.status + (op.error ? ': ' + op.error.message : '') + ')');
+        check((await refsTo(w.c, [FOREIGN], ['m-d1', 'm-d2', 'm-s1', 'room-d1', 'room-d2', 'room-s1'])).length === 0, 'every merged match uses PLAYER_B (records, balls, clips)');
+        check(JSON.stringify(await w.c.players.findOne({ playerId: FOREIGN })) === foreignBefore, 'the other account\'s profile is untouched');
+        const pb = await w.c.players.findOne({ playerId: 'PLAYER_B' });
+        check(pb && pb.ownerUid === W && pb.nameKeys.includes('jeeth') && !pb.mergedInto, 'PLAYER_B keeps its profile and the name "jeeth"');
+    }
+    {
+        // both IDs belong to other accounts: nothing of this account is linked,
+        // so either may stay, and no profile is written anywhere
+        const w = await world({ destJeeth: P('Jeeth', 'F_DEST'), sourceJeeth: P('Jeeth', 'F_SRC'), noProfileA: true });
+        await F.addProfile(w.c, USERS.owner.uid, 'F_DEST', 'Jeeth');
+        await F.addProfile(w.c, USERS.vinit.uid, 'F_SRC', 'Jeeth');
+        const profilesBefore = JSON.stringify(await w.c.players.find({}).toArray());
+        const E = engine(w);
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        const jc = a.players.candidates.find(x => x.dest.name === 'Jeeth');
+        check(jc && jc.options.dest.ok && jc.options.source.ok && jc.recommended === 'dest', 'either ID may stay');
+        const { op } = await merge(E, viewer);
+        check(op.status === 'completed' && op.verification.passed, 'merge completed (' + op.status + (op.error ? ': ' + op.error.message : '') + ')');
+        check((await refsTo(w.c, ['F_SRC'], ['m-s1', 'room-s1'])).length === 0, 'the moved match uses F_DEST');
+        check(JSON.stringify(await w.c.players.find({}).toArray()) === profilesBefore, 'no profile created or changed in any account');
+    }
+    {
+        // a plan made before the ID turned up in another account (an older
+        // merge, or one saved in between) stops before anything is written
+        const w = await world({ noProfileA: true });
+        const before = await snapshot(w.c);
+        const E = engine(w, { autoRun: false });
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        const res = await E.execute(viewer, { source: sRef, dest: dRef, decisions: defaults(a), fingerprint: a.fingerprint, idempotencyKey: 'x3', confirm: { deleteSource: true, typedName: 'Summer Cup 2026 B' } });
+        await F.addProfile(w.c, USERS.owner.uid, 'PLAYER_A', 'Jeeth');
+        await E._runOp(res.opId);
+        const op = await E.getOp(viewer, res.opId);
+        check(op.status === 'rolled_back' && op.error.stage === 'validating' && /PLAYER_A.*another account/.test(op.error.message), 'stopped while validating, with the reason (' + op.status + (op.error ? ': ' + op.error.message : '') + ')');
+        await w.c.players.deleteOne({ playerId: 'PLAYER_A' });
+        check(sameSnap(await snapshot(w.c), before) && (await w.c.locks.countDocuments({})) === 0, 'nothing changed, both unlocked');
+    }
+    {
+        // … a merge resumed at transferring checks again, and while the
+        // automatic rollback runs the merge says so (the page follows it)
+        const w = await world({ noProfileA: true });
+        const before = await snapshot(w.c);
+        const E = engine(w, { autoRun: false });
+        const a = await E.analyze(viewer, { source: sRef, dest: dRef });
+        const res = await E.execute(viewer, { source: sRef, dest: dRef, decisions: defaults(a), fingerprint: a.fingerprint, idempotencyKey: 'x4', confirm: { deleteSource: true, typedName: 'Summer Cup 2026 B' } });
+        await E._runOp(res.opId, { stopAfter: 'validating' });
+        await w.c.merges.updateOne({ _id: res.opId }, { $set: { stage: 'transferring' } }); // cut off as transferring began
+        await F.addProfile(w.c, USERS.owner.uid, 'PLAYER_A', 'Jeeth');
+        const seen = new Set();
+        const replaceOne = w.c.records.replaceOne.bind(w.c.records);
+        w.c.records.replaceOne = async (...args) => { const m = await w.c.merges.findOne({ _id: res.opId }); seen.add(m.status + '/' + (m.rollback ? m.rollback.state : '-')); return replaceOne(...args); };
+        await E.resume(viewer, res.opId);
+        await E._runOp(res.opId);
+        w.c.records.replaceOne = replaceOne;
+        const op = await E.getOp(viewer, res.opId);
+        check(op.status === 'rolled_back' && op.error.stage === 'transferring' && /another account/.test(op.error.message), 'resumed → stopped before writing, rolled back (' + op.status + ')');
+        check(seen.has('failed/running') && op.rollback.state === 'done', 'during the automatic rollback the merge reads "failed, rollback running"');
+        await w.c.players.deleteOne({ playerId: 'PLAYER_A' });
+        check(sameSnap(await snapshot(w.c), before) && (await w.c.locks.countDocuments({})) === 0, 'nothing changed, both unlocked');
+        // a restart in the middle of such a rollback: it can be rolled back again
+        await w.c.merges.updateOne({ _id: res.opId }, { $set: { status: 'failed', rollback: { state: 'running', at: 1 } } });
+        const E2 = engine(w, { autoRun: false });
+        await E2.recoverInterrupted();
+        const cut = await E2.getOp(viewer, res.opId);
+        check(cut.rollback.state === 'failed' && cut.canRollback, 'a rollback cut off by a restart is offered again');
+    }
+
+    // ---------------------------------------------------------------
     section('Undo the player changes of a finished merge');
     {
         const w = await world({ panelState: true });
