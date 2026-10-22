@@ -322,10 +322,13 @@ function fnText(src, name){
 async function websiteSuite(){
   console.log('\n######## WEBSITE — index + tournament page ########');
   const idx = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
-  const chips = new Function(fnText(idx, 'tkEscape') + fnText(idx, 'tournamentInfoChips') + '; return tournamentInfoChips;')();
-  const html = chips({ upcomingCount: 2, info: { startDate: '2026-11-10', endDate: '2026-11-20', venue: 'Wankhede', city: 'Mumbai<script>', teamCount: 6, format: 'Custom', overs: 10 } });
-  eq('INDEX: card chips — dates, venue, teams, format, upcoming (escaped)', [/📅 10 Nov – 20 Nov/.test(html), /📍 Wankhede, Mumbai&lt;script&gt;/.test(html), /👥 6 teams/.test(html), /🏏 Custom · 10 ov/.test(html), /⏳ 2 upcoming/.test(html), /<script>/.test(html)], [true, true, true, true, true, false]);
-  eq('INDEX: no info → no extra chips', chips({ matchCount: 3 }), '');
+  const card = new Function('const TOURNAMENT_SPORTS = { cricket: { label: "Cricket" }, football: { label: "Football" }, tabletennis: { label: "Table Tennis" } };' +
+    fnText(idx, 'tournamentCardMeta') + fnText(idx, 'tournamentCardSub') + '; return { meta: tournamentCardMeta, sub: tournamentCardSub };')();
+  eq('INDEX: card lines — sport, season, city; matches and dates', [card.meta({ sport: 'cricket', info: { season: '2026', city: 'Mumbai<script>', venue: 'Wankhede' } }),
+    card.sub({ status: 'ongoing', matchCount: 3, info: { startDate: '2026-11-10', endDate: '2026-11-20' } })], ['Cricket · 2026 · Mumbai<script>', '3 matches · 10 Nov – 20 Nov']);
+  eq('INDEX: upcoming → when it starts and its fixtures; no info → just the sport / the matches', [card.sub({ status: 'upcoming', matchCount: 0, upcomingCount: 2, info: { startDate: '2026-11-10' } }),
+    card.meta({ sport: 'tabletennis', info: null }), card.sub({ matchCount: 1 })], ['Starts 10 Nov · 2 fixtures', 'Table Tennis', '1 match']);
+  eq('INDEX: the card escapes both lines', [/<p class="tc-meta">\$\{tkEscape\(tournamentCardMeta\(t\)\)\}<\/p>/.test(idx), /<p class="tc-sub">\$\{tkEscape\(sub\)\}<\/p>/.test(idx)], [true, true]);
   eq('INDEX: card name is escaped now', /<h3>\$\{tkEscape\(t\.name\)\}<\/h3>/.test(idx), true);
   eq('INDEX: quiet auto-refresh every 20s + on tab return', [/setInterval\(\(\) => \{ if \(!document\.hidden\) loadTournaments\(true\); \}, 20000\)/.test(idx), /visibilitychange', \(\) => \{ if \(!document\.hidden\) loadTournaments\(true\)/.test(idx)], [true, true]);
   // loadTournaments(quiet) only re-draws on a change

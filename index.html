@@ -1459,104 +1459,134 @@
             box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.45);
         }
 
+        /* ===== 🏟️ Sport tabs + the tournament carousel =====
+           Cricket / Football / Table Tennis, one tab each — the choice lives in
+           the URL (?sport=…), so Back, Forward and a refresh keep it. The
+           chosen sport's tournaments sit in one row that scrolls sideways on
+           its own (snap, arrows, touch) — never the page. Every card's picture
+           is a 16:9 frame at every width: the owner's thumbnail fills it
+           (object-fit: cover, centred where the owner set it) or, without one,
+           a designed picture of the tournament's own colours, initials and its
+           sport's field. Nothing in a card moves the cards around it. */
+        .sport-tabs {
+            position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+            width: min(100%, 560px); margin: 0 auto 26px; padding: 5px;
+            border-radius: 16px; background: var(--surface-1); border: 1px solid var(--border-color);
+        }
+        .sport-tab {
+            position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            min-width: 0; min-height: 46px; padding: 8px 10px; border: 0; border-radius: 12px; background: none; cursor: pointer;
+            color: var(--text-muted); font: inherit; font-size: 0.92rem; font-weight: 700; white-space: nowrap;
+            transition: color 0.25s var(--ease);
+        }
+        .sport-tab:hover { color: var(--text-main); }
+        .sport-tab[aria-selected="true"] { color: #fff; }
+        .sport-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .sport-tab svg { width: 18px; height: 18px; flex: none; }
+        .sport-tab-count {
+            min-width: 22px; padding: 1px 7px; border-radius: 99px; font-size: 0.72rem; font-weight: 800; line-height: 1.5;
+            background: rgba(255, 255, 255, 0.08); font-variant-numeric: tabular-nums;
+        }
+        .sport-tab[aria-selected="true"] .sport-tab-count { background: rgba(255, 255, 255, 0.22); }
+        .sport-tabs-indicator {
+            position: absolute; z-index: 0; top: 5px; bottom: 5px; left: 5px; width: calc((100% - 10px) / 3);
+            border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--brand-orange));
+            box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.4);
+            transform: translateX(calc(var(--i, 0) * 100%)); transition: transform 0.45s var(--ease-spring);
+        }
+        .tc-panel { position: relative; min-width: 0; }
+        .tc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 12px; }
+        .tc-title { margin: 0; font-size: 1.15rem; font-weight: 800; letter-spacing: -0.2px; }
+        .tc-title small { margin-left: 8px; font-size: 0.82rem; font-weight: 700; color: var(--text-muted); }
+        .tc-nav { display: flex; gap: 8px; }
+        .tc-nav[hidden] { display: none; }
+        .tc-arrow {
+            width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+            border: 1px solid var(--border-color); background: var(--surface-1); color: var(--text-main);
+            transition: background 0.2s var(--ease), border-color 0.2s var(--ease), opacity 0.2s var(--ease), transform 0.2s var(--ease-spring);
+        }
+        .tc-arrow svg { width: 18px; height: 18px; }
+        .tc-arrow:hover:not(:disabled) { border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.1); }
+        .tc-arrow:active:not(:disabled) { transform: scale(0.92); }
+        .tc-arrow:disabled { opacity: 0.32; cursor: default; }
+        .tc-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        /* the row: --tc-per cards in view (a part of the next one shows that
+           there is more) */
         .tournaments-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 26px;
+            --tc-gap: 18px; --tc-per: 4.35;
+            display: flex; gap: var(--tc-gap); overflow-x: auto; overflow-y: hidden;
+            scroll-snap-type: x mandatory; scroll-padding-inline: 2px; overscroll-behavior-x: contain;
+            scrollbar-width: none; padding: 6px 2px 20px; margin: -6px -2px 0;
         }
-        @media (max-width: 560px) {
-            .tournaments-grid { grid-template-columns: 1fr; gap: 18px; }
-        }
+        .tournaments-grid::-webkit-scrollbar { display: none; }
+        .tournaments-grid[hidden] { display: none; }
+        @media (max-width: 1199px) { .tournaments-grid { --tc-per: 3.35; } }
+        @media (max-width: 899px) { .tournaments-grid { --tc-per: 2.3; --tc-gap: 14px; } }
+        @media (max-width: 599px) { .tournaments-grid { --tc-per: 1.22; --tc-gap: 12px; } }
         .tournament-card {
-            --status-color: var(--accent);
-            --status-rgb: var(--accent-rgb);
-            position: relative;
-            /* Hairline of light on the top edge, the way a real pane
-               catches it — the card already had a drop shadow, but a drop
-               shadow alone reads flat no matter how large it gets. Matches
-               the material used on the scorecard and tournament pages so
-               all three feel like one product. */
-            box-shadow: 0 10px 24px rgba(var(--shadow-rgb), 0.18), inset 0 1px 0 rgba(255,255,255,.55);
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 20px;
-            overflow: hidden;
-            cursor: pointer;
-            -webkit-backdrop-filter: blur(12px);
-            backdrop-filter: blur(12px);
-            display: block;
-            text-decoration: none;
-            color: var(--text-main);
+            --status-color: var(--accent); --status-rgb: var(--accent-rgb);
+            position: relative; flex: 0 0 calc((100% - (var(--tc-per) - 1) * var(--tc-gap)) / var(--tc-per)); min-width: 0;
+            display: flex; flex-direction: column; scroll-snap-align: start;
+            border-radius: 16px; overflow: hidden; text-decoration: none; color: var(--text-main);
+            background: var(--bg-card); border: 1px solid var(--border-color);
             box-shadow: 0 10px 24px rgba(var(--shadow-rgb), 0.18);
-            transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
+            transition: transform 0.35s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.35s var(--ease);
         }
-        /* Diagonal shine that sweeps across the whole card on hover — a
-           cheap, pure-CSS way to make it feel "alive" with zero extra
-           DOM nodes or JS (mirrors the .hi-logo-frame shine above). */
-        .tournament-card::before {
-            content: '';
-            position: absolute; top: 0; left: -60%; width: 40%; height: 100%;
-            background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.08), transparent);
-            transform: skewX(-20deg);
-            transition: left 0.75s var(--ease);
-            pointer-events: none;
-            z-index: 2;
-        }
-        .tournament-card:hover::before { left: 140%; }
-        .tournament-card:hover {
-            transform: translateY(-9px) scale(1.015);
-            border-color: rgba(var(--status-rgb), 0.55);
-            box-shadow: 0 26px 50px -12px rgba(var(--status-rgb), 0.4), 0 10px 24px rgba(var(--shadow-rgb), 0.35);
-        }
-        .tournament-card:active { transform: translateY(-3px) scale(0.99); }
-        /* Each status gets its own theme color, driving the icon, ring,
-           badge and hover glow together instead of styling them one by one. */
-        .tournament-card.status-live { --status-color: var(--accent); --status-rgb: var(--accent-rgb); border-color: rgba(var(--accent-rgb), 0.35); box-shadow: 0 10px 30px rgba(var(--accent-rgb), 0.18); }
+        .tournament-card:hover { transform: translateY(-4px); border-color: rgba(var(--status-rgb), 0.5); box-shadow: 0 18px 36px -14px rgba(var(--status-rgb), 0.5), 0 10px 24px rgba(var(--shadow-rgb), 0.28); }
+        .tournament-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .tournament-card.status-live { --status-color: var(--accent); --status-rgb: var(--accent-rgb); }
         .tournament-card.status-ongoing { --status-color: var(--brand-teal); --status-rgb: var(--brand-teal-rgb); }
         .tournament-card.status-completed { --status-color: #94a3b8; --status-rgb: 148, 163, 184; }
         .tournament-card.status-upcoming { --status-color: var(--brand-orange); --status-rgb: var(--brand-orange-rgb); }
-        /* Thicker status-coded strip along the top edge — shimmering for
-           live tournaments so it reads as "in motion" at a glance. */
-        .tournament-card-accent { position: absolute; top: 0; left: 0; right: 0; height: 5px; background: var(--border-color-strong); z-index: 1; }
-        .tournament-card.status-live .tournament-card-accent {
-            background: linear-gradient(90deg, var(--accent), var(--brand-orange), var(--accent));
-            background-size: 200% 100%;
-            animation: accentShimmer 2.4s linear infinite;
+        .tc-media { position: relative; flex: none; aspect-ratio: 16 / 9; overflow: hidden; background: #0b1220; container-type: inline-size; }
+        .tc-media > img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform 0.6s var(--ease); }
+        .tournament-card:hover .tc-media > img, .tournament-card:hover .tc-art { transform: scale(1.045); }
+        .tournament-card .tc-media .tournament-status-badge { position: absolute; top: 9px; left: 9px; z-index: 1; background: rgba(8, 12, 20, 0.82); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
+        /* no thumbnail: the tournament's own designed picture */
+        .tc-art {
+            position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 3px;
+            padding: 7% 7.5%; color: #fff; overflow: hidden; transition: transform 0.6s var(--ease);
+            background: radial-gradient(120% 95% at 88% 8%, rgba(255, 255, 255, 0.18), transparent 55%), linear-gradient(135deg, var(--a, #1e3a8a), var(--b, #0f172a));
         }
-        @keyframes accentShimmer { to { background-position: -200% 0; } }
-        .tournament-card.status-ongoing .tournament-card-accent { background: linear-gradient(90deg, var(--brand-teal), var(--brand-slate)); }
-        .tournament-card.status-completed .tournament-card-accent { background: var(--border-color-strong); }
-        .tournament-card.status-upcoming .tournament-card-accent { background: linear-gradient(90deg, var(--brand-orange), var(--accent-hover)); }
-        .tournament-card-top {
-            padding: 22px 20px 16px 20px;
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 10px;
-            border-bottom: 1px solid var(--border-color-soft);
+        .tc-art svg { position: absolute; top: 50%; right: -4%; width: 66%; height: auto; transform: translateY(-50%); opacity: 0.26; }
+        .tc-art-mono {
+            position: relative; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            font-family: 'Space Grotesk', 'Inter', sans-serif; font-weight: 700; line-height: 1; letter-spacing: 0.5px;
+            font-size: 1.9rem; font-size: clamp(1.3rem, 15cqw, 2.4rem); text-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
         }
-        .tournament-sport-icon {
-            position: relative;
-            font-size: 1.6rem; line-height: 1; flex-shrink: 0;
-            width: 50px; height: 50px; border-radius: 15px;
-            display: inline-flex; align-items: center; justify-content: center;
-            background: linear-gradient(135deg, rgba(var(--status-rgb), 0.28), rgba(var(--status-rgb), 0.08));
-            border: 1px solid rgba(var(--status-rgb), 0.35);
-            box-shadow: 0 8px 20px rgba(var(--status-rgb), 0.2);
-            transition: transform 0.45s var(--ease-spring);
+        .tc-art-sport { position: relative; font-size: 0.6rem; font-weight: 800; letter-spacing: 1.6px; text-transform: uppercase; opacity: 0.85; }
+        .tc-body { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px 14px; min-width: 0; }
+        .tc-body h3 { margin: 0; min-height: 2.6em; font-size: 1rem; font-weight: 800; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+        .tc-meta, .tc-sub { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+        .tc-meta { font-size: 0.8rem; color: var(--text-muted); }
+        .tc-sub { font-size: 0.76rem; color: var(--status-color); }
+        .tc-owner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+        .tc-owner .tournament-meta-chip { max-width: 100%; padding: 3px 9px; font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* loading: the cards' own shape, picture frame included */
+        .tournament-card.is-skeleton { pointer-events: none; box-shadow: none; }
+        .is-skeleton .tc-media, .tc-skel { position: relative; overflow: hidden; background: rgba(255, 255, 255, 0.05); }
+        .tc-skel { display: block; height: 12px; border-radius: 6px; }
+        .tc-skel.w1 { width: 82%; height: 15px; margin-bottom: 4px; }
+        .tc-skel.w2 { width: 56%; }
+        .is-skeleton .tc-media::after, .tc-skel::after {
+            content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+            animation: tcShimmer 1.4s ease-in-out infinite;
         }
-        .tournament-card:hover .tournament-sport-icon { transform: scale(1.08) rotate(-6deg); }
-        /* Expanding "radar ping" ring around the icon on live cards only. */
-        .tournament-card.status-live .tournament-sport-icon::after {
-            content: '';
-            position: absolute; inset: -5px; border-radius: inherit;
-            border: 2px solid rgba(var(--accent-rgb), 0.5);
-            animation: sportIconPing 1.8s ease-out infinite;
+        @keyframes tcShimmer { to { transform: translateX(100%); } }
+        @media (prefers-reduced-motion: reduce) {
+            .is-skeleton .tc-media::after, .tc-skel::after { animation: none; }
+            .sport-tabs-indicator, .tc-media > img, .tc-art { transition: none; }
         }
-        @keyframes sportIconPing {
-            0% { transform: scale(0.9); opacity: 0.8; }
-            100% { transform: scale(1.25); opacity: 0; }
+        @media (max-width: 599px) {
+            .sport-tabs { margin-bottom: 18px; }
+            .sport-tab { gap: 6px; min-height: 44px; padding: 6px 4px; font-size: 0.85rem; }
+            .tc-head { margin-bottom: 8px; }
         }
+        @media (max-width: 430px) { .sport-tab-count { display: none; } }
+        @media (max-width: 359px) { .sport-tab svg { display: none; } }
+        /* touch screens swipe the row; the arrows are for a mouse */
+        @media (pointer: coarse) { .tc-nav { display: none; } }
         .tournament-status-badge {
             font-size: 0.68rem;
             font-weight: 800;
@@ -1582,12 +1612,6 @@
         .tournament-status-badge.completed { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
         .tournament-status-badge.ongoing { background: rgba(var(--brand-teal-rgb), 0.16); color: var(--brand-teal); }
         .tournament-status-badge.upcoming { background: rgba(var(--brand-orange-rgb), 0.16); color: var(--brand-orange); }
-        .tournament-card-body { padding: 18px 20px 20px 20px; }
-        .tournament-card-body h3 {
-            font-size: 1.2rem; font-weight: 800; margin-bottom: 12px; line-height: 1.3;
-            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-        }
-        .tournament-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
         .tournament-meta-chip {
             display: inline-flex; align-items: center; gap: 6px;
             font-size: 0.78rem; font-weight: 600; color: var(--text-muted);
@@ -1595,21 +1619,8 @@
             padding: 5px 12px; border-radius: 999px;
         }
         .tournament-meta-chip.host { color: var(--text-main); }
-        .tournament-card-sub { margin: -4px 0 10px; font-size: 12.5px; font-weight: 600; color: var(--text-muted, #94a3b8); letter-spacing: .02em; }
         .tournament-meta-chip.private { color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.1); border-color: rgba(var(--brand-orange-rgb), 0.25); }
         .tournament-meta-chip.public { color: var(--success); background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.25); }
-        .tournament-card-cta {
-            display: flex; align-items: center; justify-content: space-between; gap: 6px;
-            color: var(--status-color); font-weight: 800; font-size: 0.9rem; text-decoration: none;
-            padding-top: 14px; border-top: 1px solid var(--border-color-soft);
-        }
-        .tournament-card-cta .arrow {
-            display: inline-flex; align-items: center; justify-content: center;
-            width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
-            background: rgba(var(--status-rgb), 0.14);
-            transition: transform 0.3s var(--ease-spring), background 0.3s var(--ease), color 0.3s var(--ease);
-        }
-        .tournament-card:hover .tournament-card-cta .arrow { background: var(--status-color); color: #fff; transform: translateX(4px); }
         .tournaments-empty {
             text-align: center; color: var(--text-muted); padding: 60px 20px;
             border: 1px dashed var(--border-color); border-radius: 18px;
@@ -1646,7 +1657,7 @@
         }
         #manage-modal.open { opacity: 1; pointer-events: auto; }
         .manage-modal-card {
-            width: 100%; max-width: 380px;
+            width: 100%; max-width: 420px; max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); overflow-y: auto; overscroll-behavior: contain;
             background: var(--bg-card); border: 1px solid var(--border-color);
             border-radius: 20px; padding: 26px 26px 22px;
             box-shadow: 0 24px 60px rgba(var(--shadow-rgb), 0.55);
@@ -1689,6 +1700,23 @@
         .manage-btn.primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
         .manage-btn.secondary { background: var(--surface-1); color: var(--text-main); border: 1px solid var(--border-color); }
         .manage-modal-status { min-height: 20px; margin-top: 14px; font-size: 0.82rem; font-weight: 600; text-align: center; }
+        /* 🖼️ the card picture (owner): the card's own 16:9 frame, draggable */
+        .mt-frame { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background: #0b1220; border: 1px solid var(--border-color); user-select: none; container-type: inline-size; }
+        .mt-frame.can-move { cursor: grab; touch-action: none; }
+        .mt-frame.is-dragging { cursor: grabbing; }
+        .mt-frame:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .mt-frame > img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+        .mt-frame .tc-art[hidden], .mt-frame > img[hidden] { display: none; }
+        .mt-hint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 4px 10px; border-radius: 99px; background: rgba(8, 12, 20, 0.8); color: #fff; font-size: 0.7rem; font-weight: 700; white-space: nowrap; pointer-events: none; }
+        .mt-hint[hidden] { display: none; }
+        .mt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .mt-actions .manage-btn { flex: 1 1 auto; padding: 10px 12px; font-size: 0.82rem; }
+        .mt-actions [hidden] { display: none; }
+        .mt-pick { position: relative; display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+        .mt-pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+        .mt-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .mt-pick.is-disabled { opacity: 0.5; pointer-events: none; }
+        .mt-note { margin: 8px 2px 0; font-size: 0.74rem; line-height: 1.45; color: var(--text-muted); }
         .manage-modal-status.err { color: #f87171; }
         .manage-modal-status.ok { color: var(--success); }
         .manage-btn-spinner {
@@ -1872,8 +1900,7 @@
             }
             .hero h1 span,
             .du-kicker-desktop, .du-kicker-mobile,
-            .cta-btn::before,
-            .tournament-card.status-live .tournament-card-accent {
+            .cta-btn::before {
                 animation: none !important;
             }
             .tournament-status-badge.live {
@@ -1903,13 +1930,6 @@
             .net-status-dot {
                 animation: none !important;
                 opacity: 1;
-            }
-            /* Off-screen tournament cards skip style/layout/paint until
-               they're near the viewport; 'auto' remembers their real size,
-               so nothing jumps. */
-            .tournament-card {
-                content-visibility: auto;
-                contain-intrinsic-size: auto 190px;
             }
         }
         @keyframes badgePulseRingGpu {
@@ -2017,8 +2037,6 @@
             .device-uplink-kicker .dot,
             .tournament-status-badge.live .dot,
             .tournament-status-badge.live,
-            .tournament-card.status-live .tournament-card-accent,
-            .tournament-card.status-live .tournament-sport-icon::after,
             .tournament-status-badge.live::after {
                 animation: none !important;
                 opacity: 1 !important;
@@ -3471,6 +3489,25 @@
                 <p id="manage-modal-name"></p>
             </div>
 
+            <!-- 🖼️ the card picture — owner-only on the server (requireOwner);
+                 this panel is a convenience -->
+            <div class="manage-modal-section" id="manage-thumb-section">
+                <span class="manage-modal-section-label">Thumbnail · the card's 16:9 picture</span>
+                <div class="mt-frame" id="mtFrame" tabindex="0" role="group" aria-label="Thumbnail preview — drag, or use the arrow keys, to choose what the card shows">
+                    <img id="mtImg" alt="" draggable="false" hidden>
+                    <div class="tc-art" id="mtArt"></div>
+                    <span class="mt-hint" id="mtHint" hidden>✥ Drag to choose what shows</span>
+                </div>
+                <div class="mt-actions">
+                    <label class="manage-btn secondary mt-pick" id="mtPick"><input type="file" id="mtFile" accept="image/jpeg,image/png,image/webp" aria-label="Choose a thumbnail picture"><span>Choose image</span></label>
+                    <button type="button" class="manage-btn secondary" id="mtRemove" hidden>Remove</button>
+                    <button type="button" class="manage-btn secondary" id="mtCancel" hidden>Cancel</button>
+                    <button type="button" class="manage-btn primary" id="mtSave" hidden>Save thumbnail</button>
+                </div>
+                <p class="mt-note">JPG, PNG or WebP. Landscape works best — any picture is shown in the 16:9 frame, cropped where you drag it, never stretched.</p>
+                <p class="manage-modal-status" id="mtStatus" role="status" aria-live="polite"></p>
+            </div>
+
             <div class="manage-modal-section">
                 <span class="manage-modal-section-label">Tournament Status</span>
                 <div class="manage-option-group" id="manage-status-options">
@@ -4190,6 +4227,23 @@
         </div>
         <p class="section-sub reveal-on-scroll delay-1">Live scores, completed tournaments, scorecards, player stats and clips</p>
 
+        <!-- 🏟️ One tab per sport; the row below shows the chosen sport's tournaments -->
+        <div class="sport-tabs reveal-on-scroll delay-1" id="sportTabs" role="tablist" aria-label="Sport">
+            <span class="sport-tabs-indicator" aria-hidden="true"></span>
+            <button type="button" role="tab" class="sport-tab" id="sportTab-cricket" data-sport="cricket" aria-selected="true" aria-controls="tournamentsPanel">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="1.8" width="6" height="14" rx="2" transform="rotate(45 12 8.8)" fill="currentColor" fill-opacity=".22"/><path d="M6.6 14.2L3 17.8" stroke-width="2.8"/><circle cx="18.2" cy="18.2" r="2.6" fill="currentColor" stroke="none"/></svg>
+                <span>Cricket</span><span class="sport-tab-count" data-count></span>
+            </button>
+            <button type="button" role="tab" class="sport-tab" id="sportTab-football" data-sport="football" aria-selected="false" aria-controls="tournamentsPanel" tabindex="-1">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5l4.2 3-1.6 5h-5.2l-1.6-5z"/><path d="M12 3v4.5M20.6 9.5l-4.4 1M17.4 19.3l-2.8-3.8M6.6 19.3l2.8-3.8M3.4 9.5l4.4 1"/></svg>
+                <span>Football</span><span class="sport-tab-count" data-count></span>
+            </button>
+            <button type="button" role="tab" class="sport-tab" id="sportTab-tabletennis" data-sport="tabletennis" aria-selected="false" aria-controls="tournamentsPanel" tabindex="-1">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="9" r="6.8" fill="currentColor" fill-opacity=".22"/><rect x="9" y="15.6" width="3" height="6" rx="1.4" fill="currentColor"/><circle cx="19.6" cy="17.4" r="2" fill="currentColor" stroke="none"/></svg>
+                <span>Table Tennis</span><span class="sport-tab-count" data-count></span>
+            </button>
+        </div>
+
         <div class="tournament-filters reveal-on-scroll delay-1" id="tournamentFilters">
             <span class="tournament-filter-indicator" id="tournamentFilterIndicator"></span>
             <button class="tournament-filter-btn active" data-filter="all" onclick="setTournamentFilter('all', this)">All</button>
@@ -4216,11 +4270,27 @@
         </div>
         <p class="tournaments-count" id="tournamentsCount" aria-live="polite"></p>
 
-        <div class="tournaments-grid reveal-on-scroll delay-2" id="tournaments-grid"></div>
-        <div class="tournaments-empty" id="tournaments-empty" style="display:none;">
-            <div class="te-icon">🏏</div>
-            <p id="tournamentsEmptyText">No tournaments to show yet — check back once one goes live.</p>
-            <button type="button" class="tt-clear" id="tournamentsEmptyClear" hidden>Clear search &amp; filters</button>
+        <div class="tc-panel reveal-on-scroll delay-2" id="tournamentsPanel" role="tabpanel" aria-labelledby="sportTab-cricket">
+            <div class="tc-head">
+                <h3 class="tc-title" id="tournamentsRowTitle">Cricket tournaments</h3>
+                <div class="tc-nav" id="tcNav" hidden>
+                    <button type="button" class="tc-arrow" id="tcPrev" aria-label="Previous tournaments" aria-controls="tournaments-grid" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+                    <button type="button" class="tc-arrow" id="tcNext" aria-label="More tournaments" aria-controls="tournaments-grid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></button>
+                </div>
+            </div>
+            <div class="tournaments-grid" id="tournaments-grid" aria-label="Cricket tournaments" aria-busy="true">
+                    <div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>
+                    <div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>
+                    <div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>
+                    <div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>
+                    <div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>
+            </div>
+            <div class="tournaments-empty" id="tournaments-empty" style="display:none;">
+                <div class="te-icon" id="tournamentsEmptyIcon">🏏</div>
+                <p id="tournamentsEmptyText">No cricket tournaments right now.</p>
+                <button type="button" class="tt-clear" id="tournamentsEmptyClear" hidden>Clear search &amp; filters</button>
+                <button type="button" class="tt-clear" id="tournamentsRetry" hidden>Try again</button>
+            </div>
         </div>
     </section>
 
@@ -4973,6 +5043,10 @@
         // Signature of the last list drawn, so the quiet auto-refresh below
         // only re-draws the cards when something actually changed.
         let tournamentsSig = null;
+        // the first list has arrived (until then the row shows its loading
+        // cards); the last full load failed (the row offers Try again)
+        let tournamentsLoaded = false;
+        let tournamentsLoadError = false;
         // ▶️ The owner's picks for "Latest streams" — { added, hidden } —
         // come with the list ("hidden" only in the owner's own view).
         let streamPicks = { added: [], hidden: [] };
@@ -4990,6 +5064,7 @@
                     try { headers['Authorization'] = `Bearer ${await auth.currentUser.getIdToken()}`; } catch (e) { /* ignore */ }
                 }
                 const res = await fetch('/api/public/tournaments', { headers, cache: 'no-store' });
+                if (res.ok === false) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 next = (data && data.tournaments) || [];
                 const sp = (data && data.streamPicks) || {};
@@ -4997,8 +5072,13 @@
             } catch (err) {
                 console.error('Could not load tournaments:', err);
                 if (quiet) return; // keep what is on screen; try again next tick
-                next = [];
+                // keep any list already shown; with none yet, offer Try again
+                tournamentsLoadError = true;
+                renderTournaments();
+                return;
             }
+            tournamentsLoadError = false;
+            tournamentsLoaded = true;
             const sig = JSON.stringify([next, picks]);
             if (quiet && sig === tournamentsSig) return;
             tournamentsSig = sig;
@@ -5114,7 +5194,7 @@
             const pill = document.getElementById('tournamentsLiveCount');
             const text = document.getElementById('tournamentsLiveCountText');
             if (!pill || !text) return;
-            const liveCount = allTournaments.filter(t => t.sport === 'cricket' && t.status === 'live').length;
+            const liveCount = allTournaments.filter(t => t.status === 'live').length;
             if (liveCount > 0) {
                 text.textContent = `${liveCount} tournament${liveCount === 1 ? '' : 's'} live right now`;
                 pill.hidden = false;
@@ -5215,161 +5295,303 @@
                 : '';
         }
 
+        // 🏟️ The sports the homepage lists, one tab each — the same three the
+        // server sends (HOMEPAGE_SPORTS in server.js). The chosen one is in the
+        // URL (?sport=football, ?sport=table-tennis; nothing for cricket).
+        const TOURNAMENT_SPORTS = {
+            cricket: { label: 'Cricket', slug: 'cricket', icon: '🏏' },
+            football: { label: 'Football', slug: 'football', icon: '⚽' },
+            tabletennis: { label: 'Table Tennis', slug: 'table-tennis', icon: '🏓' }
+        };
+        function sportFromUrl() {
+            const v = new URLSearchParams(location.search).get('sport');
+            return Object.keys(TOURNAMENT_SPORTS).find(k => k === v || TOURNAMENT_SPORTS[k].slug === v) || 'cricket';
+        }
+        let tournamentSport = sportFromUrl();
+
         function renderTournaments() {
             const grid = document.getElementById('tournaments-grid');
             const empty = document.getElementById('tournaments-empty');
             if (!grid) return;
 
             updateTournamentsLiveCount();
-
-            // Only Cricket tournaments are ever shown here — the backend
-            // (/api/public/tournaments) already filters to sport === 'cricket',
-            // but we filter again here defensively so this section can never
-            // show a Football/Table-Tennis tournament even if that changes.
-            const cricket = allTournaments.filter(t => t.sport === 'cricket');
-            renderCityOptions(cricket);
-            const byStatus = cricket.filter(t => tournamentFilter === 'all' || t.status === tournamentFilter);
+            updateSportTabs();
+            const sport = TOURNAMENT_SPORTS[tournamentSport];
+            const ofSport = allTournaments.filter(t => t.sport === tournamentSport);
+            renderCityOptions(ofSport);
+            const byStatus = ofSport.filter(t => tournamentFilter === 'all' || t.status === tournamentFilter);
             const now = new Date();
             const list = byStatus
                 .filter(t => !tournamentCity || normText(t.info && t.info.city) === tournamentCity)
                 .filter(t => tournamentMatchesWhen(t, tournamentWhen, now))
                 .filter(t => tournamentMatchesQuery(t, tournamentQuery))
                 .sort((a, b) => (TOURNAMENT_STATUS_ORDER[a.status] ?? 4) - (TOURNAMENT_STATUS_ORDER[b.status] ?? 4));
-            grid.innerHTML = '';
             renderTournamentsCount(list.length, byStatus.length);
+            document.getElementById('tournamentsRowTitle').innerHTML = `${tkEscape(sport.label)} tournaments${ofSport.length ? ` <small>${ofSport.length}</small>` : ''}`;
+            grid.setAttribute('aria-label', `${sport.label} tournaments`);
+            // still loading: the skeleton cards stay
+            if (!tournamentsLoaded && !tournamentsLoadError) return;
+            grid.removeAttribute('aria-busy');
+
+            // a refresh keeps the row where the visitor left it; another
+            // sport starts at its beginning
+            const keepScroll = grid.dataset.sport === tournamentSport ? grid.scrollLeft : 0;
+            grid.dataset.sport = tournamentSport;
+            grid.innerHTML = '';
+            const failed = tournamentsLoadError && !tournamentsLoaded;
+            document.getElementById('tournamentsRetry').hidden = !failed;
 
             if (list.length === 0) {
                 const filtered = tournamentFiltersActive() && byStatus.length > 0;
-                document.getElementById('tournamentsEmptyText').textContent = filtered
-                    ? 'No tournaments match your search.'
-                    : (tournamentFilter === 'live' && cricket.length
-                        ? 'Nothing is live right now — check back soon.'
-                        : 'No tournaments to show yet — check back once one goes live.');
+                document.getElementById('tournamentsEmptyIcon').textContent = failed ? '⚠️' : sport.icon;
+                document.getElementById('tournamentsEmptyText').textContent = failed
+                    ? 'Could not load the tournaments right now.'
+                    : filtered
+                        ? 'No tournaments match your search.'
+                        : (tournamentFilter === 'live' && ofSport.length
+                            ? 'Nothing is live right now — check back soon.'
+                            : (tournamentFilter === 'completed' && ofSport.length
+                                ? `No completed ${sport.label.toLowerCase()} tournaments yet.`
+                                : `No ${sport.label.toLowerCase()} tournaments right now.`));
                 document.getElementById('tournamentsEmptyClear').hidden = !filtered;
+                grid.hidden = true;
                 empty.style.display = 'block';
+                updateTournamentRowNav();
                 return;
             }
             empty.style.display = 'none';
+            grid.hidden = false;
+            list.forEach(t => grid.appendChild(tournamentCard(t)));
+            grid.scrollLeft = keepScroll;
+            updateTournamentRowNav();
+        }
 
-            list.forEach(t => {
-                // Not a plain <a href> anymore: anyone can scroll and see
-                // this card, but the actual tournament page (scorecards +
-                // clips) needs a signed-in Google account. Signed-in
-                // visitors go straight through; signed-out visitors get the
-                // sign-in gate first and land here right after.
-                const tournamentUrl = `/score/tournament/${t.token}`;
-                const statusKey = ['live', 'ongoing', 'completed'].includes(t.status) ? t.status : 'upcoming';
-                const card = document.createElement('a');
-                card.className = `tournament-card status-${statusKey}`;
-                card.href = tournamentUrl;
-                card.addEventListener('click', (e) => {
-                    if (!isUserLoggedIn) {
-                        // preventDefault() alone only cancels the browser's
-                        // native navigation on this <a> — it does NOT stop
-                        // page-transitions.js's own document-level click
-                        // listener from also seeing this click and firing
-                        // its own (pushState/fetch-based) navigation to
-                        // tournamentUrl, which ignores our preventDefault.
-                        // stopImmediatePropagation() keeps the click from
-                        // ever bubbling to that listener, so the only thing
-                        // that happens on a logged-out click is the auth
-                        // gate opening.
-                        e.preventDefault();
-                        e.stopImmediatePropagation();
-                        openTournamentAuthGate(tournamentUrl);
-                    }
+        // One card: the 16:9 picture (the owner's thumbnail, or the
+        // tournament's designed one), the name, and what kind of tournament it
+        // is. It opens the tournament's own page (by its token, never its name).
+        function tournamentCard(t) {
+            const tournamentUrl = `/score/tournament/${encodeURIComponent(t.token)}`;
+            const statusKey = ['live', 'ongoing', 'completed'].includes(t.status) ? t.status : 'upcoming';
+            const card = document.createElement('a');
+            card.className = `tournament-card status-${statusKey}`;
+            card.href = tournamentUrl;
+            card.dataset.token = t.token;
+            card.addEventListener('click', (e) => {
+                // The tournament page (scorecards + clips) needs a signed-in
+                // Google account: signed-out visitors get the sign-in gate
+                // first and land there right after. stopImmediatePropagation
+                // keeps page-transitions.js's own click listener from also
+                // navigating (it ignores preventDefault).
+                if (!isUserLoggedIn) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    openTournamentAuthGate(tournamentUrl);
+                }
+            }, true);
+
+            let statusHtml;
+            if (statusKey === 'live') statusHtml = '<span class="tournament-status-badge live"><span class="dot"></span>Live</span>';
+            else if (statusKey === 'completed') statusHtml = '<span class="tournament-status-badge completed">Completed</span>';
+            else if (statusKey === 'ongoing') statusHtml = '<span class="tournament-status-badge ongoing">Ongoing</span>';
+            else statusHtml = '<span class="tournament-status-badge upcoming">Upcoming</span>';
+
+            // Owner view only (t.createdBy / t.ownerUid / t.leagueKey come only
+            // in the owner's payload): who made it, public or private, and the
+            // Manage control. The real checks are on the server.
+            const showManage = window.__isOwnerViewer && t.ownerUid && t.leagueKey;
+            const ownerHtml = t.createdBy ? `<div class="tc-owner">
+                    <span class="tournament-meta-chip host">👤 ${tkEscape(t.createdBy)}</span>
+                    ${t.isPrivate ? '<span class="tournament-meta-chip private">🔒 Private</span>' : '<span class="tournament-meta-chip public">🌐 Public</span>'}
+                    ${showManage ? '<button type="button" class="tournament-manage-btn" data-manage-btn>⚙️ Manage</button>' : ''}
+                </div>` : '';
+            const sub = tournamentCardSub(t);
+            card.innerHTML = `
+                <div class="tc-media">${statusHtml}</div>
+                <div class="tc-body">
+                    <h3>${tkEscape(t.name)}</h3>
+                    <p class="tc-meta">${tkEscape(tournamentCardMeta(t))}</p>
+                    ${sub ? `<p class="tc-sub">${tkEscape(sub)}</p>` : ''}
+                    ${ownerHtml}
+                </div>
+            `;
+            const media = card.querySelector('.tc-media');
+            media.insertBefore(tournamentPicture(t), media.firstChild);
+
+            if (showManage) {
+                const manageBtn = card.querySelector('[data-manage-btn]');
+                manageBtn.__openManage = () => openManageModal(t);
+                manageBtn.addEventListener('click', (e) => {
+                    // the card itself is a link — this click must not navigate
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    openManageModal(t);
                 }, true);
+            }
+            return card;
+        }
 
-                let statusHtml;
-                if (statusKey === 'live') {
-                    statusHtml = '<span class="tournament-status-badge live"><span class="dot"></span>Live</span>';
-                } else if (statusKey === 'completed') {
-                    statusHtml = '<span class="tournament-status-badge completed">Completed</span>';
-                } else if (statusKey === 'ongoing') {
-                    // Matches have been played, but the operator hasn't
-                    // marked the tournament finished yet.
-                    statusHtml = '<span class="tournament-status-badge ongoing">Ongoing</span>';
-                } else {
-                    statusHtml = '<span class="tournament-status-badge upcoming">Upcoming</span>';
+        // "Cricket · Season 3 · Mumbai" — what kind of tournament, and where.
+        function tournamentCardMeta(t) {
+            const info = t.info || {};
+            const sport = TOURNAMENT_SPORTS[t.sport] || TOURNAMENT_SPORTS.cricket;
+            return [sport.label, info.season, info.city || info.venue].map(v => String(v || '').trim()).filter(Boolean).join(' · ');
+        }
+        // "28 matches · 1 Sept – 31 Oct", or "Starts 8 Nov · 6 fixtures"
+        function tournamentCardSub(t) {
+            const info = t.info || {};
+            const day = (d) => {
+                const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+                return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '';
+            };
+            const s = day(info.startDate), e = day(info.endDate);
+            if (t.status === 'upcoming' && !(Number(t.matchCount) > 0)) {
+                const f = Number(t.upcomingCount) || 0;
+                return [s ? `Starts ${s}` : '', f ? `${f} fixture${f === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+            }
+            const n = Number(t.matchCount) || 0;
+            return [`${n} match${n === 1 ? '' : 'es'}`, s || e ? (s && e && s !== e ? `${s} – ${e}` : (s || e)) : ''].filter(Boolean).join(' · ');
+        }
+
+        // The picture: the owner's thumbnail in the 16:9 frame (centred where
+        // they set it), or — without one, or if it fails to load — the
+        // tournament's designed picture. A failed picture is never retried.
+        function tournamentPicture(t) {
+            const th = t.thumb;
+            if (th && /^https:\/\/[^\s"'<>]+$/i.test(th.url || '')) {
+                const img = new Image();
+                img.alt = '';
+                img.loading = 'lazy';
+                img.decoding = 'async';
+                img.width = 1600;
+                img.height = 900;
+                img.style.objectPosition = `${thumbPct(th.x)}% ${thumbPct(th.y)}%`;
+                img.addEventListener('error', () => img.replaceWith(tournamentArt(t)), { once: true });
+                img.src = th.url;
+                return img;
+            }
+            return tournamentArt(t);
+        }
+        function thumbPct(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(Math.min(100, Math.max(0, n)) * 10) / 10 : 50; }
+
+        // The designed picture: the tournament's own colours (picked from its
+        // token, so they never change), its initials and its sport's field.
+        const TOURNAMENT_ART_COLOURS = [['#1d4ed8', '#0b1739'], ['#be123c', '#3b0a1a'], ['#0f766e', '#062a28'], ['#7c3aed', '#1e0b3d'],
+            ['#c2410c', '#3a1406'], ['#0369a1', '#082236'], ['#4d7c0f', '#172607'], ['#a21caf', '#2e0632']];
+        const TOURNAMENT_ART_FIELDS = {
+            cricket: '<svg viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.6" aria-hidden="true"><ellipse cx="60" cy="40" rx="56" ry="36"/><ellipse cx="60" cy="40" rx="30" ry="20" stroke-dasharray="3 4"/><rect x="56" y="28" width="8" height="24" rx="1"/><path d="M52.5 31.5h15M52.5 48.5h15"/></svg>',
+            football: '<svg viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="112" height="72" rx="2"/><path d="M60 4v72"/><circle cx="60" cy="40" r="11"/><path d="M4 22h16v36H4M116 22h-16v36h16M4 31h6v18H4M116 31h-6v18h6"/></svg>',
+            tabletennis: '<svg viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.6" aria-hidden="true"><rect x="10" y="12" width="100" height="56" rx="2"/><path d="M60 7v66" stroke-width="2.6"/><path d="M10 40h100" stroke-dasharray="3 4"/><circle cx="85" cy="27" r="3.2" fill="#fff" stroke="none"/></svg>'
+        };
+        function tournamentInitials(t) {
+            const short = String((t.info && t.info.shortName) || '').trim();
+            if (short) return short.slice(0, 8).toUpperCase();
+            const words = String(t.name || '').split(/[^\p{L}\p{N}]+/u)
+                .filter(w => /\p{L}/u.test(w) && !/^(the|of|and|by|a|an|for|in)$/i.test(w));
+            return words.slice(0, 4).map(w => Array.from(w)[0]).join('').toUpperCase() || '🏆';
+        }
+        function tournamentArt(t) {
+            const art = document.createElement('div');
+            art.className = 'tc-art';
+            let h = 0;
+            for (const ch of String(t.token || t.name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+            const [a, b] = TOURNAMENT_ART_COLOURS[h % TOURNAMENT_ART_COLOURS.length];
+            art.style.setProperty('--a', a);
+            art.style.setProperty('--b', b);
+            const sport = TOURNAMENT_SPORTS[t.sport] ? t.sport : 'cricket';
+            art.innerHTML = `${TOURNAMENT_ART_FIELDS[sport]}<span class="tc-art-mono">${tkEscape(tournamentInitials(t))}</span><span class="tc-art-sport">${tkEscape(TOURNAMENT_SPORTS[sport].label)}</span>`;
+            return art;
+        }
+
+        // The sport tabs: which one is chosen, and how many tournaments each has.
+        function updateSportTabs() {
+            const bar = document.getElementById('sportTabs');
+            if (!bar) return;
+            bar.querySelectorAll('.sport-tab').forEach((tab, i) => {
+                const on = tab.dataset.sport === tournamentSport;
+                tab.setAttribute('aria-selected', on ? 'true' : 'false');
+                tab.tabIndex = on ? 0 : -1;
+                if (on) {
+                    bar.style.setProperty('--i', i);
+                    document.getElementById('tournamentsPanel').setAttribute('aria-labelledby', tab.id);
                 }
-
-                const hostChip = t.createdBy ? `<span class="tournament-meta-chip host">👤 ${tkEscape(t.createdBy)}</span>` : '';
-                const infoChips = tournamentInfoChips(t);
-                const visibilityChip = t.createdBy
-                    ? (t.isPrivate
-                        ? `<span class="tournament-meta-chip private">🔒 Private</span>`
-                        : `<span class="tournament-meta-chip public">🌐 Public</span>`)
-                    : '';
-
-                // Owner-only "Manage" control — only ever present when this
-                // response is the owner-view payload (t.ownerUid/t.leagueKey
-                // are owner-only fields, same gating as hostChip/visibilityChip
-                // above) AND the signed-in visitor is verified client-side as
-                // the owner. The real authorization check happens server-side
-                // when Save Changes actually calls the API.
-                const showManage = window.__isOwnerViewer && t.ownerUid && t.leagueKey;
-                const manageBtnHtml = showManage
-                    ? `<button type="button" class="tournament-manage-btn" data-manage-btn>⚙️ Manage</button>`
-                    : '';
-
-                card.innerHTML = `
-                    <div class="tournament-card-accent"></div>
-                    <div class="tournament-card-top">
-                        <div class="tournament-sport-icon">🏏</div>
-                        ${statusHtml}
-                    </div>
-                    <div class="tournament-card-body">
-                        <h3>${tkEscape(t.name)}</h3>
-                        ${t.info && (t.info.season || t.info.shortName) ? `<div class="tournament-card-sub">${tkEscape([t.info.shortName, t.info.season].filter(Boolean).join(' · '))}</div>` : ''}
-                        <div class="tournament-meta-row">
-                            <span class="tournament-meta-chip">🏟️ ${t.matchCount} match${t.matchCount === 1 ? '' : 'es'}</span>
-                            ${infoChips}
-                            ${hostChip}
-                            ${visibilityChip}
-                        </div>
-                        <span class="tournament-card-cta">View matches &amp; scorecards <span class="arrow">→</span></span>
-                        ${manageBtnHtml}
-                    </div>
-                `;
-
-                if (showManage) {
-                    const manageBtn = card.querySelector('[data-manage-btn]');
-                    manageBtn.style.marginTop = '12px';
-                    manageBtn.style.width = '100%';
-                    manageBtn.style.justifyContent = 'center';
-                    manageBtn.__openManage = () => openManageModal(t);
-                    manageBtn.addEventListener('click', (e) => {
-                        // Card itself is a navigation link — stop this click
-                        // from also triggering that navigation.
-                        e.preventDefault();
-                        e.stopImmediatePropagation();
-                        openManageModal(t);
-                    }, true);
-                }
-
-                grid.appendChild(card);
+                const count = tab.querySelector('[data-count]');
+                if (count) count.textContent = tournamentsLoaded ? String(allTournaments.filter(t => t.sport === tab.dataset.sport).length) : '';
+                if (count) count.hidden = !tournamentsLoaded;
             });
         }
-
-        // 📅 dates, 📍 venue, teams and upcoming fixtures — from the details
-        // the operator filled in when the tournament was created.
-        function tournamentInfoChips(t) {
-            const info = t.info || {};
-            const chips = [];
-            const fmt = (d) => {
-                const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
-                if (!m) return '';
-                return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-            };
-            const s = fmt(info.startDate), e = fmt(info.endDate);
-            if (s || e) chips.push(`📅 ${s && e && s !== e ? `${s} – ${e}` : (s || e)}`);
-            const place = [info.venue, info.city].filter(Boolean).join(', ');
-            if (place) chips.push(`📍 ${place}`);
-            if (info.teamCount) chips.push(`👥 ${info.teamCount} team${info.teamCount === 1 ? '' : 's'}`);
-            if (info.format) chips.push(`🏏 ${info.format}${info.overs ? ` · ${info.overs} ov` : ''}`);
-            if (t.upcomingCount) chips.push(`⏳ ${t.upcomingCount} upcoming`);
-            return chips.map(c => `<span class="tournament-meta-chip">${tkEscape(c)}</span>`).join('');
+        function setTournamentSport(sport, fromHistory) {
+            if (!TOURNAMENT_SPORTS[sport] || sport === tournamentSport) return;
+            tournamentSport = sport;
+            if (!fromHistory) {
+                const url = new URL(location.href);
+                if (sport === 'cricket') url.searchParams.delete('sport');
+                else url.searchParams.set('sport', TOURNAMENT_SPORTS[sport].slug);
+                history.pushState({ sport }, '', url.pathname + url.search + url.hash);
+            }
+            renderTournaments();
         }
+        (function sportTabs() {
+            const bar = document.getElementById('sportTabs');
+            if (!bar) return;
+            bar.addEventListener('click', (e) => {
+                const tab = e.target.closest('.sport-tab');
+                if (tab) setTournamentSport(tab.dataset.sport);
+            });
+            // ← → Home End move between the tabs (the ARIA tabs pattern)
+            bar.addEventListener('keydown', (e) => {
+                const tabs = [...bar.querySelectorAll('.sport-tab')];
+                const i = tabs.findIndex(tab => tab.dataset.sport === tournamentSport);
+                const j = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i + tabs.length - 1) % tabs.length
+                    : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+                if (j < 0) return;
+                e.preventDefault();
+                setTournamentSport(tabs[j].dataset.sport);
+                tabs[j].focus();
+            });
+            // Back / Forward between sports
+            window.addEventListener('popstate', () => setTournamentSport(sportFromUrl(), true));
+            updateSportTabs();
+        })();
+
+        // The row's arrows: hidden when everything fits, each disabled at its
+        // end; a press moves by the cards in view. Touch screens just swipe.
+        function updateTournamentRowNav() {
+            const grid = document.getElementById('tournaments-grid');
+            const nav = document.getElementById('tcNav');
+            if (!grid || !nav) return;
+            const max = grid.scrollWidth - grid.clientWidth;
+            nav.hidden = grid.hidden || max <= 4;
+            document.getElementById('tcPrev').disabled = grid.scrollLeft <= 4;
+            document.getElementById('tcNext').disabled = grid.scrollLeft >= max - 4;
+        }
+        (function tournamentRow() {
+            const grid = document.getElementById('tournaments-grid');
+            if (!grid) return;
+            let ticking = false;
+            grid.addEventListener('scroll', () => {
+                if (ticking) return;
+                ticking = true;
+                requestAnimationFrame(() => { ticking = false; updateTournamentRowNav(); });
+            }, { passive: true });
+            window.addEventListener('resize', updateTournamentRowNav, { passive: true });
+            const page = (dir) => {
+                const card = grid.querySelector('.tournament-card');
+                const step = card ? card.getBoundingClientRect().width + (parseFloat(getComputedStyle(grid).columnGap) || 0) : grid.clientWidth;
+                const inView = Math.max(1, Math.floor((grid.clientWidth + 2) / step));
+                grid.scrollBy({ left: dir * step * inView, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            };
+            document.getElementById('tcPrev').addEventListener('click', () => page(-1));
+            document.getElementById('tcNext').addEventListener('click', () => page(1));
+            document.getElementById('tournamentsRetry').addEventListener('click', () => {
+                // back to the loading cards, then try again
+                tournamentsLoadError = false;
+                grid.innerHTML = Array(5).fill('<div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>').join('');
+                grid.hidden = false;
+                grid.setAttribute('aria-busy', 'true');
+                document.getElementById('tournaments-empty').style.display = 'none';
+                loadTournaments();
+            });
+        })();
 
         (function tournamentTools() {
             const search = document.getElementById('tournamentSearch');
@@ -5625,12 +5847,14 @@
             importSection.hidden = !canImport;
             if (canImport) document.getElementById('manage-import-link').href = `/import-scorecard?owner=${encodeURIComponent(t.ownerUid)}&league=${encodeURIComponent(t.leagueKey)}`;
 
+            openThumbEditor(t);
             modal.classList.add('open');
         }
 
         function closeManageModal() {
             document.getElementById('manage-modal').classList.remove('open');
             manageTarget = null;
+            closeThumbEditor();
         }
 
         // Live-highlight the selected radio option in each group.
@@ -5700,6 +5924,264 @@
                 saveBtn.innerHTML = 'Save Changes';
             }
         }
+
+        // =====================================================================
+        // 🖼️ OWNER-ONLY THUMBNAIL — the card picture, in the Manage modal.
+        // Pick a JPG / PNG / WebP, see it in the card's own 16:9 frame, drag
+        // it (or use the arrow keys) to choose what the frame shows, save. The
+        // browser resizes it first (at most 1920 px, WebP or JPEG — which also
+        // drops the camera's EXIF data) and sends it to PUT …/thumbnail, which
+        // the server (requireOwner) only ever accepts from chhayajeeth@gmail.com's
+        // verified token. Each edit names the version it started from: if the
+        // picture changed meanwhile (another tab), the server refuses and the
+        // newest picture shows here. This panel is a convenience only.
+        // =====================================================================
+        const THUMB_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+        const THUMB_PICK_MAX = 25 * 1024 * 1024;   // the file picked, before resizing
+        const THUMB_MAX_SIDE = 1920;
+        const THUMB_MIN_WIDTH = 480;               // of the 16:9 frame it fills (as on the server)
+        const thumbEdit = { target: null, blob: null, url: null, focus: { x: 50, y: 50 }, saved: { x: 50, y: 50 }, busy: false, removeArmed: null };
+        const thumbEl = (id) => document.getElementById(id);
+        function thumbStatus(text, kind) {
+            const el = thumbEl('mtStatus');
+            el.textContent = text || '';
+            el.className = 'manage-modal-status' + (kind ? ' ' + kind : '');
+        }
+        function thumbDirty() {
+            return !!thumbEdit.blob || thumbEdit.focus.x !== thumbEdit.saved.x || thumbEdit.focus.y !== thumbEdit.saved.y;
+        }
+        function clearThumbDraft() {
+            if (thumbEdit.url) URL.revokeObjectURL(thumbEdit.url);
+            thumbEdit.blob = null;
+            thumbEdit.url = null;
+            thumbEdit.focus = Object.assign({}, thumbEdit.saved);
+        }
+        function thumbFromTarget(t) {
+            thumbEdit.saved = t.thumb ? { x: thumbPct(t.thumb.x), y: thumbPct(t.thumb.y) } : { x: 50, y: 50 };
+        }
+        // How far the picture reaches past the 16:9 frame (object-fit: cover)
+        function thumbOverflow() {
+            const img = thumbEl('mtImg'), frame = thumbEl('mtFrame');
+            const w = img.naturalWidth, h = img.naturalHeight, fw = frame.clientWidth, fh = frame.clientHeight;
+            if (img.hidden || !w || !h || !fw || !fh) return { x: 0, y: 0, any: false };
+            const s = Math.max(fw / w, fh / h);
+            const x = w * s - fw, y = h * s - fh;
+            return { x, y, any: x > 1 || y > 1 };
+        }
+        function renderThumbEditor() {
+            const t = thumbEdit.target;
+            if (!t) return;
+            const img = thumbEl('mtImg');
+            const src = thumbEdit.url || (t.thumb && t.thumb.url) || '';
+            if (src) {
+                if (img.getAttribute('src') !== src) img.src = src;
+                img.hidden = false;
+                img.style.objectPosition = `${thumbEdit.focus.x}% ${thumbEdit.focus.y}%`;
+                thumbEl('mtArt').hidden = true;
+            } else {
+                img.hidden = true;
+                img.removeAttribute('src');
+                const art = tournamentArt(t);
+                art.id = 'mtArt';
+                thumbEl('mtArt').replaceWith(art);
+            }
+            const dirty = thumbDirty(), has = !!(t.thumb && t.thumb.url), busy = thumbEdit.busy;
+            thumbEl('mtPick').classList.toggle('is-disabled', busy);
+            thumbEl('mtFile').disabled = busy;
+            thumbEl('mtRemove').hidden = !has || dirty;
+            thumbEl('mtCancel').hidden = !dirty;
+            thumbEl('mtSave').hidden = !dirty;
+            ['mtRemove', 'mtCancel', 'mtSave'].forEach(id => { thumbEl(id).disabled = busy; });
+            if (!busy) thumbEl('mtSave').textContent = thumbEdit.blob ? 'Save thumbnail' : 'Save position';
+            thumbEl('mtPick').querySelector('span').textContent = has || thumbEdit.blob ? 'Replace image' : 'Choose image';
+            const canMove = !!src && thumbOverflow().any;
+            thumbEl('mtFrame').classList.toggle('can-move', canMove);
+            thumbEl('mtHint').hidden = !canMove;
+        }
+        function openThumbEditor(t) {
+            clearThumbDraft();
+            thumbEdit.target = t;
+            thumbFromTarget(t);
+            thumbEdit.focus = Object.assign({}, thumbEdit.saved);
+            thumbStatus('');
+            clearTimeout(thumbEdit.removeArmed);
+            thumbEdit.removeArmed = null;
+            thumbEl('mtRemove').textContent = 'Remove';
+            renderThumbEditor();
+        }
+        function closeThumbEditor() {
+            clearThumbDraft();
+            thumbEdit.target = null;
+        }
+        // The picked file, resized in the browser: { blob, w, h }
+        async function prepareThumb(file) {
+            const url = URL.createObjectURL(file);
+            try {
+                const img = new Image();
+                img.src = url;
+                await img.decode();
+                const w0 = img.naturalWidth, h0 = img.naturalHeight;
+                if (!w0 || !h0) throw new Error('Could not read that picture');
+                const s = Math.min(1, THUMB_MAX_SIDE / Math.max(w0, h0));
+                const w = Math.max(1, Math.round(w0 * s)), h = Math.max(1, Math.round(h0 * s));
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                let blob = await new Promise(r => canvas.toBlob(r, 'image/webp', 0.86));
+                if (!blob || blob.type !== 'image/webp') blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.88));
+                if (!blob) throw new Error('Could not prepare that picture');
+                return { blob, w, h };
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        }
+        thumbEl('mtFile').addEventListener('change', async (e) => {
+            const file = e.target.files && e.target.files[0];
+            e.target.value = '';
+            if (!file || !thumbEdit.target || thumbEdit.busy) return;
+            if (!THUMB_TYPES.includes(file.type)) return thumbStatus('✕ Pick a JPG, PNG or WebP picture', 'err');
+            if (file.size > THUMB_PICK_MAX) return thumbStatus('✕ That picture is too big — up to 25 MB', 'err');
+            thumbStatus('Preparing the picture…');
+            try {
+                const p = await prepareThumb(file);
+                if (Math.min(p.w, p.h * 16 / 9) < THUMB_MIN_WIDTH) throw new Error(`That picture is too small for a sharp card — it needs at least ${THUMB_MIN_WIDTH} × ${Math.round(THUMB_MIN_WIDTH * 9 / 16)}`);
+                if (!thumbEdit.target) return;
+                if (thumbEdit.url) URL.revokeObjectURL(thumbEdit.url);
+                thumbEdit.blob = p.blob;
+                thumbEdit.url = URL.createObjectURL(p.blob);
+                thumbEdit.focus = { x: 50, y: 50 };
+                thumbStatus('Drag the picture to choose what the card shows, then save.');
+                renderThumbEditor();
+                thumbEl('mtImg').addEventListener('load', renderThumbEditor, { once: true });
+            } catch (err) {
+                thumbStatus('✕ ' + (err.message || 'Could not read that picture'), 'err');
+            }
+        });
+        // drag (mouse, finger, pen) or arrow keys: what the 16:9 frame shows
+        (function thumbDrag() {
+            const frame = thumbEl('mtFrame');
+            let drag = null;
+            const show = () => { thumbEl('mtImg').style.objectPosition = `${thumbEdit.focus.x}% ${thumbEdit.focus.y}%`; };
+            frame.addEventListener('pointerdown', (e) => {
+                if (thumbEdit.busy) return;
+                const o = thumbOverflow();
+                if (!o.any) return;
+                drag = { x: e.clientX, y: e.clientY, fx: thumbEdit.focus.x, fy: thumbEdit.focus.y, o };
+                frame.setPointerCapture(e.pointerId);
+                frame.classList.add('is-dragging');
+                e.preventDefault();
+            });
+            frame.addEventListener('pointermove', (e) => {
+                if (!drag) return;
+                // dragging the picture right shows more of its left side
+                if (drag.o.x > 1) thumbEdit.focus.x = thumbPct(drag.fx - (e.clientX - drag.x) / drag.o.x * 100);
+                if (drag.o.y > 1) thumbEdit.focus.y = thumbPct(drag.fy - (e.clientY - drag.y) / drag.o.y * 100);
+                show();
+            });
+            const end = () => {
+                if (!drag) return;
+                drag = null;
+                frame.classList.remove('is-dragging');
+                renderThumbEditor();
+            };
+            frame.addEventListener('pointerup', end);
+            frame.addEventListener('pointercancel', end);
+            frame.addEventListener('keydown', (e) => {
+                if (thumbEdit.busy || !thumbOverflow().any) return;
+                const step = e.shiftKey ? 10 : 2;
+                const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+                const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+                if (!dx && !dy) return;
+                e.preventDefault();
+                thumbEdit.focus = { x: thumbPct(thumbEdit.focus.x + dx), y: thumbPct(thumbEdit.focus.y + dy) };
+                renderThumbEditor();
+            });
+        })();
+        // the answer to an edit: the tournament's newest picture and version
+        function applyThumbAnswer(t, data) {
+            t.thumb = data.thumb || null;
+            t.thumbV = Number(data.thumbV) || 0;
+            thumbFromTarget(t);
+        }
+        async function thumbRequest(method, path, body, type) {
+            const t = thumbEdit.target;
+            const idToken = await auth.currentUser.getIdToken();
+            const res = await fetch(`/api/admin/tournaments/${encodeURIComponent(t.ownerUid)}/${encodeURIComponent(t.leagueKey)}/thumbnail${path}`, {
+                method, headers: Object.assign({ 'Authorization': `Bearer ${idToken}` }, type ? { 'Content-Type': type } : {}), body
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 409 && data.code === 'THUMB_CHANGED') {
+                // changed somewhere else: show the newest, drop this edit
+                applyThumbAnswer(t, data);
+                clearThumbDraft();
+                renderTournaments();
+                throw new Error(data.error);
+            }
+            if (!res.ok || !data.success) throw new Error((data && data.error) || `Request failed (${res.status})`);
+            return data;
+        }
+        async function thumbAction(btnId, label, run) {
+            const t = thumbEdit.target;
+            if (!t || thumbEdit.busy || !auth.currentUser) return;
+            thumbEdit.busy = true;
+            thumbEl(btnId).innerHTML = `<span class="manage-btn-spinner"></span>${label}`;
+            thumbStatus('');
+            renderThumbEditor();
+            try {
+                const done = await run(t);
+                renderTournaments();
+                if (thumbEdit.target === t) thumbStatus(done, 'ok');
+            } catch (err) {
+                console.warn('Tournament thumbnail:', err.message || err); // shown in the panel
+                if (thumbEdit.target === t) thumbStatus('✕ ' + (err.message || 'Could not save the thumbnail — the old one is unchanged'), 'err');
+            } finally {
+                thumbEdit.busy = false;
+                thumbEl('mtRemove').textContent = 'Remove';
+                renderThumbEditor();
+                // the pressed button may have just hidden itself: keep the
+                // keyboard in the panel, on the picture
+                const a = document.activeElement;
+                if (thumbEdit.target === t && (!a || a === document.body || a.hidden || a.disabled)) thumbEl('mtFrame').focus({ preventScroll: true });
+            }
+        }
+        thumbEl('mtSave').addEventListener('click', () => {
+            const upload = !!thumbEdit.blob;
+            thumbAction('mtSave', upload ? 'Uploading…' : 'Saving…', async (t) => {
+                const v = Number(t.thumbV) || 0, { x, y } = thumbEdit.focus;
+                const data = upload
+                    ? await thumbRequest('PUT', `?expect=${v}&x=${x}&y=${y}`, thumbEdit.blob, thumbEdit.blob.type)
+                    : await thumbRequest('POST', '/focus', JSON.stringify({ x, y, expect: v }), 'application/json');
+                applyThumbAnswer(t, data);
+                clearThumbDraft();
+                return upload ? '✓ Thumbnail saved — the card shows it now' : '✓ Position saved';
+            });
+        });
+        thumbEl('mtCancel').addEventListener('click', () => {
+            if (thumbEdit.busy) return;
+            clearThumbDraft();
+            thumbStatus('');
+            renderThumbEditor();
+            thumbEl('mtFrame').focus({ preventScroll: true });
+        });
+        thumbEl('mtRemove').addEventListener('click', () => {
+            const btn = thumbEl('mtRemove');
+            if (!thumbEdit.removeArmed) {
+                // a second press removes it
+                btn.textContent = 'Press again to remove';
+                thumbEdit.removeArmed = setTimeout(() => { thumbEdit.removeArmed = null; btn.textContent = 'Remove'; }, 3500);
+                return;
+            }
+            clearTimeout(thumbEdit.removeArmed);
+            thumbEdit.removeArmed = null;
+            btn.textContent = 'Remove';
+            thumbAction('mtRemove', 'Removing…', async (t) => {
+                const data = await thumbRequest('DELETE', `?expect=${Number(t.thumbV) || 0}`);
+                applyThumbAnswer(t, data);
+                clearThumbDraft();
+                return '✓ Removed — the card shows its designed picture again';
+            });
+        });
 
         loadTournaments();
 

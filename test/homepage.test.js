@@ -111,24 +111,29 @@ const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 't
 let gsapJs = null;
 try { gsapJs = fs.readFileSync(require.resolve('gsap/dist/gsap.min.js')); } catch (e) { /* the page falls back to CSS */ }
 
-async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null } = {}) {
+async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null, listFail = 0, listDelay = 0, url = '/' } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, timezoneId: 'Asia/Kolkata', reducedMotion: reduced ? 'reduce' : 'no-preference', isMobile: width < 800, hasTouch: width < 800 });
   const page = await ctx.newPage();
   await page.clock.install({ time: new Date('2026-10-22T12:00:00+05:30') });
   const errors = [], offsite = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  const state = { list, picks, adminCalls: [] };
-  await page.route('**/*', (route) => {
+  const state = { list, picks, adminCalls: [], listCalls: 0, listFail, imageHits: {} };
+  await page.route('**/*', async (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === 'site.test') {
       if (u.pathname === '/api/public/tournaments') {
+        state.listCalls++;
+        if (listDelay) await sleep(listDelay);
+        if (state.listFail > 0) { state.listFail--; return route.fulfill({ status: 500, contentType: 'application/json', body: '{"success":false,"tournaments":[]}' }); }
         // the owner's own view also lists what was taken off
         const ownerView = route.request().headers()['authorization'] === 'Bearer test-owner-token';
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, tournaments: state.list, streamPicks: ownerView ? state.picks : { added: state.picks.added } }) });
       }
-      if (u.pathname.startsWith('/api/admin/streams')) {
-        const call = { path: u.pathname, auth: route.request().headers()['authorization'] || null, body: JSON.parse(route.request().postData() || '{}') };
+      if (u.pathname.startsWith('/api/admin/streams') || u.pathname.startsWith('/api/admin/tournaments/')) {
+        const r = route.request(), type = r.headers()['content-type'] || '', raw = r.postDataBuffer();
+        const call = { method: r.method(), path: u.pathname, query: Object.fromEntries(u.searchParams), auth: r.headers()['authorization'] || null, type,
+          bytes: raw || null, body: /json/.test(type) && raw && raw.length ? JSON.parse(raw.toString()) : {} };
         state.adminCalls.push(call);
         const out = admin ? admin(call, state) : { status: 200, json: { success: true } };
         return route.fulfill({ status: out.status, contentType: 'application/json', body: JSON.stringify(out.json) });
@@ -149,12 +154,16 @@ async function openHome(browser, { width = 1440, height = 900, reduced = false, 
     if (u.hostname === 'www.gstatic.com' && /firebase-app-compat/.test(u.pathname)) return route.fulfill({ contentType: 'application/javascript', body: firebaseStub(owner) });
     if (u.hostname === 'www.gstatic.com') return route.fulfill({ contentType: 'application/javascript', body: '' });
     if (u.hostname === 'cdnjs.cloudflare.com' && gsapJs) return route.fulfill({ contentType: 'application/javascript', body: gsapJs });
+    if (u.hostname === 'cdn.asl.test') {   // where the owner's thumbnails live (R2)
+      state.imageHits[u.pathname] = (state.imageHits[u.pathname] || 0) + 1;
+      return /broken/.test(u.pathname) ? route.fulfill({ status: 404, body: '' }) : route.fulfill({ contentType: 'image/jpeg', body: fs.readFileSync(path.join(ROOT, 'assets/home/og-image.jpg')) });
+    }
     if (u.hostname === 'i.ytimg.com') return route.fulfill({ contentType: 'image/webp', body: fs.readFileSync(path.join(ROOT, 'assets/home/broadcast-tv-poster.webp')) });
     if (route.request().resourceType() === 'image') offsite.push(u.href);
     return route.abort();
   });
-  await page.goto('http://site.test/');
-  await page.waitForFunction(() => document.querySelectorAll('.tournament-card').length > 0 || document.getElementById('tournaments-empty').style.display === 'block');
+  await page.goto('http://site.test' + url);
+  if (!listDelay) await page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0 || document.getElementById('tournaments-empty').style.display === 'block');
   await page.addStyleTag({ content: 'html{scroll-behavior:auto !important}' });
   return { ctx, page, errors, offsite, state };
 }
@@ -601,18 +610,239 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await prm.ctx.close();
   }
 
+  console.log('\n=== tournaments: sport tabs, the 16:9 row ===');
+  {
+    const TH = (n, o) => Object.assign({ url: `https://cdn.asl.test/tournament-thumbs/${n}.jpg`, x: 50, y: 50, w: 1200, h: 630 }, o);
+    const list = TOURNAMENTS.map((t) => t.token === 't1' ? Object.assign({}, t, { thumb: TH('wspl', { y: 30 }) })
+      : t.token === 't3' ? Object.assign({}, t, { thumb: TH('broken') })
+      : t.token === 't7' ? Object.assign({}, t, { thumb: TH('portrait', { w: 645, h: 1398, y: 20 }) })
+      : t.token === 't5' ? Object.assign({}, t, { info: Object.assign({ shortName: 'NMDT' }, t.info) }) : t).concat([
+      TT({ token: 'tt1', name: 'City Open', sport: 'tabletennis', status: 'live', matchCount: 6, info: { season: '2026', city: 'Mumbai' } }),
+      TT({ token: 'tt2', name: 'Thane TT Masters', sport: 'tabletennis', status: 'completed', matchCount: 12, info: null }),
+      TT({ token: 't1b', name: 'Western Suburbs Premier League — Women', status: 'upcoming', matchCount: 0, upcomingCount: 4, info: { startDate: '2026-11-20' } })]);
+    const row = (page) => page.evaluate(() => ({
+      tabs: [...document.querySelectorAll('.sport-tab')].map((t) => [t.dataset.sport, t.getAttribute('aria-selected'), t.querySelector('[data-count]').textContent]),
+      title: document.getElementById('tournamentsRowTitle').textContent, search: location.search,
+      cards: [...document.querySelectorAll('#tournaments-grid .tournament-card h3')].map((h) => h.textContent) }));
+    const { ctx, page, errors, state } = await openHome(browser, { list });
+    let r = await row(page);
+    eq('three sport tabs with their counts; Cricket chosen, nothing in the URL', [r.tabs, r.search, r.title], [[['cricket', 'true', '8'], ['football', 'false', '1'], ['tabletennis', 'false', '2']], '', 'Cricket tournaments 8']);
+    eq('… the cricket row: cricket only, live first', r.cards, ['Western Suburbs Premier League', 'Weekend Box Cricket Smash', 'Thane Corporate Cup', 'MCA President Cup 2026 - 27', 'Navi Mumbai Diwali Trophy', 'Western Suburbs Premier League — Women', 'Pune Monsoon Bash', 'Kanga League 2026']);
+    const card = (token) => page.$eval(`#tournaments-grid a[data-token="${token}"]`, (a) => {
+      const m = a.querySelector('.tc-media'), b = m.getBoundingClientRect(), img = m.querySelector(':scope > img'), art = m.querySelector('.tc-art');
+      return { href: a.getAttribute('href'), ratio: +(b.width / b.height).toFixed(3), img: img ? [img.getAttribute('src'), img.style.objectPosition, getComputedStyle(img).objectFit, img.loading] : null,
+        art: art ? [art.querySelector('.tc-art-mono').textContent, art.querySelector('.tc-art-sport').textContent] : null, meta: a.querySelector('.tc-meta').textContent, sub: (a.querySelector('.tc-sub') || {}).textContent || '' };
+    });
+    let c = await card('t1');
+    eq('a thumbnail: in a 16:9 frame, filled (cover, never stretched), centred where the owner set it, loaded lazily', [c.ratio, c.img], [1.778, ['https://cdn.asl.test/tournament-thumbs/wspl.jpg', '50% 30%', 'cover', 'lazy']]);
+    eq('… the card opens that tournament by its token; the lines under the name', [c.href, c.meta, c.sub], ['/score/tournament/t1', 'Cricket · Season 3 · Mumbai', '28 matches · 1 Sept – 31 Oct']);
+    c = await card('t7');
+    eq('a portrait thumbnail: the same 16:9 frame, cropped where set', [c.ratio, c.img.slice(1, 3)], [1.778, ['50% 20%', 'cover']]);
+    c = await card('t6');
+    eq('no thumbnail: the designed picture — initials, its sport — in the same frame', [c.ratio, c.img, c.art], [1.778, null, ['WBCS', 'Cricket']]);
+    eq('… the initials of the first four words; a short name the operator set wins', [(await card('t1b')).art, (await card('t5')).art], [['WSPL', 'Cricket'], ['NMDT', 'Cricket']]);
+    await page.evaluate(() => document.querySelector('#tournaments-grid a[data-token="t3"]').scrollIntoView({ inline: 'center', block: 'nearest' }));
+    await page.waitForFunction(() => !!document.querySelector('#tournaments-grid a[data-token="t3"] .tc-art'), null, { timeout: 5000 });
+    await page.waitForTimeout(300);
+    c = await card('t3');
+    eq('a thumbnail that fails to load: the designed picture instead, asked for once', [c.ratio, c.img, c.art, state.imageHits['/tournament-thumbs/broken.jpg']], [1.778, null, ['PMB', 'Cricket'], 1]);
+    eq('two tournaments with almost the same name open their own pages', [(await card('t1')).href, (await card('t1b')).href], ['/score/tournament/t1', '/score/tournament/t1b']);
+    eq('an upcoming one says when it starts', (await card('t1b')).sub, 'Starts 20 Nov · 4 fixtures');
+    eq('a long name stays within two lines', await page.$eval('#tournaments-grid a[data-token="t1b"] h3', (h) => h.getBoundingClientRect().height <= parseFloat(getComputedStyle(h).lineHeight) * 2 + 1), true);
+    const calls = state.listCalls;
+    await page.click('#sportTab-tabletennis');
+    r = await row(page);
+    eq('Table Tennis: its own tournaments, the URL says so', [r.tabs.map((t) => t[1]), r.cards, r.title, r.search], [['false', 'false', 'true'], ['City Open', 'Thane TT Masters'], 'Table Tennis tournaments 2', '?sport=table-tennis']);
+    eq('… the table tennis picture', (await card('tt2')).art, ['TTM', 'Table Tennis']);
+    await page.click('#sportTab-football');
+    r = await row(page);
+    eq('Football: only the football one', [r.cards, r.search], [['Football Friendly'], '?sport=football']);
+    eq('… switching sports asks the server for nothing', state.listCalls, calls);
+    await page.goBack();
+    eq('Back: Table Tennis again', [(await row(page)).search, (await row(page)).cards], ['?sport=table-tennis', ['City Open', 'Thane TT Masters']]);
+    await page.goBack();
+    eq('Back again: Cricket', [(await row(page)).search, (await row(page)).tabs[0][1]], ['', 'true']);
+    await page.goForward();
+    eq('Forward: Table Tennis', (await row(page)).tabs[2][1], 'true');
+    await page.focus('#sportTab-tabletennis');
+    await page.keyboard.press('ArrowRight');
+    eq('the arrow keys move between the tabs (and wrap)', [await page.evaluate(() => document.activeElement.id), (await row(page)).tabs[0][1]], ['sportTab-cricket', 'true']);
+    // the row scrolls on its own, never the page
+    const nav = () => page.evaluate(() => ({ shown: !document.getElementById('tcNav').hidden, prev: document.getElementById('tcPrev').disabled, next: document.getElementById('tcNext').disabled,
+      left: document.getElementById('tournaments-grid').scrollLeft, pageX: window.scrollX, docW: document.documentElement.scrollWidth, winW: innerWidth }));
+    await page.evaluate(() => document.getElementById('tournaments').scrollIntoView());
+    await page.evaluate(() => { document.getElementById('tournaments-grid').scrollLeft = 0; });
+    await page.waitForTimeout(150);
+    let n = await nav();
+    eq('more cards than fit: the arrows show, Previous off at the start', [n.shown, n.prev, n.next], [true, true, false]);
+    await page.click('#tcNext');
+    await page.waitForFunction(() => document.getElementById('tournaments-grid').scrollLeft > 100, null, { timeout: 5000 });
+    await page.waitForTimeout(700);
+    n = await nav();
+    eq('Next moves the row by the cards in view — the page itself stays put', [n.left > 600, n.prev, n.pageX, n.docW <= n.winW], [true, false, 0, true]);
+    await page.click('#tcPrev');
+    await page.waitForFunction(() => document.getElementById('tournaments-grid').scrollLeft < 2, null, { timeout: 5000 });
+    eq('Previous goes back to the start', (await nav()).left < 2, true);
+    eq('the cards snap to their start', await page.$eval('#tournaments-grid', (g) => [getComputedStyle(g).scrollSnapType, getComputedStyle(g.querySelector('.tournament-card')).scrollSnapAlign]), ['x mandatory', 'start']);
+    eq('no page errors', errors, []);
+    await ctx.close();
+
+    // straight to a sport by its link; a sport with nothing in it
+    const tt = await openHome(browser, { list, url: '/?sport=table-tennis#tournaments' });
+    eq('opened with ?sport=table-tennis: that tab and its row', [(await row(tt.page)).tabs[2][1], (await row(tt.page)).cards], ['true', ['City Open', 'Thane TT Masters']]);
+    await tt.ctx.close();
+    const none = await openHome(browser, { list: list.filter((t) => t.sport !== 'football'), url: '/?sport=football' });
+    eq('a sport with no tournaments: says so, the tabs stay', await none.page.evaluate(() => [document.getElementById('tournaments-empty').style.display, document.getElementById('tournamentsEmptyText').textContent,
+      document.getElementById('tournaments-grid').hidden, document.querySelectorAll('.sport-tab').length]), ['block', 'No football tournaments right now.', true, 3]);
+    await none.ctx.close();
+
+    // loading, and a list that will not load
+    const slow = await openHome(browser, { list, listDelay: 1500 });
+    eq('loading: placeholder cards in the same 16:9 shape', await slow.page.evaluate(() => [document.getElementById('tournaments-grid').getAttribute('aria-busy'), [...document.querySelectorAll('#tournaments-grid .is-skeleton .tc-media')].map((m) => +(m.getBoundingClientRect().width / m.getBoundingClientRect().height).toFixed(3))]),
+      ['true', [1.778, 1.778, 1.778, 1.778, 1.778]]);
+    await slow.page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
+    eq('… then the real cards', [await slow.page.evaluate(() => document.getElementById('tournaments-grid').hasAttribute('aria-busy')), (await cards(slow.page)).length], [false, 8]);
+    await slow.ctx.close();
+    // both loads at start (the page's own, and the one after sign-in state) fail
+    const down = await openHome(browser, { list, listFail: 2 });
+    await down.page.waitForFunction(() => document.getElementById('tournaments-empty').style.display === 'block', null, { timeout: 8000 });
+    eq('the list fails to load: says so and offers Try again — no endless spinner', await down.page.evaluate(() => [document.getElementById('tournamentsEmptyText').textContent, document.getElementById('tournamentsRetry').hidden]),
+      ['Could not load the tournaments right now.', false]);
+    await down.page.click('#tournamentsRetry');
+    await down.page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
+    eq('… Try again brings the cards', [(await cards(down.page)).length, await down.page.evaluate(() => document.getElementById('tournamentsRetry').hidden)], [8, true]);
+    await down.ctx.close();
+  }
+
+  console.log('\n=== the owner\'s thumbnails ===');
+  {
+    // A stand-in for the owner-only thumbnail routes with server.js's rules
+    // (test/tournament-thumbnails-server.test.js checks the real ones): the
+    // owner's token only, the version the edit started from, the picture.
+    const plan = { next: null }, uploads = [];
+    let seq = 0;
+    const admin = (call, state) => {
+      if (call.auth !== 'Bearer test-owner-token') return { status: 403, json: { success: false, error: 'Access Denied' } };
+      const m = /^\/api\/admin\/tournaments\/([^/]+)\/([^/]+)\/thumbnail(\/focus)?$/.exec(call.path);
+      const t = m && state.list.find((x) => x.ownerUid === decodeURIComponent(m[1]) && x.leagueKey === decodeURIComponent(m[2]));
+      if (!t) return { status: 404, json: { success: false, error: 'Tournament not found' } };
+      if (plan.next) { const out = plan.next(t); plan.next = null; return out; }
+      const expect = Number(call.method === 'POST' ? call.body.expect : call.query.expect);
+      if (expect !== (t.thumbV || 0)) return { status: 409, json: { success: false, code: 'THUMB_CHANGED', error: 'This thumbnail was just changed somewhere else — showing the newest one now', thumb: t.thumb || null, thumbV: t.thumbV || 0 } };
+      if (call.method === 'PUT') {
+        uploads.push(call);
+        t.thumb = { url: `https://cdn.asl.test/tournament-thumbs/up${++seq}.webp`, x: Number(call.query.x), y: Number(call.query.y), w: 1200, h: 630 };
+      } else if (call.method === 'POST') t.thumb = Object.assign({}, t.thumb, { x: call.body.x, y: call.body.y });
+      else t.thumb = null;
+      t.thumbV = expect + 1;
+      return { status: 200, json: { success: true, thumb: t.thumb, thumbV: t.thumbV } };
+    };
+    const own = (o) => Object.assign({ ownerUid: 'u-work', createdBy: 'workallsportslive@gmail.com', isPrivate: false, thumbV: 0, thumb: null }, o);
+    const list = [own(TT({ token: 'o1', leagueKey: 'pub cup', name: 'Pub Cup', status: 'live' })),
+      own(TT({ token: 'o2', leagueKey: 'dyp t20', name: 'DY Patil T20', status: 'ongoing', thumbV: 3, thumb: { url: 'https://cdn.asl.test/tournament-thumbs/dyp.jpg', x: 50, y: 50, w: 1200, h: 630 } }))];
+    const pic = (p, mimeType = 'image/jpeg', name = 'pic.jpg') => ({ name, mimeType, buffer: fs.readFileSync(path.join(ROOT, p)) });
+    const ed = (page) => page.evaluate(() => {
+      const v = (id) => { const e = document.getElementById(id); return e.hidden ? null : e.textContent.trim(); };
+      const img = document.getElementById('mtImg'), f = document.getElementById('mtFrame').getBoundingClientRect();
+      return { img: img.hidden ? null : [img.getAttribute('src').slice(0, 5), img.style.objectPosition], art: !document.getElementById('mtArt').hidden, ratio: +(f.width / f.height).toFixed(3),
+        pick: document.querySelector('#mtPick span').textContent, remove: v('mtRemove'), cancel: v('mtCancel'), save: v('mtSave'), status: document.getElementById('mtStatus').textContent };
+    });
+    const manage = async (page, token) => { await page.evaluate((tok) => document.querySelector(`#tournaments-grid a[data-token="${tok}"] [data-manage-btn]`).click(), token); await page.waitForTimeout(150); };
+    const { ctx, page, errors, state } = await openHome(browser, { owner: true, list, admin });
+    await page.waitForFunction(() => document.querySelectorAll('[data-manage-btn]').length === 2, null, { timeout: 8000 });
+    await manage(page, 'o1');
+    let e = await ed(page);
+    eq('Manage → the thumbnail panel: the designed picture in the 16:9 frame, one button', [e.ratio, e.art, e.img, e.pick, e.remove, e.cancel, e.save], [1.778, true, null, 'Choose image', null, null, null]);
+    await page.setInputFiles('#mtFile', pic('assets/home/walk-six.webp', 'image/gif', 'anim.gif'));
+    eq('a GIF: refused here, nothing sent', [(await ed(page)).status, uploads.length], ['✕ Pick a JPG, PNG or WebP picture', 0]);
+    await page.setInputFiles('#mtFile', pic('logo.png', 'image/png', 'logo.png'));
+    await page.waitForFunction(() => /too small/.test(document.getElementById('mtStatus').textContent), null, { timeout: 5000 });
+    eq('a picture too small for a sharp card: says so, nothing sent', [(await ed(page)).status, uploads.length], ['✕ That picture is too small for a sharp card — it needs at least 480 × 270', 0]);
+    await page.setInputFiles('#mtFile', pic('assets/home/og-image.jpg'));
+    await page.waitForFunction(() => !document.getElementById('mtSave').hidden && document.getElementById('mtImg').naturalWidth > 0, null, { timeout: 8000 });
+    e = await ed(page);
+    eq('a landscape JPEG: previewed in the card\'s frame, centred; Save / Cancel', [e.img, e.ratio, e.save, e.cancel, e.remove, e.status], [['blob:', '50% 50%'], 1.778, 'Save thumbnail', 'Cancel', null, 'Drag the picture to choose what the card shows, then save.']);
+    const box = await page.$eval('#mtFrame', (f) => { const b = f.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+    await page.mouse.move(box.x, box.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 80, box.y, { steps: 6 });
+    await page.mouse.up();
+    eq('drag it left: the frame shows its right side (it is wider than 16:9 — only sideways moves)', (await ed(page)).img[1], '100% 50%');
+    await page.click('#mtSave');
+    await page.waitForFunction(() => /saved/.test(document.getElementById('mtStatus').textContent), null, { timeout: 8000 });
+    const up = uploads[0];
+    eq('Save: one upload — resized in the browser to WebP, with the owner\'s token, the version it started from and the position',
+      [uploads.length, up.method, up.type, up.bytes.slice(0, 4).toString() + up.bytes.slice(8, 12).toString(), up.auth, up.query], [1, 'PUT', 'image/webp', 'RIFFWEBP', 'Bearer test-owner-token', { expect: '0', x: '100', y: '50' }]);
+    eq('… the card shows the new picture at once', await page.$eval('#tournaments-grid a[data-token="o1"] .tc-media > img', (i) => [i.getAttribute('src'), i.style.objectPosition]), ['https://cdn.asl.test/tournament-thumbs/up1.webp', '100% 50%']);
+    e = await ed(page);
+    eq('… the panel: the saved picture, Replace / Remove', [e.status, e.pick, e.remove, e.save], ['✓ Thumbnail saved — the card shows it now', 'Replace image', 'Remove', null]);
+    // a portrait picture: up and down (arrow keys)
+    await page.setInputFiles('#mtFile', pic('assets/home/walk-player.webp', 'image/webp', 'tall.webp'));
+    await page.waitForFunction(() => !document.getElementById('mtSave').hidden && document.getElementById('mtImg').naturalWidth > 0 && /^blob/.test(document.getElementById('mtImg').src), null, { timeout: 8000 });
+    await page.focus('#mtFrame');
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Shift+ArrowUp');
+    eq('a portrait picture: the arrow keys move it up and down (2 a press, 10 with Shift)', (await ed(page)).img[1], '50% 34%');
+    plan.next = () => ({ status: 500, json: { success: false, error: 'Could not save the thumbnail — the old one is unchanged' } });
+    await page.click('#mtSave');
+    await page.waitForFunction(() => /✕/.test(document.getElementById('mtStatus').textContent), null, { timeout: 8000 });
+    eq('the server fails: says so, the card keeps its picture, the new one can be saved again', [(await ed(page)).status, await page.$eval('#tournaments-grid a[data-token="o1"] .tc-media > img', (i) => i.getAttribute('src')), (await ed(page)).save],
+      ['✕ Could not save the thumbnail — the old one is unchanged', 'https://cdn.asl.test/tournament-thumbs/up1.webp', 'Save thumbnail']);
+    await page.click('#mtCancel');
+    e = await ed(page);
+    eq('Cancel: back to the saved picture and position', [e.img, e.save, e.remove], [['https', '100% 50%'], null, 'Remove']);
+    // remove: two presses
+    await page.click('#mtRemove');
+    eq('Remove asks for a second press', [(await ed(page)).remove, uploads.length, state.adminCalls.filter((x) => x.method === 'DELETE').length], ['Press again to remove', 1, 0]);
+    await page.click('#mtRemove');
+    await page.waitForFunction(() => /Removed/.test(document.getElementById('mtStatus').textContent), null, { timeout: 8000 });
+    const del = state.adminCalls.filter((x) => x.method === 'DELETE');
+    eq('… removed: one DELETE from version 1, the card shows its designed picture again', [del.length, del[0].query, await page.$eval('#tournaments-grid a[data-token="o1"] .tc-media', (m) => [!!m.querySelector(':scope > img'), !!m.querySelector('.tc-art')]), (await ed(page)).art],
+      [1, { expect: '1' }, [false, true], true]);
+    await page.click('#manage-modal .manage-btn.secondary');
+    // a position-only change, and a stale one
+    await manage(page, 'o2');
+    await page.focus('#mtFrame');
+    await page.waitForFunction(() => document.getElementById('mtImg').naturalWidth > 0, null, { timeout: 8000 });
+    await page.keyboard.press('ArrowRight');
+    eq('a saved picture moved: Save position', [(await ed(page)).save, (await ed(page)).img[1]], ['Save position', '52% 50%']);
+    await page.click('#mtSave');
+    await page.waitForFunction(() => /Position saved/.test(document.getElementById('mtStatus').textContent), null, { timeout: 8000 });
+    const focusCall = state.adminCalls.filter((x) => /\/focus$/.test(x.path)).pop();
+    eq('… sent as a position, from version 3', [focusCall.method, focusCall.body], ['POST', { x: 52, y: 50, expect: 3 }]);
+    list[1].thumbV = 9;   // another tab saved a newer picture meanwhile
+    list[1].thumb = { url: 'https://cdn.asl.test/tournament-thumbs/newer.jpg', x: 10, y: 50, w: 1200, h: 630 };
+    await page.keyboard.press('ArrowRight');
+    await page.click('#mtSave');
+    await page.waitForFunction(() => /changed somewhere else/.test(document.getElementById('mtStatus').textContent), null, { timeout: 8000 });
+    e = await ed(page);
+    eq('an edit from an older version: refused, the newest picture shows, the edit is dropped', [e.img[1], e.save, await page.$eval('#tournaments-grid a[data-token="o2"] .tc-media > img', (i) => i.getAttribute('src'))],
+      ['10% 50%', null, 'https://cdn.asl.test/tournament-thumbs/newer.jpg']);
+    eq('no page errors', errors, []);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'home-thumb-editor.png') });
+    await ctx.close();
+    // anyone else: no Manage, so no thumbnail controls at all
+    const visitor = await openHome(browser, { list, admin });
+    eq('a visitor: no Manage on the cards, nothing sent', [await visitor.page.$$eval('[data-manage-btn]', (b) => b.length), visitor.state.adminCalls.length], [0, 0]);
+    await visitor.ctx.close();
+  }
+
   console.log('\n=== no sideways scrolling, every width ===');
-  for (const [w, h] of [[320, 640], [390, 844], [768, 1024], [1024, 768], [1440, 900]]) {
+  for (const [w, h] of [[320, 640], [360, 740], [390, 844], [430, 932], [768, 1024], [1024, 768], [1440, 900], [1920, 1080]]) {
     const { ctx, page, errors } = await openHome(browser, { width: w, height: h });
     const r = await page.evaluate(() => {
       const out = [];
-      document.querySelectorAll('.hero-ctas, .hero-usps, .flow-step, .feat-copy, .feat-media, .feat-media img, .reel-chip, .shot-phone, .shot-card, .walk-phone, .walk-step, .walk-cap, .tv, .tv-step, .tv-co b, .hi-editor, .sport-tile, .tournament-tools, .stream-card, .channel-card').forEach((el) => {
+      document.querySelectorAll('.hero-ctas, .hero-usps, .flow-step, .feat-copy, .feat-media, .feat-media img, .reel-chip, .shot-phone, .shot-card, .walk-phone, .walk-step, .walk-cap, .tv, .tv-step, .tv-co b, .hi-editor, .sport-tile, .sport-tabs, .sport-tab, .tc-head, .tournament-tools, .stream-card, .channel-card').forEach((el) => {
         const b = el.getBoundingClientRect();
         if (b.width && getComputedStyle(el).display !== 'none' && (b.left < -0.5 || b.right > innerWidth + 0.5)) out.push(el.className.split(' ')[0] + ' ' + Math.round(b.left) + '..' + Math.round(b.right));
       });
       return { html: document.documentElement.scrollWidth, iw: innerWidth, out };
     });
     eq(`${w}px: the page is no wider than the screen, nothing of the new sections off it`, [r.html <= r.iw, r.out], [true, []]);
+    const tc = await page.evaluate(() => { const g = document.getElementById('tournaments-grid'), first = g.querySelector('.tournament-card').getBoundingClientRect();
+      return { ratios: [...new Set([...g.querySelectorAll('.tc-media')].map((m) => (m.getBoundingClientRect().width / m.getBoundingClientRect().height).toFixed(3)))],
+        inView: +(g.clientWidth / first.width).toFixed(1), label: [...document.querySelectorAll('.sport-tab span:not(.sport-tab-count)')].every((s) => s.scrollWidth <= s.clientWidth + 1) }; });
+    eq(`${w}px: every card picture 16:9; ${w < 600 ? 'one card and a part of the next' : 'several cards'} in view; the tab names fit`, [tc.ratios, w < 600 ? tc.inView > 1 && tc.inView < 1.5 : tc.inView > 2, tc.label], [['1.778'], true, true]);
     eq(`${w}px: no page errors`, errors, []);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `home-${w}.png`), fullPage: true, clip: { x: 0, y: 0, width: w, height: Math.min(16000, await page.evaluate(() => document.documentElement.scrollHeight)) } });
     await ctx.close();
