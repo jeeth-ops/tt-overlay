@@ -10,7 +10,8 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstallerPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegInstallerPath);
 const { google } = require('googleapis');
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { spawn } = require('child_process');
 
 // ================================================================
 // ☁️ CLOUDFLARE R2 — where clips live for their first (public-facing)
@@ -1894,10 +1895,92 @@ function cleanThumbFocus(v) {
     const n = Number(v);
     return v === '' || v == null || !Number.isFinite(n) ? 50 : Math.round(Math.min(100, Math.max(0, n)) * 10) / 10;
 }
-// The picture as a card shows it — no storage key, no uploader.
+// The picture as a card shows it — no storage key, no uploader. palette:
+// its own colours ('#rrggbb', see thumbPalette), null until they are read.
 function publicThumb(t) {
     if (!t || !t.key || !t.url) return null;
-    return { url: t.url, x: cleanThumbFocus(t.focus && t.focus.x), y: cleanThumbFocus(t.focus && t.focus.y), w: Number(t.w) || null, h: Number(t.h) || null };
+    return { url: t.url, x: cleanThumbFocus(t.focus && t.focus.x), y: cleanThumbFocus(t.focus && t.focus.y), w: Number(t.w) || null, h: Number(t.h) || null,
+        palette: Array.isArray(t.palette) ? t.palette.filter(c => /^#[0-9a-f]{6}$/.test(c)).slice(0, 2) : null };
+}
+// 🎨 A picture's own colours — the tournament page dresses itself in them
+// (accents, glow) and the homepage card glows in them: the most vivid hue
+// the picture is made of, and a second one at least 60° away when it has
+// one. [] for a picture with no real colour (the token's colours are used).
+// rgb: raw 8-bit RGB triplets of a small copy of the picture.
+function thumbPaletteOfPixels(rgb) {
+    const bins = Array.from({ length: 12 }, () => ({ w: 0, r: 0, g: 0, b: 0 }));
+    let px = 0, vivid = 0;
+    for (let i = 0; i + 2 < rgb.length; i += 3) {
+        const r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
+        const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 510;
+        const s = max === min ? 0 : (max - min) / (255 - Math.abs(max + min - 255));
+        px++;
+        if (s < 0.2 || l < 0.12 || l > 0.9) continue;      // greys, near-black, near-white
+        vivid++;
+        const h = max === r ? ((g - b) / (max - min) + 6) % 6 : max === g ? (b - r) / (max - min) + 2 : (r - g) / (max - min) + 4;
+        const bin = bins[Math.floor(h * 2) % 12];          // 30° hues
+        const w = s * (1 - Math.abs(2 * l - 1));            // vivid mid-tones count most
+        bin.w += w; bin.r += r * w; bin.g += g * w; bin.b += b * w;
+    }
+    if (!px || vivid < px * 0.04) return [];
+    const ranked = bins.map((bin, k) => Object.assign({ k }, bin)).filter(bin => bin.w > 0).sort((x, y) => y.w - x.w);
+    const hex = bin => '#' + [bin.r, bin.g, bin.b].map(v => Math.round(v / bin.w).toString(16).padStart(2, '0')).join('');
+    const first = ranked[0];
+    const second = ranked.find(bin => { const d = Math.abs(bin.k - first.k); return Math.min(d, 12 - d) >= 2 && bin.w >= first.w * 0.12; });
+    return second ? [hex(first), hex(second)] : [hex(first)];
+}
+// ffmpeg reads the picture (JPEG, PNG or WebP) down to 32×18 pixels for
+// that — from a file: the bundled ffmpeg cannot read every WebP from a
+// pipe. null when it cannot (nothing breaks — the token's colours are used).
+function thumbPalette(buf) {
+    return new Promise((resolve) => {
+        const file = path.join(os.tmpdir(), `thumb-colours-${crypto.randomBytes(8).toString('hex')}`);
+        let done = false, timer = null;
+        const finish = (v) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            fs.unlink(file, () => {});
+            resolve(v);
+        };
+        fs.writeFile(file, buf, (err) => {
+            if (err) return finish(null);
+            let proc;
+            try {
+                proc = spawn(ffmpegInstallerPath, ['-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=32:18:flags=area', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+            } catch (e) { return finish(null); }
+            const out = [];
+            timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) { /* gone */ } finish(null); }, 8000);
+            proc.stdout.on('data', d => out.push(d));
+            proc.on('error', () => finish(null));
+            proc.on('close', code => {
+                const rgb = Buffer.concat(out);
+                finish(code === 0 && rgb.length >= 32 * 18 * 3 ? thumbPaletteOfPixels(rgb) : null);
+            });
+        });
+    });
+}
+// A picture saved before its colours were read gets them the first time its
+// tournament is shown: read back from R2, one at a time, each once per run,
+// and only ever set on that same picture (a newer one is left alone).
+const thumbPaletteTried = new Set();
+let thumbPaletteQueue = Promise.resolve();
+function backfillThumbPalette(doc) {
+    const thumb = doc && doc.thumb;
+    if (!thumb || !thumb.key || Array.isArray(thumb.palette) || thumbPaletteTried.has(thumb.key)) return;
+    if (!r2Client || !R2_BUCKET_NAME || !leaguesCollection) return;
+    thumbPaletteTried.add(thumb.key);
+    thumbPaletteQueue = thumbPaletteQueue.then(async () => {
+        try {
+            const obj = await r2Client.send(new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: thumb.key }));
+            const palette = await thumbPalette(Buffer.from(await obj.Body.transformToByteArray()));
+            if (!palette) return;
+            const saved = await leaguesCollection.updateOne({ ownerUid: doc.ownerUid, leagueKey: doc.leagueKey, 'thumb.key': thumb.key }, { $set: { 'thumb.palette': palette } });
+            if (saved && saved.modifiedCount) invalidateTournamentCaches(doc.publicToken);
+        } catch (err) {
+            console.log(`Tournament thumbnail colours (${thumb.key}):`, err.message || err);
+        }
+    });
 }
 // An old picture's object, once no tournament points at it any more — best
 // effort: a failure only leaves an unused object behind, never a broken card.
@@ -3395,6 +3478,7 @@ app.get('/api/public/tournament/:token', async (req, res) => {
             }
         }
 
+        backfillThumbPalette(doc);
         const cached = getCached(publicTournamentCache, req.params.token);
         if (cached) return res.json(cached);
         const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
@@ -3453,7 +3537,10 @@ app.get('/api/public/tournament/:token', async (req, res) => {
             // tournament at once (see the live-status route comment above).
             live: { roomId: doc.liveRoomId || null, matchId: doc.liveMatchId || null, matches: liveMatches },
             pointsTable: computePointsTable(matches),
-            leaderboards: computeLeaderboards(matches)
+            leaderboards: computeLeaderboards(matches),
+            // the page dresses itself in its picture (or its own colours)
+            sport: normalizeSport(doc.sport, doc.displayName || doc.leagueKey),
+            thumb: publicThumb(doc.thumb)
         };
         setCached(publicTournamentCache, req.params.token, payload, PUBLIC_CACHE_TTL_MS);
         res.json(payload);
@@ -3809,6 +3896,7 @@ app.get('/api/public/tournaments', async (req, res) => {
             }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1, thumb: 1, thumbV: 1 }).toArray();
 
             const allTournaments = await Promise.all(leagues.map(async doc => {
+                backfillThumbPalette(doc);
                 const sport = normalizeSport(doc.sport, doc.displayName || doc.leagueKey);
                 const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
                 const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
@@ -3883,6 +3971,7 @@ app.get('/api/public/tournaments', async (req, res) => {
             // owner override) reach an anonymous/non-owner visitor — not in
             // this list, not in its match count, nothing.
             if (effectiveIsPrivate(doc, creatorEmail)) return null;
+            backfillThumbPalette(doc);
             const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
             const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
             return {
@@ -6066,6 +6155,7 @@ adminRouter.put('/tournaments/:ownerUid/:leagueKey/thumbnail', readThumbBody, as
         if (!r2Client || !R2_BUCKET_NAME || !R2_PUBLIC_URL) return res.status(503).json({ success: false, error: 'Picture storage (R2) is not set up on this server — nothing was changed' });
 
         const key = `tournament-thumbs/${crypto.randomBytes(12).toString('hex')}.${TOURNAMENT_THUMB_TYPES[info.type]}`;
+        const colours = thumbPalette(buf);   // read while it uploads
         try {
             await r2Client.send(new PutObjectCommand({
                 Bucket: R2_BUCKET_NAME, Key: key, Body: buf, ContentLength: buf.length, ContentType: info.type,
@@ -6079,6 +6169,8 @@ adminRouter.put('/tournaments/:ownerUid/:leagueKey/thumbnail', readThumbBody, as
             key, url: `${R2_PUBLIC_URL}/${key}`, type: info.type, w: info.w, h: info.h, bytes: buf.length,
             focus: { x: cleanThumbFocus(req.query.x), y: cleanThumbFocus(req.query.y) }, at: Date.now(), by: req.ownerEmail
         };
+        const palette = await colours;
+        if (palette) thumb.palette = palette;   // else read later (backfillThumbPalette)
         let saved;
         try {
             saved = await leaguesCollection.updateOne(atThumbV(t, expect), { $set: { thumb, thumbV: expect + 1 } });

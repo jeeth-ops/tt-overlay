@@ -63,7 +63,17 @@ NODE_PATH=$(npm root -g) node test/homepage.test.js   # 🏠 the homepage in Chr
 node test/tournament-thumbnails-server.test.js    # 🖼️ tournament thumbnails + the sport list on the REAL server (in-memory MongoDB + R2): three
                                                   # sports ('tt' → Table Tennis, no "TT::"), only chhayajeeth@gmail.com may set / move / remove
                                                   # (403 for all else, spoofed claims too), checked by its bytes, too big / small refused,
-                                                  # replace + remove clean storage, failed upload / save keep the old one, stale edits refused, audit
+                                                  # replace + remove clean storage, failed upload / save keep the old one, stale edits refused, audit;
+                                                  # the picture's own colours (read at upload; [] grey, null unreadable) on the homepage list
+                                                  # and the tournament page (+ its sport); older pictures filled in once per run, never onto a
+                                                  # newer picture; a private tournament's page stays "not found" to everyone else
+NODE_PATH=$(npm root -g) node test/tournament-cover.test.js   # 🎬 the tournament page's cover in Chromium: its thumbnail edge to edge (laptop + phone,
+                                                  # 320–1440, no sideways scroll), vivid — the shade leaves the picture's pixels as they are
+                                                  # away from the words — and the words reading on it (contrast measured off the screen, both
+                                                  # themes); the page in the picture's colours with real contrast (won / live keep theirs);
+                                                  # the card's poster without a picture or when it fails, kept through the 20 s re-draw; the
+                                                  # same picture kept (no blink, no entrance again), a new one / new crop replaces it; names
+                                                  # and links from the database never markup; works without /tournament-art.js
 node test/homepage-streams-server.test.js         # ▶️ homepage Latest streams on the REAL server (in-memory MongoDB): a match's link is "live"
                                                   # only while the panel pings; only chhayajeeth@gmail.com may add / remove / restore (403 for
                                                   # all else); bad links refused; YouTube's title when none typed; restore; the audit log

@@ -116,21 +116,21 @@ const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 't
 let gsapJs = null;
 try { gsapJs = fs.readFileSync(require.resolve('gsap/dist/gsap.min.js')); } catch (e) { /* the page falls back to CSS */ }
 
-async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null, listFail = 0, listDelay = 0, url = '/' } = {}) {
+async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null, listDown = false, listDelay = 0, url = '/' } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, timezoneId: 'Asia/Kolkata', reducedMotion: reduced ? 'reduce' : 'no-preference', isMobile: width < 800, hasTouch: width < 800 });
   const page = await ctx.newPage();
   await page.clock.install({ time: new Date('2026-10-22T12:00:00+05:30') });
   const errors = [], offsite = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  const state = { list, picks, adminCalls: [], listCalls: 0, listFail, imageHits: {} };
+  const state = { list, picks, adminCalls: [], listCalls: 0, listDown, imageHits: {} };
   await page.route('**/*', async (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === 'site.test') {
       if (u.pathname === '/api/public/tournaments') {
         state.listCalls++;
         if (listDelay) await sleep(listDelay);
-        if (state.listFail > 0) { state.listFail--; return route.fulfill({ status: 500, contentType: 'application/json', body: '{"success":false,"tournaments":[]}' }); }
+        if (state.listDown) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"success":false,"tournaments":[]}' });
         // the owner's own view also lists what was taken off
         const ownerView = route.request().headers()['authorization'] === 'Bearer test-owner-token';
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, tournaments: state.list, streamPicks: ownerView ? state.picks : { added: state.picks.added } }) });
@@ -174,7 +174,16 @@ async function openHome(browser, { width = 1440, height = 900, reduced = false, 
 }
 const cards = (page) => page.$$eval('.tournament-card h3', (h) => h.map((x) => x.textContent));
 const statuses = (page) => page.$$eval('.tournament-card', (c) => c.map((x) => (x.className.match(/status-(\w+)/) || [])[1]));
-async function search(page, text) { await page.fill('#tournamentSearch', text); await page.waitForTimeout(260); }
+// type in the search box, then wait for the list to answer it — the box waits
+// 140 ms for the typing to stop, and a busy machine can take longer than any
+// fixed wait to draw the result (every search here changes what is shown)
+const LIST_SHOWN = "[...document.querySelectorAll('.tournament-card h3')].map((h) => h.textContent).join('|')"
+  + " + '#' + document.getElementById('tournamentsCount').textContent + '#' + document.getElementById('tournaments-empty').style.display";
+async function search(page, text) {
+  const before = await page.evaluate(LIST_SHOWN);
+  await page.fill('#tournamentSearch', text);
+  await page.waitForFunction(`(${LIST_SHOWN}) !== ${JSON.stringify(before)}`, null, { timeout: 3000 }).catch(() => {});
+}
 
 (async () => {
   const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
@@ -708,14 +717,18 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await slow.page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
     eq('… then the real cards', [await slow.page.evaluate(() => document.getElementById('tournaments-grid').hasAttribute('aria-busy')), (await cards(slow.page)).length], [false, 8]);
     await slow.ctx.close();
-    // both loads at start (the page's own, and the one after sign-in state) fail
-    const down = await openHome(browser, { list, listFail: 2 });
+    // the list will not load — every load at start fails (the page's own,
+    // and the one after the sign-in state when that comes after it) — until
+    // the server is back
+    const down = await openHome(browser, { list, listDown: true });
     await down.page.waitForFunction(() => document.getElementById('tournaments-empty').style.display === 'block', null, { timeout: 8000 });
     eq('the list fails to load: says so and offers Try again — no endless spinner', await down.page.evaluate(() => [document.getElementById('tournamentsEmptyText').textContent, document.getElementById('tournamentsRetry').hidden]),
       ['Could not load the tournaments right now.', false]);
+    down.state.listDown = false;
+    const tries = down.state.listCalls;
     await down.page.click('#tournamentsRetry');
     await down.page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
-    eq('… Try again brings the cards', [(await cards(down.page)).length, await down.page.evaluate(() => document.getElementById('tournamentsRetry').hidden)], [8, true]);
+    eq('… Try again asks again and brings the cards', [down.state.listCalls > tries, (await cards(down.page)).length, await down.page.evaluate(() => document.getElementById('tournamentsRetry').hidden)], [true, 8, true]);
     await down.ctx.close();
   }
 
