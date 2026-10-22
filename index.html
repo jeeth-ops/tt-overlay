@@ -324,7 +324,7 @@
         a, button, input[type="button"], input[type="submit"],
         .cta-btn, .nav-btn, .auth-btn, .theme-toggle, .nav-hamburger,
         .mobile-nav-link, .sport-card, .tournament-card, .template-card,
-        .db-tab-btn, .integration-card, .step-card,
+        .db-tab-btn, .integration-card,
         [role="button"] {
             touch-action: manipulation;
         }
@@ -1144,50 +1144,172 @@
         .btn-delete-item:hover { background: #dc2626; }
         .btn-delete-item:active { transform: scale(0.94); }
 
+        /* ===== Players: get your clips in 3 taps =====
+           A phone plays the real flow on the real screens (shot at 430px):
+           the tournament page scrolls to the live match, Watch Live opens
+           the scorecard, it scrolls to the player's name, the video icon
+           opens their clips, the six plays and is downloaded — a finger does
+           the taps. One 16s timeline in the script (Web Animations,
+           transform/opacity only) runs only while the phone is on screen;
+           the step beside it lights up as the phone gets there, and tapping
+           a step jumps there. Reduced motion: nothing moves — each step
+           shows its own still screen (.is-static). All positions inside the
+           screen are fractions of the 430px shots. */
         .how-it-works { padding: 90px 20px; text-align: center; }
-        .how-it-works h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; margin-bottom: 55px; }
-        /* Steps are a real sequence (do 1, then 2, then 3), so a big
-           scoreboard-style numeral plus a connecting rule between cards
-           earns its place here — unlike a numbered badge dropped onto
-           non-sequential content, this one is showing actual order. */
-        .steps-container { display: flex; justify-content: center; gap: 30px; max-width: 1000px; margin: 0 auto; flex-wrap: wrap; position: relative; }
-        .steps-container::before {
-            content: '';
-            position: absolute;
-            top: 27px;
-            left: 8%;
-            right: 8%;
-            height: 1px;
-            background: linear-gradient(90deg, transparent, var(--border-color-strong) 15%, var(--border-color-strong) 85%, transparent);
-            z-index: 0;
+        .how-it-works h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; margin-bottom: 12px; }
+        .walk-sub { color: var(--text-muted); font-size: 1.05rem; max-width: 560px; margin: 0 auto 50px; }
+        .walk { display: grid; grid-template-columns: auto minmax(0, 430px); align-items: center; justify-content: center; gap: 72px; max-width: 1000px; margin: 0 auto; }
+        .walk-phone {
+            --pw: 300px; --bz: 11px;
+            position: relative; margin: 0;
+            width: calc(var(--pw) + 2 * var(--bz)); padding: var(--bz);
+            border-radius: calc(var(--pw) * 0.17);
+            background: linear-gradient(150deg, #3b4353, #12161e 34%, #0a0d12 68%, #2c3341);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09), 0 0 0 1px rgba(0, 0, 0, 0.6), 0 40px 80px -24px rgba(0, 0, 0, 0.7);
         }
-        .step-card {
-            background: var(--bg-card); 
-            padding: 30px; 
-            border-radius: 16px; 
-            flex: 1; 
-            min-width: 250px;
-            border: 1px solid var(--border-color); 
-            -webkit-backdrop-filter: blur(12px);
-            backdrop-filter: blur(12px); 
-            position: relative;
-            z-index: 1;
-            text-align: left;
-            transition: transform 0.4s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.4s var(--ease-spring);
+        .walk-phone::before { /* the glow behind it */
+            content: ''; position: absolute; inset: 6% -30% 2%; z-index: -1; pointer-events: none;
+            background: radial-gradient(closest-side, rgba(var(--brand-teal-rgb), 0.28), transparent 72%);
         }
-        .step-card:hover { transform: translateY(-6px); border-color: var(--brand-teal); box-shadow: 0 18px 40px rgba(var(--shadow-rgb), 0.3), 0 0 40px -14px rgba(var(--brand-teal-rgb), 0.55); }
-        .step-number {
-            font-family: 'Space Grotesk', 'Inter', sans-serif;
-            font-size: 2.4rem;
-            font-weight: 700;
-            line-height: 1;
-            color: transparent;
-            -webkit-text-stroke: 1.5px var(--brand-teal);
-            display: inline-block;
-            margin: 0 0 15px 0;
+        .walk-phone::after { /* the side button */
+            content: ''; position: absolute; right: -3px; top: 21%; width: 3px; height: 11%;
+            border-radius: 0 3px 3px 0; background: #2c3341;
         }
-        .step-card h3 { margin-bottom: 10px; font-size: 1.25rem; font-weight: 700; }
-        .step-card p { color: var(--text-muted); font-size: 0.95rem; }
+        .wp-body { border-radius: calc(var(--pw) * 0.13); overflow: hidden; background: #0b0e14; isolation: isolate; transform: translateZ(0); }
+        .wp-status {
+            position: relative; display: flex; align-items: center; justify-content: space-between;
+            height: calc(var(--pw) * 0.085); padding: 0 calc(var(--pw) * 0.075);
+            color: #fff; font: 600 calc(var(--pw) * 0.036)/1 'Inter', sans-serif;
+        }
+        .wp-island { position: absolute; left: 50%; top: 50%; width: 29%; height: 64%; transform: translate(-50%, -50%); border-radius: 99px; background: #000; }
+        .wp-status svg { display: block; height: calc(var(--pw) * 0.034); width: auto; }
+        .wp-view { position: relative; aspect-ratio: 430 / 932; overflow: hidden; background: #0b0e14; text-align: left; }
+        .wp-view img { display: block; width: 100%; height: auto; }
+        .ws { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+        .ws-page { position: relative; }
+        .ws-b { transform: translateX(100%); box-shadow: -10px 0 28px rgba(0, 0, 0, 0.5); }
+        /* the player's row on the scorecard (Aarav Patil) and the chip by the name */
+        .ws-row {
+            position: absolute; left: 5.35%; right: 5.35%; top: 64.68%; height: 6.77%;
+            border-radius: calc(var(--pw) * 0.035); overflow: hidden; opacity: 0;
+            border: 2px solid var(--brand-teal); background: rgba(var(--brand-teal-rgb), 0.08);
+            box-shadow: 0 0 0 4px rgba(var(--brand-teal-rgb), 0.16), 0 0 22px rgba(var(--brand-teal-rgb), 0.5);
+        }
+        .ws-sweep { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.2) 50%, transparent 70%); transform: translateX(-110%); }
+        .ws-chip-at { position: absolute; left: 40%; top: 66.08%; transform: translateY(-50%); }
+        .ws-chip {
+            display: block; opacity: 0; white-space: nowrap;
+            padding: calc(var(--pw) * 0.012) calc(var(--pw) * 0.03); border-radius: 99px;
+            background: var(--brand-teal); color: #04161a;
+            font: 800 calc(var(--pw) * 0.032)/1.2 'Inter', sans-serif;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+        .ws-dim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); opacity: 0; }
+        /* the clip drawer: a bottom sheet, 620 of the 932px, round top corners */
+        .ws-c {
+            top: auto; bottom: 0; height: 66.52%; overflow: hidden; transform: translateY(102%);
+            border-radius: 4.65% 4.65% 0 0 / 3.23% 3.23% 0 0; box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.45);
+        }
+        .ws-c img, .ws-d > img { height: 100%; }
+        /* the clip player: the 16:9 picture sits in the middle of its stage */
+        .ws-d { background: #000; opacity: 0; }
+        .ws-video { position: absolute; left: 0; top: 37.45%; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; }
+        .wp-view .ws-shot { height: 100%; object-fit: cover; transform-origin: 55% 42%; }
+        .ws-ball-x, .ws-ball-y { position: absolute; inset: 0; }
+        .ws-ball {
+            position: absolute; left: 51%; top: 44%; opacity: 0;
+            width: calc(var(--pw) * 0.022); height: calc(var(--pw) * 0.022); margin: calc(var(--pw) * -0.011) 0 0 calc(var(--pw) * -0.011);
+            border-radius: 50%; background: #fff; box-shadow: 0 0 6px 2px rgba(255, 255, 255, 0.7);
+        }
+        .ws-play {
+            position: absolute; left: 50%; top: 50%; opacity: 0;
+            width: calc(var(--pw) * 0.17); height: calc(var(--pw) * 0.17); margin: calc(var(--pw) * -0.085) 0 0 calc(var(--pw) * -0.085);
+            border-radius: 50%; background: rgba(0, 0, 0, 0.45); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.9);
+        }
+        .ws-play::after { content: ''; position: absolute; left: 39%; top: 30%; width: 30%; height: 40%; background: #fff; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+        .ws-bar { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--pw) * 0.012); background: rgba(255, 255, 255, 0.22); }
+        .ws-bar i { position: absolute; inset: 0; background: #22c55e; transform-origin: 0 50%; transform: scaleX(0); }
+        .ws-saved {
+            position: absolute; left: 72.84%; top: 95.18%; width: 23.9%; height: 3.65%; opacity: 0;
+            display: flex; align-items: center; justify-content: center; border-radius: 99px;
+            background: #22c55e; color: #052e14; font: 800 calc(var(--pw) * 0.029)/1 'Inter', sans-serif;
+        }
+        .ws-toast {
+            position: absolute; left: 4%; right: 4%; top: 1.8%; z-index: 3; transform: translateY(-140%);
+            display: flex; align-items: center; gap: calc(var(--pw) * 0.028);
+            padding: calc(var(--pw) * 0.028) calc(var(--pw) * 0.035); border-radius: calc(var(--pw) * 0.045);
+            background: rgba(24, 29, 40, 0.97); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            color: #fff; font: 600 calc(var(--pw) * 0.032)/1.3 'Inter', sans-serif;
+        }
+        .ws-toast b { display: block; font-weight: 800; }
+        .ws-toast small { display: block; color: rgba(255, 255, 255, 0.62); font-size: 0.92em; }
+        .ws-toast-ico { flex: none; width: calc(var(--pw) * 0.075); height: calc(var(--pw) * 0.075); border-radius: 50%; display: grid; place-items: center; background: #22c55e; color: #052e14; }
+        .ws-toast-ico svg { width: 58%; height: 58%; }
+        /* the finger: a full-screen box moved by translate(x%, y%) puts the
+           touch dot's centre on that point of the screen */
+        .ws-finger { position: absolute; inset: 0; z-index: 4; opacity: 0; pointer-events: none; }
+        .ws-dot, .ws-ripple {
+            position: absolute; left: 0; top: 0; border-radius: 50%;
+            width: calc(var(--pw) * 0.105); height: calc(var(--pw) * 0.105); margin: calc(var(--pw) * -0.0525) 0 0 calc(var(--pw) * -0.0525);
+        }
+        .ws-dot { background: rgba(255, 255, 255, 0.38); border: 2px solid rgba(255, 255, 255, 0.95); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); }
+        .ws-ripple { border: 2px solid #fff; opacity: 0; }
+
+        .walk-steps { display: grid; gap: 14px; text-align: left; }
+        .walk-step {
+            position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px;
+            padding: 20px 22px 22px; border-radius: 18px; overflow: hidden;
+            background: var(--bg-card); border: 1px solid var(--border-color); opacity: 0.55;
+            transition: opacity 0.35s var(--ease), border-color 0.35s var(--ease), box-shadow 0.35s var(--ease), transform 0.45s var(--ease-spring);
+        }
+        .walk-step.is-on { opacity: 1; border-color: rgba(var(--brand-teal-rgb), 0.55); box-shadow: 0 18px 40px -22px rgba(var(--brand-teal-rgb), 0.75); transform: translateX(6px); }
+        .walk-num {
+            width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+            font: 700 1.05rem/1 'Space Grotesk', 'Inter', sans-serif; color: var(--brand-teal);
+            border: 1.5px solid rgba(var(--brand-teal-rgb), 0.6);
+            transition: background 0.35s var(--ease), color 0.35s var(--ease), border-color 0.35s var(--ease);
+        }
+        .walk-step.is-on .walk-num { background: var(--brand-teal); color: #04161a; border-color: transparent; }
+        .walk-step h3 { font-size: 1.15rem; font-weight: 700; margin: 3px 0 4px; }
+        .walk-step h3 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+        .walk-step h3 button::after { content: ''; position: absolute; inset: 0; border-radius: inherit; } /* the whole card is the button */
+        .walk-step h3 button:focus-visible { outline: none; }
+        .walk-step h3 button:focus-visible::after { outline: 2px solid var(--brand-teal); outline-offset: -2px; }
+        .walk-step p { color: var(--text-muted); font-size: 0.95rem; margin: 0; }
+        .walk-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, var(--brand-teal), #22c55e); transform-origin: 0 50%; transform: scaleX(0); }
+
+        /* reduced motion: each step's own still screen */
+        .walk.is-static .ws-finger { opacity: 1; }
+        .walk.is-static[data-step="1"] .ws-a .ws-page { transform: translateY(-35.41%); }
+        .walk.is-static[data-step="1"] .ws-finger { transform: translate(50%, 86.42%); }
+        .walk.is-static[data-step="2"] .ws-b { transform: none; }
+        .walk.is-static[data-step="2"] .ws-b .ws-page { transform: translateY(-38.9%); }
+        .walk.is-static[data-step="2"] .ws-row, .walk.is-static[data-step="2"] .ws-chip { opacity: 1; }
+        .walk.is-static[data-step="2"] .ws-finger { transform: translate(89.53%, 52.63%); }
+        .walk.is-static[data-step="3"] .ws-d { opacity: 1; }
+        .walk.is-static[data-step="3"] .ws-bar i { transform: scaleX(0.45); }
+        .walk.is-static[data-step="3"] .ws-finger { opacity: 0; }
+
+        .walk-cap { display: none; }
+        /* Phones and tablets: the phone first, then the 3 steps as one row
+           of compact tabs right under it — so the step is in view while the
+           phone plays it — and the active step's sentence as a caption (the
+           steps' own sentences stay for screen readers). */
+        @media (max-width: 900px) {
+            .walk { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 26px; }
+            .walk-steps { width: 100%; max-width: 480px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+            .walk-step { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 8px; padding: 12px 6px 14px; border-radius: 14px; text-align: center; }
+            .walk-step.is-on { transform: none; }
+            .walk-num { width: 30px; height: 30px; font-size: 0.9rem; }
+            .walk-step h3 { font-size: 0.92rem; line-height: 1.25; margin: 0; }
+            .walk-step h3 button { text-align: center; }
+            .walk-step p { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+            .walk-cap { display: block; grid-column: 1 / -1; min-height: 2.7em; margin: 6px 6px 0; color: var(--text-muted); font-size: 0.95rem; line-height: 1.4; text-align: center; }
+        }
+        @media (max-width: 480px) {
+            .walk-sub { margin-bottom: 36px; }
+            .walk-phone { --pw: min(258px, 68vw); --bz: 9px; }
+        }
 
         .sports-section { padding: 55px 20px 115px 20px; text-align: center; max-width: 1000px; margin: 0 auto; }
         .sports-section h2 { font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 800; letter-spacing: -1px; margin-bottom: 12px; }
@@ -1722,7 +1844,6 @@
             }
             .tournament-card,
             .sport-card,
-            .step-card,
             .admin-box,
             .stats-bar-inner,
             .testimonial-card,
@@ -1747,7 +1868,6 @@
         @media (max-width: 900px), (pointer: coarse) {
             .tournament-card,
             .sport-card,
-            .step-card,
             .admin-box,
             .stats-bar-inner,
             .testimonial-card,
@@ -2018,7 +2138,8 @@
             .flow-rail { display: none; }
             .flow-track { grid-template-columns: 1fr; gap: 26px; max-width: 480px; margin: 0 auto; }
             .flow-step { display: grid; grid-template-columns: 60px minmax(0, 1fr); column-gap: 16px; align-items: start; text-align: left; padding: 0; }
-            .flow-ico { width: 60px; height: 60px; margin: 0; grid-row: span 3; font-size: 1.5rem; border-radius: 18px; }
+            .flow-ico { width: 60px; height: 60px; margin: 0; grid-row: span 2; font-size: 1.5rem; border-radius: 18px; }
+            .flow-step { align-content: center; }
             .flow-step:not(:last-child)::before,
             .flow-step:not(:last-child)::after {
                 content: ''; position: absolute; left: 29px; top: 64px; bottom: -22px; width: 2px;
@@ -2215,6 +2336,51 @@
         .stream-meta p:last-of-type { margin-bottom: 10px; }
         .stream-meta a { font-size: 0.82rem; font-weight: 700; color: var(--text-main); text-decoration: none; }
         .stream-meta a:hover { color: #ff4d4d; }
+        /* Owner tools (chhayajeeth@gmail.com): add any YouTube video, take a
+           card off, put a removed one back. Only drawn for the owner — the
+           server checks every change itself (requireOwner). */
+        .stream-card { position: relative; }
+        .stream-card.is-busy { opacity: 0.45; pointer-events: none; }
+        .stream-remove {
+            position: absolute; top: 8px; right: 8px; z-index: 2;
+            width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer;
+            font-size: 0.9rem; font-weight: 800; color: #fff; background: rgba(15, 23, 42, 0.86);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+            transition: background 0.2s var(--ease), transform 0.2s var(--ease-spring);
+        }
+        .stream-remove:hover, .stream-remove:focus-visible { background: #ef4444; transform: scale(1.08); outline: none; }
+        .streams-owner {
+            max-width: 1100px; margin: 0 auto 22px; padding: 14px 16px; border-radius: 16px;
+            border: 1px dashed rgba(var(--accent-rgb), 0.45); background: rgba(var(--accent-rgb), 0.05);
+        }
+        .streams-owner[hidden], .so-form[hidden], .so-hidden[hidden], .so-btn[hidden] { display: none; }
+        .so-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .so-badge { margin-right: auto; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.4px; color: var(--accent); }
+        .so-btn {
+            padding: 9px 16px; border-radius: 40px; cursor: pointer;
+            font-weight: 800; font-size: 0.84rem; color: var(--text-main);
+            background: rgba(var(--accent-rgb), 0.14); border: 1px solid rgba(var(--accent-rgb), 0.5);
+        }
+        .so-btn.ghost { background: transparent; border-color: var(--border-color); }
+        .so-btn:disabled { opacity: 0.6; cursor: default; }
+        .so-form { display: grid; gap: 10px; margin-top: 14px; }
+        .so-form input {
+            width: 100%; padding: 11px 14px; border-radius: 12px; outline: none;
+            border: 1px solid var(--border-color); background: var(--surface-1); color: var(--input-text); font-size: 0.92rem;
+        }
+        .so-form input:focus { border-color: rgba(var(--accent-rgb), 0.6); }
+        .so-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+        .so-note { min-height: 1.2em; margin-top: 8px; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); }
+        .so-note.err { color: #f87171; }
+        .so-note.ok { color: var(--success); }
+        .so-hidden { display: grid; gap: 8px; margin-top: 14px; }
+        .so-row { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; background: var(--surface-1); }
+        .so-row img { width: 96px; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: #0b1220; }
+        .so-row div { min-width: 0; }
+        .so-row b { display: block; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .so-row span { font-size: 0.78rem; color: var(--text-muted); }
+        .so-row .so-btn { margin-left: auto; flex-shrink: 0; }
+        @media (max-width: 900px) { .so-form input { font-size: 16px; } }
         .channel-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
         .channel-card {
             display: flex; align-items: center; gap: 16px; padding: 18px 20px; border-radius: 18px;
@@ -3113,7 +3279,7 @@
         @media (max-width: 640px) {
             .tournament-filter-btn, .mobile-nav-link, .nav-btn, .auth-btn,
             .theme-toggle, .nav-hamburger, .cta-btn, .tournament-card, .sport-card,
-            .step-card, .integration-card, .hi-out-btn, .hi-undo-btn, .cta-ghost {
+            .integration-card, .hi-out-btn, .hi-undo-btn, .cta-ghost {
                 min-height: 44px;
             }
             .tournaments-section, .feat-section, .flow-section, .sports-multi, .streams-section,
@@ -3282,7 +3448,7 @@
     <section class="hero animate-in" id="hero-section">
         <div class="hero-eyebrow"><span class="hero-eyebrow-dot"></span>Live scoring · HD streaming · Auto highlights</div>
         <h1>Every Ball Live.<br> Highlights <span>Instantly.</span></h1>
-        <p>Ball-by-ball scoring and HD streaming with TV-style graphics. Every 4, 6 and wicket is cut into an HD clip on its own, any player's highlights are one tap away, and the PDF match report is ready at the final ball.</p>
+        <p>Ball-by-ball scoring and HD streaming with TV-style graphics. Every 4, 6 and wicket becomes an HD clip, and any player's highlights are one tap away.</p>
         <div class="hero-ctas">
             <a href="#tournaments" class="cta-btn">View Live Tournaments ➔</a>
             <button type="button" class="cta-ghost" data-wa-open>
@@ -3550,25 +3716,21 @@
                     <div class="flow-ico" aria-hidden="true">🏏<span class="flow-glow"></span></div>
                     <span class="flow-num">STEP 01</span>
                     <h3>Ball scored</h3>
-                    <p>The scorer taps 4, 6 or W. The scorecard, the stream graphics and the LED screen update the moment it's scored.</p>
                 </li>
                 <li class="flow-step" style="--step-color:#f2a648; --step-rgb:242, 166, 72;">
                     <div class="flow-ico" aria-hidden="true">✂️<span class="flow-glow"></span></div>
                     <span class="flow-num">STEP 02</span>
                     <h3>Clip cut automatically</h3>
-                    <p>That delivery is cut from the live stream in HD and filed under the batter and the bowler by name.</p>
                 </li>
                 <li class="flow-step" style="--step-color:#35b3c1; --step-rgb:53, 179, 193;">
                     <div class="flow-ico" aria-hidden="true">⚡<span class="flow-glow"></span></div>
                     <span class="flow-num">STEP 03</span>
                     <h3>Highlights ready</h3>
-                    <p>Any player's 4s, 6s and wickets join into one edited video — title card, figures and wagon wheel.</p>
                 </li>
                 <li class="flow-step" style="--step-color:#22c55e; --step-rgb:34, 197, 94;">
                     <div class="flow-ico" aria-hidden="true">📄<span class="flow-glow"></span></div>
                     <span class="flow-num">STEP 04</span>
                     <h3>PDF report at the final ball</h3>
-                    <p>When the match ends, the PDF match report and the Excel scorecard download on their own.</p>
                 </li>
             </ol>
         </div>
@@ -3631,8 +3793,7 @@
         <article class="feat-row" id="feat-report" style="--k:#22c55e; --k-rgb:34, 197, 94;">
             <div class="feat-copy reveal-on-scroll">
                 <span class="feat-kicker">📄 Auto match report</span>
-                <h3>The match report writes itself</h3>
-                <p>The moment the last ball is bowled, a branded PDF match report and an Excel scorecard download on the scorer's laptop — ready to send to both teams.</p>
+                <h3>A stunning, professional match report for every match</h3>
                 <ul class="feat-points">
                     <li>Result, player of the match and best performers on page one</li>
                     <li>Wagon wheels for both teams and for the top scorer</li>
@@ -3703,7 +3864,6 @@
             <div class="feat-copy reveal-on-scroll">
                 <span class="feat-kicker">📺 Broadcast graphics</span>
                 <h3>TV-style graphics on your YouTube stream</h3>
-                <p>Add the overlay to OBS or vMix and your stream looks like television — driven by the same scoring panel, nothing typed twice.</p>
                 <ul class="feat-points">
                     <li>Score bar with the chase, this over and the bowler's figures</li>
                     <li>FOUR, SIX and WICKET animations, over and innings summaries</li>
@@ -3775,24 +3935,64 @@
         </div>
     </section>
 
-    <!-- Players: how to get your own clips -->
+    <!-- Players: how to get your own clips — a phone plays it on the real screens -->
     <section class="how-it-works" id="how-it-works">
         <h2 class="reveal-on-scroll">Players: get your clips in 3 taps</h2>
-        <div class="steps-container">
-            <div class="step-card reveal-on-scroll delay-1">
-                <div class="step-number">1</div>
-                <h3>Open a tournament</h3>
-                <p>Click into any tournament to see its live scores and full scorecard.</p>
-            </div>
-            <div class="step-card reveal-on-scroll delay-2">
-                <div class="step-number">2</div>
-                <h3>Tap the video icon</h3>
-                <p>In the scorecard, tap the video icon next to your name to open your clips.</p>
-            </div>
-            <div class="step-card reveal-on-scroll delay-3">
-                <div class="step-number">3</div>
-                <h3>Download in HD</h3>
-                <p>Save your 4s, 6s, and wickets in HD — in seconds, right from your phone or tablet.</p>
+        <p class="walk-sub reveal-on-scroll">No app, no sign-up — find your name and watch your shots.</p>
+        <div class="walk" id="walk" data-step="1">
+            <figure class="walk-phone reveal-on-scroll" role="img"
+                    aria-label="On a phone: the tournament page scrolls to the live match and Watch Live is tapped; the scorecard scrolls to the player's name and the video icon next to it is tapped; the player's clips open, their six plays, and Download saves it.">
+                <div class="wp-body">
+                    <div class="wp-status" aria-hidden="true">
+                        <span>9:41</span><i class="wp-island"></i>
+                        <svg viewBox="0 0 46 12" fill="#fff"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0.5" width="3" height="11.5" rx="1"/><rect x="23.5" y="1" width="19" height="10" rx="3" fill="none" stroke="#fff" stroke-opacity=".5"/><rect x="25.5" y="3" width="13" height="6" rx="1.5"/><rect x="43.5" y="4" width="1.8" height="4" rx="1" fill-opacity=".5"/></svg>
+                    </div>
+                    <div class="wp-view">
+                        <div class="ws ws-a"><img class="ws-page" src="/assets/home/walk-tournament.webp" width="645" height="2165" alt="" loading="lazy" decoding="async"></div>
+                        <div class="ws ws-b">
+                            <div class="ws-page">
+                                <img src="/assets/home/walk-scorecard.webp" width="645" height="2399" alt="" loading="lazy" decoding="async">
+                                <span class="ws-row"><i class="ws-sweep"></i></span>
+                                <span class="ws-chip-at"><b class="ws-chip">That's you</b></span>
+                            </div>
+                        </div>
+                        <div class="ws-dim"></div>
+                        <div class="ws ws-c"><img src="/assets/home/walk-clips.webp" width="645" height="930" alt="" loading="lazy" decoding="async"></div>
+                        <div class="ws ws-d">
+                            <img src="/assets/home/walk-player.webp" width="645" height="1398" alt="" loading="lazy" decoding="async">
+                            <div class="ws-video">
+                                <img class="ws-shot" src="/assets/home/walk-six.webp" width="720" height="405" alt="" loading="lazy" decoding="async">
+                                <span class="ws-ball-x"><span class="ws-ball-y"><i class="ws-ball"></i></span></span>
+                                <span class="ws-play"></span>
+                                <span class="ws-bar"><i></i></span>
+                            </div>
+                            <span class="ws-saved">✓ Saved</span>
+                        </div>
+                        <div class="ws-toast">
+                            <span class="ws-toast-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                            <span><b>Download complete</b><small>Aarav Patil — SIX.mp4</small></span>
+                        </div>
+                        <span class="ws-finger"><i class="ws-ripple"></i><i class="ws-dot"></i></span>
+                    </div>
+                </div>
+            </figure>
+            <div class="walk-steps reveal-on-scroll delay-1">
+                <div class="walk-step">
+                    <span class="walk-num">1</span>
+                    <div><h3><button type="button">Open your match</button></h3><p>Tap your tournament, then the match you played.</p></div>
+                    <i class="walk-bar"></i>
+                </div>
+                <div class="walk-step">
+                    <span class="walk-num">2</span>
+                    <div><h3><button type="button">Find your name</button></h3><p>On the scorecard, tap the video icon next to your name.</p></div>
+                    <i class="walk-bar"></i>
+                </div>
+                <div class="walk-step">
+                    <span class="walk-num">3</span>
+                    <div><h3><button type="button">Watch &amp; download</button></h3><p>Your 4s, 6s and wickets play right there — save any of them in HD in one tap.</p></div>
+                    <i class="walk-bar"></i>
+                </div>
+                <p class="walk-cap" aria-hidden="true">Tap your tournament, then the match you played.</p>
             </div>
         </div>
     </section>
@@ -3847,6 +4047,24 @@
             <span class="section-kicker reveal-on-scroll">Watch</span>
             <h2 id="streams-heading" class="reveal-on-scroll">Latest <span>streams</span></h2>
             <p class="reveal-on-scroll delay-1">Matches stream live in HD on YouTube, and the best moments land on Instagram.</p>
+        </div>
+        <div class="streams-owner" id="streamsOwner" hidden>
+            <div class="so-bar">
+                <span class="so-badge">⚙️ Owner · Latest streams</span>
+                <button type="button" class="so-btn" id="soAddToggle" aria-controls="soAddForm">＋ Add YouTube video</button>
+                <button type="button" class="so-btn ghost" id="soHiddenToggle" aria-controls="soHiddenList" hidden>Removed videos (<span id="soHiddenCount">0</span>)</button>
+            </div>
+            <form class="so-form" id="soAddForm" hidden>
+                <input type="url" id="soUrl" name="url" placeholder="YouTube link — youtube.com/watch?v=… or youtu.be/…" required autocomplete="off" aria-label="YouTube link">
+                <input type="text" id="soTitle" name="title" maxlength="120" placeholder="Title (optional — YouTube's own title if empty)" autocomplete="off" aria-label="Title">
+                <input type="text" id="soLabel" name="label" maxlength="80" placeholder="Line under the title (optional), e.g. Final · 26 Oct" autocomplete="off" aria-label="Line under the title">
+                <div class="so-actions">
+                    <button type="submit" class="so-btn">Add to Latest streams</button>
+                    <button type="button" class="so-btn ghost" id="soAddCancel">Cancel</button>
+                </div>
+            </form>
+            <div class="so-hidden" id="soHiddenList" hidden></div>
+            <p class="so-note" id="soNote" role="status"></p>
         </div>
         <div class="streams-grid" id="streamsGrid" hidden></div>
         <div class="channel-cards">
@@ -4572,8 +4790,12 @@
         // Signature of the last list drawn, so the quiet auto-refresh below
         // only re-draws the cards when something actually changed.
         let tournamentsSig = null;
+        // ▶️ The owner's picks for "Latest streams" — { added, hidden } —
+        // come with the list ("hidden" only in the owner's own view).
+        let streamPicks = { added: [], hidden: [] };
         async function loadTournaments(quiet) {
             let next = allTournaments;
+            let picks = streamPicks;
             try {
                 const headers = {};
                 // Send the Firebase ID token when we have one — the server
@@ -4587,15 +4809,18 @@
                 const res = await fetch('/api/public/tournaments', { headers, cache: 'no-store' });
                 const data = await res.json();
                 next = (data && data.tournaments) || [];
+                const sp = (data && data.streamPicks) || {};
+                picks = { added: sp.added || [], hidden: sp.hidden || [] };
             } catch (err) {
                 console.error('Could not load tournaments:', err);
                 if (quiet) return; // keep what is on screen; try again next tick
                 next = [];
             }
-            const sig = JSON.stringify(next);
+            const sig = JSON.stringify([next, picks]);
             if (quiet && sig === tournamentsSig) return;
             tournamentsSig = sig;
             allTournaments = next;
+            streamPicks = picks;
             renderTournaments();
             renderTicker();
             renderStatsBar();
@@ -4994,49 +5219,158 @@
         // YouTube player loads with the page.
         // =====================================================================
         const YT_ID = /^[A-Za-z0-9_-]{11}$/;
+        const STREAMS_MAX = 9;
         let streamsSig = null;
         function streamWhen(at) {
             const d = at ? new Date(at) : null;
             return d && !isNaN(d) ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
         }
-        function renderStreams() {
+        // force: redraw even over a playing video (after the owner changed
+        // the list themselves).
+        function renderStreams(force) {
             const grid = document.getElementById('streamsGrid');
             if (!grid) return;
-            const items = [];
+            const isOwner = !!window.__isOwnerViewer;
+            const newest = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
+            const fromMatches = [];
             allTournaments.forEach(t => (t.streams || []).forEach(st => {
-                if (st && YT_ID.test(st.videoId || '')) items.push(Object.assign({}, st, { tournament: t.name }));
+                if (st && YT_ID.test(st.videoId || '')) fromMatches.push(Object.assign({}, st, { tournament: t.name }));
             }));
-            items.sort((a, b) => (b.live === true) - (a.live === true) || String(b.at || '').localeCompare(String(a.at || '')));
+            // live matches first, then the videos the owner added (newest
+            // first, as the server sends them), then the other matches
+            const added = (streamPicks.added || []).filter(st => st && YT_ID.test(st.videoId || ''))
+                .map(st => Object.assign({}, st, { live: false, added: true }));
+            const ordered = [...fromMatches.filter(st => st.live === true).sort(newest), ...added, ...fromMatches.filter(st => st.live !== true).sort(newest)];
             const list = [];
             const seen = new Set();
-            items.forEach(st => {
-                if (list.length < 6 && !seen.has(st.videoId)) { seen.add(st.videoId); list.push(st); }
+            ordered.forEach(st => {
+                if (list.length < STREAMS_MAX && !seen.has(st.videoId)) { seen.add(st.videoId); list.push(st); }
             });
-            const sig = JSON.stringify(list);
-            if (sig === streamsSig) return;
+            const sig = JSON.stringify([list, isOwner, isOwner ? streamPicks.hidden : null]);
+            if (sig === streamsSig && !force) return;
             // Never pull a video out from under someone watching it — the
             // next refresh after they leave it picks the change up.
-            if (grid.querySelector('iframe')) return;
+            if (!force && grid.querySelector('iframe')) return;
             streamsSig = sig;
+            renderStreamsOwnerTools(isOwner);
             grid.hidden = list.length === 0;
             grid.innerHTML = list.map(st => {
-                const title = st.title || 'Match stream';
-                const sub = [st.live ? 'Live now' : '', st.label, streamWhen(st.at)].filter(Boolean).join(' · ');
+                const title = st.title || (st.added ? 'YouTube video' : 'Match stream');
+                const line1 = st.added ? (st.label || 'All Sports Live') : (st.tournament || '');
+                const line2 = st.added ? '' : [st.live ? 'Live now' : '', st.label, streamWhen(st.at)].filter(Boolean).join(' · ');
+                const remove = isOwner
+                    ? `<button type="button" class="stream-remove" data-stream-hide="${st.videoId}" data-title="${tkEscape(title)}" data-label="${tkEscape(st.label || '')}" data-tournament="${tkEscape(st.tournament || '')}" aria-label="Remove ${tkEscape(title)} from Latest streams" title="Remove from Latest streams">✕</button>`
+                    : '';
                 return `<article class="stream-card">
                     <button type="button" class="stream-thumb" data-yt="${st.videoId}" aria-label="Play ${tkEscape(title)}${st.live ? ' — live now' : ''}">
                         <img src="https://i.ytimg.com/vi/${st.videoId}/hqdefault.jpg" alt="" width="480" height="360" loading="lazy" decoding="async">
                         <span class="stream-play" aria-hidden="true"><svg viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg></span>
                         ${st.live ? '<span class="stream-badge live">LIVE</span>' : ''}
                     </button>
+                    ${remove}
                     <div class="stream-meta">
                         <h3>${tkEscape(title)}</h3>
-                        <p>${tkEscape(st.tournament || '')}</p>
-                        <p>${tkEscape(sub)}</p>
+                        <p>${tkEscape(line1)}</p>
+                        ${line2 ? `<p>${tkEscape(line2)}</p>` : ''}
                         <a href="https://www.youtube.com/watch?v=${st.videoId}" target="_blank" rel="noopener noreferrer">Watch on YouTube ↗</a>
                     </div>
                 </article>`;
             }).join('');
         }
+
+        // ⚙️ The owner's toolbar: shown only to the owner; lists the videos
+        // taken off the homepage, each with Restore.
+        function renderStreamsOwnerTools(isOwner) {
+            const box = document.getElementById('streamsOwner');
+            if (!box) return;
+            box.hidden = !isOwner;
+            if (!isOwner) return;
+            const hidden = (streamPicks.hidden || []).filter(h => h && YT_ID.test(h.videoId || ''));
+            document.getElementById('soHiddenCount').textContent = hidden.length;
+            document.getElementById('soHiddenToggle').hidden = hidden.length === 0;
+            const listEl = document.getElementById('soHiddenList');
+            if (!hidden.length) listEl.hidden = true;
+            listEl.innerHTML = hidden.map(h => `<div class="so-row">
+                <img src="https://i.ytimg.com/vi/${h.videoId}/mqdefault.jpg" alt="" width="320" height="180" loading="lazy" decoding="async">
+                <div><b>${tkEscape(h.title || 'YouTube video')}</b><span>${tkEscape([h.tournament, h.label].filter(Boolean).join(' · ') || h.videoId)}</span></div>
+                <button type="button" class="so-btn ghost" data-stream-restore="${h.videoId}">Restore</button>
+            </div>`).join('');
+        }
+
+        // Every change goes through the owner-only /api/admin/streams routes
+        // with the signed-in owner's ID token; the list is then fetched again.
+        async function streamsAdmin(path, body) {
+            if (!auth.currentUser) throw new Error('Sign in as the owner first');
+            const idToken = await auth.currentUser.getIdToken();
+            const res = await fetch(`/api/admin/streams${path}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+                body: JSON.stringify(body || {})
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error((data && data.error) || `Request failed (${res.status})`);
+            return data;
+        }
+        function streamsNote(text, kind) {
+            const el = document.getElementById('soNote');
+            if (!el) return;
+            el.textContent = text || '';
+            el.className = 'so-note' + (kind ? ' ' + kind : '');
+        }
+        (function streamsOwnerTools() {
+            const form = document.getElementById('soAddForm');
+            const toggle = document.getElementById('soAddToggle');
+            if (!form || !toggle) return;
+            const refresh = async (message) => { await loadTournaments(); renderStreams(true); streamsNote(message, 'ok'); };
+            toggle.addEventListener('click', () => {
+                form.hidden = !form.hidden;
+                if (!form.hidden) document.getElementById('soUrl').focus({ preventScroll: true });
+            });
+            document.getElementById('soAddCancel').addEventListener('click', () => { form.reset(); form.hidden = true; });
+            document.getElementById('soHiddenToggle').addEventListener('click', () => {
+                const list = document.getElementById('soHiddenList');
+                list.hidden = !list.hidden;
+            });
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const btn = form.querySelector('button[type="submit"]');
+                btn.disabled = true;
+                streamsNote('Adding…');
+                try {
+                    await streamsAdmin('', { url: form.elements.url.value, title: form.elements.title.value, label: form.elements.label.value });
+                    form.reset();
+                    form.hidden = true;
+                    await refresh('✓ Added to Latest streams');
+                } catch (err) {
+                    streamsNote('✕ ' + err.message, 'err');
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+            document.addEventListener('click', async (e) => {
+                const hide = e.target.closest && e.target.closest('[data-stream-hide]');
+                const restore = e.target.closest && e.target.closest('[data-stream-restore]');
+                if (!hide && !restore) return;
+                const btn = hide || restore;
+                const id = btn.getAttribute(hide ? 'data-stream-hide' : 'data-stream-restore');
+                if (!YT_ID.test(id)) return;
+                const card = btn.closest('.stream-card, .so-row');
+                if (card) card.classList.add('is-busy');
+                streamsNote(hide ? 'Removing…' : 'Restoring…');
+                try {
+                    if (hide) {
+                        await streamsAdmin(`/${id}/hide`, { title: btn.dataset.title || '', label: btn.dataset.label || '', tournament: btn.dataset.tournament || '' });
+                        await refresh('✓ Removed from Latest streams — it is under "Removed videos" if you want it back');
+                    } else {
+                        await streamsAdmin(`/${id}/restore`);
+                        await refresh('✓ Back on Latest streams');
+                    }
+                } catch (err) {
+                    if (card) card.classList.remove('is-busy');
+                    streamsNote('✕ ' + err.message, 'err');
+                }
+            });
+        })();
         // Press play → the YouTube player takes the thumbnail's place.
         document.addEventListener('click', (e) => {
             const btn = e.target.closest && e.target.closest('.stream-thumb[data-yt]');
@@ -5497,7 +5831,7 @@
         // magnetic elements in one frame still costs a single paint, not
         // one per element per event.
         if (window.matchMedia('(hover: hover)').matches && !prefersReducedMotionMQ.matches) {
-            const magneticSelectors = '.cta-btn, .nav-btn, .auth-btn, .sport-card, .step-card, .integration-card';
+            const magneticSelectors = '.cta-btn, .nav-btn, .auth-btn, .sport-card, .integration-card';
             let magneticTicking = false;
             let pendingMagneticEl = null, pendingMagneticX = 0, pendingMagneticY = 0;
             function applyMagnetic() {
@@ -5508,7 +5842,7 @@
             }
             document.querySelectorAll(magneticSelectors).forEach(el => {
                 el.classList.add('magnetic-target');
-                const strength = el.classList.contains('sport-card') || el.classList.contains('step-card') || el.classList.contains('integration-card') ? 0.06 : 0.35;
+                const strength = el.classList.contains('sport-card') || el.classList.contains('integration-card') ? 0.06 : 0.35;
                 el.addEventListener('mousemove', (e) => {
                     const rect = el.getBoundingClientRect();
                     pendingMagneticEl = el;
@@ -6080,6 +6414,124 @@
             new IntersectionObserver((entries) => entries.forEach(entry => {
                 wrap.classList.toggle('is-playing', entry.isIntersecting);
             }), { threshold: 0.2 }).observe(wrap);
+        })();
+
+        // 📱 Players: get your clips in 3 taps — the phone walkthrough. One
+        // 16s loop, written below in seconds, played with the Web Animations
+        // API (transform/opacity only) and only while the phone is on screen.
+        // Everything behind the clip player resets at 14.9s, while the player
+        // covers the screen, so the loop is seamless. The step beside the
+        // phone lights up as it gets there; tapping a step jumps there.
+        // Reduced motion: nothing moves — each step shows its own still.
+        (function walkthrough() {
+            const walk = document.getElementById('walk');
+            if (!walk) return;
+            const steps = [...walk.querySelectorAll('.walk-step')], cap = walk.querySelector('.walk-cap');
+            const T = 16, STARTS = [0, 3.6, 9, T];
+            let on = -1;
+            const show = (i) => {
+                if (i === on) return;
+                on = i;
+                walk.dataset.step = String(i + 1);
+                if (cap) {
+                    cap.textContent = steps[i].querySelector('p').textContent;
+                    if (!walk.classList.contains('is-static') && cap.offsetParent) cap.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'ease-out' });
+                }
+                steps.forEach((s, k) => {
+                    s.classList.toggle('is-on', k === i);
+                    const b = s.querySelector('button');
+                    if (k === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+                });
+            };
+            if (prefersReducedMotionMQ.matches || typeof walk.animate !== 'function') {
+                walk.classList.add('is-static');
+                show(1);
+                steps.forEach((s, k) => s.querySelector('button').addEventListener('click', () => show(k)));
+                return;
+            }
+
+            const anims = [];
+            // [seconds, keyframe, easing from it to the next one]
+            const track = (el, frames) => {
+                if (typeof el === 'string') el = walk.querySelector(el);
+                if (!el) return;
+                anims.push(el.animate(frames.map(([t, k, e]) => Object.assign({ offset: t / T, easing: e || 'linear' }, k)),
+                    { duration: T * 1000, iterations: Infinity }));
+            };
+            const k = (transform, opacity) => opacity === undefined ? { transform } : { transform, opacity };
+            const at = (x, y) => `translate(${x}%, ${y}%)`;   // a point of the screen, for the finger
+            const IO = 'cubic-bezier(.65,0,.35,1)', OUT = 'cubic-bezier(.22,1,.36,1)', SHEET = 'cubic-bezier(.32,.72,0,1)', POP = 'cubic-bezier(.34,1.56,.64,1)';
+            const R = 14.9;                                   // behind the player: back to the start
+            const A_LIVE = 'translateY(-35.41%)', B_NAME = 'translateY(-38.9%)', D_IN = 'translateY(3%) scale(.96)';
+
+            // 1 · the tournament page scrolls to the live match; Watch Live
+            track('.ws-a', [[0, k('none', 1)], [3.55, k('none', 1), SHEET], [4.2, k('translateX(-30%)', 0.35)], [R, k('translateX(-30%)', 0.35)], [R, k('none', 1)], [T, k('none', 1)]]);
+            track('.ws-a .ws-page', [[0, k('none')], [0.5, k('none'), IO], [2.4, k(A_LIVE)], [R, k(A_LIVE)], [R, k('none')], [T, k('none')]]);
+            // 2 · the scorecard slides in and scrolls to the name; the video icon opens the clips
+            track('.ws-b', [[0, k('translateX(100%)')], [3.55, k('translateX(100%)'), SHEET], [4.2, k('none')], [R, k('none')], [R, k('translateX(100%)')], [T, k('translateX(100%)')]]);
+            track('.ws-b .ws-page', [[0, k('none')], [4.5, k('none'), IO], [6, k(B_NAME)], [R, k(B_NAME)], [R, k('none')], [T, k('none')]]);
+            track('.ws-row', [[0, k('scale(1.06)', 0)], [6, k('scale(1.06)', 0), OUT], [6.45, k('none', 1)], [R, k('none', 1)], [R, k('scale(1.06)', 0)], [T, k('scale(1.06)', 0)]]);
+            track('.ws-sweep', [[0, k('translateX(-110%)')], [6.3, k('translateX(-110%)'), IO], [7.1, k('translateX(110%)')], [T, k('translateX(110%)')]]);
+            track('.ws-chip', [[0, k('translateY(30%) scale(.85)', 0)], [6.4, k('translateY(30%) scale(.85)', 0), POP], [6.8, k('none', 1)], [R, k('none', 1)], [R, k('translateY(30%) scale(.85)', 0)], [T, k('translateY(30%) scale(.85)', 0)]]);
+            track('.ws-dim', [[0, { opacity: 0 }], [7.85, { opacity: 0 }, OUT], [8.35, { opacity: 1 }], [R, { opacity: 1 }], [R, { opacity: 0 }], [T, { opacity: 0 }]]);
+            track('.ws-c', [[0, k('translateY(102%)')], [7.85, k('translateY(102%)'), SHEET], [8.5, k('none')], [R, k('none')], [R, k('translateY(102%)')], [T, k('translateY(102%)')]]);
+            // 3 · the six plays (the ball flies off), then Download
+            track('.ws-d', [[0, k(D_IN, 0)], [9.75, k(D_IN, 0), OUT], [10.25, k('none', 1)], [15.25, k('none', 1), IO], [15.85, k('none', 0)], [15.85, k(D_IN, 0)], [T, k(D_IN, 0)]]);
+            track('.ws-shot', [[0, k('none')], [10.25, k('none'), 'cubic-bezier(.33,0,.67,1)'], [15.3, k('scale(1.14) translate(-1.5%, 2%)')], [15.85, k('scale(1.14) translate(-1.5%, 2%)')], [15.85, k('none')], [T, k('none')]]);
+            track('.ws-play', [[0, k('scale(.8)', 0)], [9.8, k('scale(.8)', 0), OUT], [10.2, k('none', 1)], [10.5, k('none', 1), IO], [10.85, k('scale(1.35)', 0)], [T, k('scale(1.35)', 0)]]);
+            track('.ws-ball-x', [[0, k('none')], [10.95, k('none')], [12.3, k('translateX(26%)')], [15.85, k('translateX(26%)')], [15.85, k('none')], [T, k('none')]]);
+            track('.ws-ball-y', [[0, k('none')], [10.95, k('none'), 'cubic-bezier(.15,.6,.35,1)'], [12.3, k('translateY(-50%)')], [15.85, k('translateY(-50%)')], [15.85, k('none')], [T, k('none')]]);
+            track('.ws-ball', [[0, k('none', 0)], [10.9, k('none', 0)], [10.95, k('none', 1)], [11.95, k('scale(.6)', 1)], [12.3, k('scale(.45)', 0)], [T, k('scale(.45)', 0)]]);
+            track('.ws-bar i', [[0, k('scaleX(0)')], [10.4, k('scaleX(0)')], [15.3, k('scaleX(1)')], [15.85, k('scaleX(1)')], [15.85, k('scaleX(0)')], [T, k('scaleX(0)')]]);
+            track('.ws-saved', [[0, k('scale(.7)', 0)], [13.5, k('scale(.7)', 0), POP], [13.85, k('none', 1)], [15.85, k('none', 1)], [15.85, k('scale(.7)', 0)], [T, k('scale(.7)', 0)]]);
+            track('.ws-toast', [[0, k('translateY(-140%)')], [13.6, k('translateY(-140%)'), OUT], [14.05, k('none')], [15, k('none'), IO], [15.4, k('translateY(-140%)')], [T, k('translateY(-140%)')]]);
+            // the finger: Watch Live → the name → its video icon → the six's play → Download
+            track('.ws-finger', [
+                [0, k(at(50, 72), 0)], [1.95, k(at(50, 72), 0), OUT], [2.3, k(at(50, 75), 1), IO], [2.95, k(at(50, 86.42), 1)],
+                [3.35, k(at(50, 86.42), 1), OUT], [3.7, k(at(47, 89), 0)],
+                [5.9, k(at(36, 53), 0), OUT], [6.3, k(at(31, 48), 1)], [6.75, k(at(31, 48), 1), IO], [7.35, k(at(89.53, 52.63), 1)],
+                [7.9, k(at(89.53, 52.63), 1), IO], [8.9, k(at(81.86, 74.77), 1)], [9.7, k(at(81.86, 74.77), 1), OUT], [10.05, k(at(84, 79), 0)],
+                [12.45, k(at(72, 88), 0), OUT], [12.8, k(at(75, 90), 1), IO], [13.25, k(at(84.79, 97), 1)], [13.75, k(at(84.79, 97), 1), OUT], [14.15, k(at(80, 92), 0)],
+                [T, k(at(50, 72), 0)]]);
+            const press = [[0, k('none')]], ring = [[0, k('scale(.35)', 0)]];
+            [3, 7.45, 9.35, 13.3].forEach((t) => {
+                press.push([t, k('none'), OUT], [t + 0.12, k('scale(.78)'), OUT], [t + 0.35, k('none')]);
+                ring.push([t + 0.06, k('scale(.35)', 0)], [t + 0.1, k('scale(.45)', 0.9), OUT], [t + 0.75, k('scale(2.4)', 0)]);
+            });
+            track('.ws-dot', [...press, [T, k('none')]]);
+            track('.ws-ripple', [...ring, [T, k('scale(.35)', 0)]]);
+            // each step's bar fills while the phone is on that step
+            steps.forEach((s, i) => track(s.querySelector('.walk-bar'), [[0, k('scaleX(0)')], [STARTS[i], k('scaleX(0)')], [STARTS[i + 1], k('scaleX(1)')],
+                ...(STARTS[i + 1] < T ? [[STARTS[i + 1], k('scaleX(0)')], [T, k('scaleX(0)')]] : [])]));
+            anims.forEach((a) => a.pause());
+            if (!anims.length) return;
+
+            const clock = anims[0];
+            let raf = 0, playing = false, seen = !('IntersectionObserver' in window);
+            const sync = () => {
+                const t = ((clock.currentTime || 0) / 1000) % T;
+                show(t >= STARTS[2] ? 2 : t >= STARTS[1] ? 1 : 0);
+                if (playing) raf = requestAnimationFrame(sync);
+            };
+            const run = () => {
+                const go = seen && !document.hidden;
+                if (go === playing) return;
+                playing = go;
+                anims.forEach((a) => (go ? a.play() : a.pause()));
+                cancelAnimationFrame(raf);
+                if (go) raf = requestAnimationFrame(sync);
+            };
+            show(0);
+            steps.forEach((s, i) => s.querySelector('button').addEventListener('click', () => {
+                anims.forEach((a) => { a.currentTime = STARTS[i] * 1000; });
+                show(i);
+            }));
+            if (!seen) {
+                new IntersectionObserver((entries) => entries.forEach((entry) => { seen = entry.isIntersecting; run(); }), { threshold: 0.3 })
+                    .observe(walk.querySelector('.walk-phone'));
+            }
+            document.addEventListener('visibilitychange', run);
+            run();
         })();
 
         // Network status banner — self-contained, no dependency on

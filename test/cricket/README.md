@@ -51,7 +51,12 @@ node test/scorecard-viewers.test.js              # 👁 "watching now" beside Vi
                                                   # timeout, per match, made-up ids refused) and the real page in Chromium — both themes, phone
 NODE_PATH=$(npm root -g) node test/homepage.test.js   # 🏠 the homepage in Chromium (after npm install): product sections + local WebP pictures,
                                                   # canonical / og:image / JSON-LD, tournaments live first + search / city / dates, latest
-                                                  # streams (server: youTubeVideoId / tournamentStreams), the WhatsApp card, 320–1440px
+                                                  # streams (server: youTubeVideoId / tournamentStreams) + the owner's add / remove / restore,
+                                                  # the players' 3-taps phone (finger on every tap target, loop seam, plays only on screen,
+                                                  # step jumps, reduced-motion stills, phone tabs), the WhatsApp card, 320–1440px
+node test/homepage-streams-server.test.js         # ▶️ homepage Latest streams on the REAL server (in-memory MongoDB): a match's link is "live"
+                                                  # only while the panel pings; only chhayajeeth@gmail.com may add / remove / restore (403 for
+                                                  # all else); bad links refused; YouTube's title when none typed; restore; the audit log
 node test/cricket/points-table-teams-test.js     # 🏆 Points Table lists each team ONCE when its name was typed differently on different matches
                                                   # ("United Cricketers" / "UNITED CRICKETERS "): rows, P/W/L/PTS/NRR, form, overlay card, Team History
                                                   # list, the name shown; both panels

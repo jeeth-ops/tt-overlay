@@ -3601,19 +3601,27 @@ let publicTournamentsListCache = null; // { expiresAt, payload }
 // ▶️ The latest YouTube streams of a tournament, for the homepage's "Latest
 // streams": the "YouTube live link" the operator put on each match (the same
 // link the public scorecard already plays). A match being scored right now
-// first, then the newest; a fixture not started yet is left out. Only the
+// first, then the newest; a fixture not started yet is left out, and so is
+// any video the owner took off the homepage (`hidden`). Only the
 // 11-character video id leaves the server, never the pasted text.
+// "Live" means the panel pinged live-status for that match lately (each
+// ping re-stamps startedAt) — a pointer left behind by a match that never
+// signed off does not keep a weeks-old stream "live".
+const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const LIVE_STREAM_FRESH_MS = 6 * 60 * 60 * 1000;
 function youTubeVideoId(url) {
     const m = String(url || '').trim().match(/(?:youtube\.com\/watch\?(?:.*&)?v=|youtube\.com\/live\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);
     return m ? m[1] : '';
 }
-function tournamentStreams(matches, liveMatches, max = 3) {
-    const live = new Set((liveMatches || []).map(m => m && m.matchId).filter(Boolean));
+function tournamentStreams(matches, liveMatches, max = 3, hidden = null, now = Date.now()) {
+    const live = new Set((liveMatches || [])
+        .filter(m => m && m.matchId && Number(m.startedAt) > now - LIVE_STREAM_FRESH_MS)
+        .map(m => m.matchId));
     const seen = new Set();
     const streams = [];
     (matches || []).forEach(m => {
         const videoId = youTubeVideoId(m && m.streamUrl);
-        if (!videoId || seen.has(videoId)) return;
+        if (!videoId || seen.has(videoId) || (hidden && hidden.has(videoId))) return;
         const isLive = !!(m.matchId && live.has(m.matchId));
         if (isUpcomingRecord(m) && !isLive) return;
         seen.add(videoId);
@@ -3631,6 +3639,47 @@ function tournamentStreams(matches, liveMatches, max = 3) {
         .slice(0, max);
 }
 
+// The owner's own say over "Latest streams" (chhayajeeth@gmail.com only, via
+// the /api/admin/streams routes): any YouTube video added by hand, and any
+// video taken off the homepage. One settings document —
+// { items: { <videoId>: { videoId, state: 'added' | 'hidden', wasAdded,
+//   title, label, tournament, at, by } } } — read with every tournament list.
+const STREAM_PICKS_ID = 'homepageStreams';
+function cleanStreamText(v, max) {
+    return String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+async function getStreamPicks() {
+    const picks = { added: [], hidden: [] };
+    if (!settingsCollection) return picks;
+    try {
+        const doc = await settingsCollection.findOne({ _id: STREAM_PICKS_ID });
+        Object.values((doc && doc.items) || {})
+            .filter(it => it && YOUTUBE_ID_RE.test(it.videoId || ''))
+            .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
+            .forEach(it => {
+                const pick = { videoId: it.videoId, title: it.title || '', label: it.label || '', tournament: it.tournament || '', at: it.at || null };
+                if (it.state === 'added') picks.added.push(pick);
+                else if (it.state === 'hidden') picks.hidden.push(pick);
+            });
+    } catch (err) {
+        console.log('Homepage streams read error:', err.message || err);
+    }
+    return picks;
+}
+// A video's own title, from YouTube's oEmbed (no API key) — used when the
+// owner adds a video without typing one. '' when YouTube cannot be reached.
+async function youTubeTitle(videoId) {
+    try {
+        const url = 'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + videoId);
+        const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+        if (!r.ok) return '';
+        const j = await r.json();
+        return cleanStreamText(j && j.title, 120);
+    } catch (err) {
+        return '';
+    }
+}
+
 app.get('/api/public/tournaments', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.json({ success: true, tournaments: [] });
     try {
@@ -3646,10 +3695,12 @@ app.get('/api/public/tournaments', async (req, res) => {
         const isOwnerViewer = requesterEmail === OWNER_EMAIL;
 
         if (isOwnerViewer) {
+            const picks = await getStreamPicks();
+            const hiddenStreams = new Set(picks.hidden.map(h => h.videoId));
             const ownerUids = await Promise.all(AUTHORIZED_CREATOR_EMAILS.map(getUidForEmail));
             const uidToEmail = new Map(AUTHORIZED_CREATOR_EMAILS.map((email, i) => [ownerUids[i], email]));
             const validUids = ownerUids.filter(Boolean);
-            if (validUids.length === 0) return res.json({ success: true, tournaments: [] });
+            if (validUids.length === 0) return res.json({ success: true, tournaments: [], ownerView: true, streamPicks: picks });
 
             const leagues = await leaguesCollection.find({
                 ownerUid: { $in: validUids },
@@ -3675,7 +3726,7 @@ app.get('/api/public/tournaments', async (req, res) => {
                     matchCount: playedMatches(matches).length,
                     upcomingCount: matches.filter(m => m && m.upcoming === true).length,
                     info: tournamentInfoSummary(doc.info),
-                    streams: tournamentStreams(matches, doc.liveMatches),
+                    streams: tournamentStreams(matches, doc.liveMatches, 3, hiddenStreams),
                     updatedAt: doc.updatedAt || 0,
                     sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
                     // Owner-only fields — never present in the normal (cached,
@@ -3692,7 +3743,8 @@ app.get('/api/public/tournaments', async (req, res) => {
                 if ((a.status === 'live') !== (b.status === 'live')) return a.status === 'live' ? -1 : 1;
                 return (b.updatedAt || 0) - (a.updatedAt || 0);
             });
-            return res.json({ success: true, tournaments, ownerView: true });
+            // the owner also sees what was taken off, to put it back
+            return res.json({ success: true, tournaments, ownerView: true, streamPicks: picks });
         }
 
         if (publicTournamentsListCache && publicTournamentsListCache.expiresAt > Date.now()) {
@@ -3704,9 +3756,12 @@ app.get('/api/public/tournaments', async (req, res) => {
         // normally-private creator's tournament can be flipped public (and
         // vice versa) and this list has to see it to filter it correctly.
         // effectiveIsPrivate() below is what actually keeps private ones out.
+        const picks = await getStreamPicks();
+        const hiddenStreams = new Set(picks.hidden.map(h => h.videoId));
+        const streamPicks = { added: picks.added };
         const ownerUids = await Promise.all(AUTHORIZED_CREATOR_EMAILS.map(getUidForEmail));
         const validUids = ownerUids.filter(Boolean);
-        if (validUids.length === 0) return res.json({ success: true, tournaments: [] });
+        if (validUids.length === 0) return res.json({ success: true, tournaments: [], streamPicks });
 
         const leagues = await leaguesCollection.find({
             ownerUid: { $in: validUids },
@@ -3736,7 +3791,7 @@ app.get('/api/public/tournaments', async (req, res) => {
                 matchCount: playedMatches(matches).length,
                 upcomingCount: matches.filter(m => m && m.upcoming === true).length,
                 info: tournamentInfoSummary(doc.info),
-                streams: tournamentStreams(matches, doc.liveMatches),
+                streams: tournamentStreams(matches, doc.liveMatches, 3, hiddenStreams),
                 updatedAt: doc.updatedAt || 0,
                 // Legacy docs saved before `sport` existed on the league doc
                 // don't have it stored — fall back to the same name-based
@@ -3755,7 +3810,7 @@ app.get('/api/public/tournaments', async (req, res) => {
             return (b.updatedAt || 0) - (a.updatedAt || 0);
         });
 
-        const payload = { success: true, tournaments };
+        const payload = { success: true, tournaments, streamPicks };
         publicTournamentsListCache = { payload, expiresAt: Date.now() + PUBLIC_TOURNAMENTS_CACHE_TTL_MS };
         res.json(payload);
     } catch (err) {
@@ -9904,6 +9959,77 @@ adminRouter.post('/settings', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: 'Could not save settings' });
+    }
+});
+
+// ---- ▶️ Homepage "Latest streams" — add any YouTube video, take one off,
+// put a removed one back. Owner only (adminRouter → requireOwner); every
+// change shows on the homepage at once (the cached list is dropped).
+adminRouter.post('/streams', async (req, res) => {
+    if (!settingsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const body = req.body || {};
+    const pasted = String(body.url || '').trim();
+    const videoId = youTubeVideoId(pasted) || (YOUTUBE_ID_RE.test(pasted) ? pasted : '');
+    if (!videoId) return res.status(400).json({ success: false, error: 'Paste a YouTube video link (youtube.com/watch?v=… or youtu.be/…)' });
+    const title = cleanStreamText(body.title, 120) || await youTubeTitle(videoId);
+    const item = { videoId, state: 'added', wasAdded: true, title, label: cleanStreamText(body.label, 80), tournament: '', at: Date.now(), by: req.ownerEmail };
+    try {
+        await settingsCollection.updateOne({ _id: STREAM_PICKS_ID }, { $set: { [`items.${videoId}`]: item, updatedAt: Date.now() } }, { upsert: true });
+        publicTournamentsListCache = null;
+        await logAuditAction(req.ownerEmail, 'Add homepage stream', videoId, null, { title: item.title, label: item.label });
+        res.json({ success: true, stream: { videoId, title: item.title, label: item.label, at: item.at } });
+    } catch (err) {
+        console.log('Add homepage stream error:', err);
+        res.status(500).json({ success: false, error: 'Could not add the video' });
+    }
+});
+
+adminRouter.post('/streams/:videoId/hide', async (req, res) => {
+    if (!settingsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const videoId = String(req.params.videoId || '');
+    if (!YOUTUBE_ID_RE.test(videoId)) return res.status(400).json({ success: false, error: 'Not a YouTube video id' });
+    const body = req.body || {};
+    try {
+        const doc = await settingsCollection.findOne({ _id: STREAM_PICKS_ID });
+        const prev = (doc && doc.items && doc.items[videoId]) || null;
+        const item = {
+            videoId, state: 'hidden', wasAdded: !!(prev && prev.wasAdded),
+            title: (prev && prev.title) || cleanStreamText(body.title, 120),
+            label: (prev && prev.label) || cleanStreamText(body.label, 80),
+            tournament: (prev && prev.tournament) || cleanStreamText(body.tournament, 120),
+            at: Date.now(), by: req.ownerEmail
+        };
+        await settingsCollection.updateOne({ _id: STREAM_PICKS_ID }, { $set: { [`items.${videoId}`]: item, updatedAt: Date.now() } }, { upsert: true });
+        publicTournamentsListCache = null;
+        await logAuditAction(req.ownerEmail, 'Remove homepage stream', videoId, prev ? prev.state : 'shown', 'hidden', { title: item.title });
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Remove homepage stream error:', err);
+        res.status(500).json({ success: false, error: 'Could not remove the video' });
+    }
+});
+
+adminRouter.post('/streams/:videoId/restore', async (req, res) => {
+    if (!settingsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const videoId = String(req.params.videoId || '');
+    if (!YOUTUBE_ID_RE.test(videoId)) return res.status(400).json({ success: false, error: 'Not a YouTube video id' });
+    try {
+        const doc = await settingsCollection.findOne({ _id: STREAM_PICKS_ID });
+        const prev = (doc && doc.items && doc.items[videoId]) || null;
+        if (prev && prev.state === 'hidden') {
+            // a video the owner had added comes back as added; one from a
+            // match simply stops being hidden
+            const update = prev.wasAdded
+                ? { $set: { [`items.${videoId}.state`]: 'added', [`items.${videoId}.at`]: Date.now(), updatedAt: Date.now() } }
+                : { $unset: { [`items.${videoId}`]: '' }, $set: { updatedAt: Date.now() } };
+            await settingsCollection.updateOne({ _id: STREAM_PICKS_ID }, update);
+            publicTournamentsListCache = null;
+            await logAuditAction(req.ownerEmail, 'Restore homepage stream', videoId, 'hidden', prev.wasAdded ? 'added' : 'shown', { title: prev.title || '' });
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Restore homepage stream error:', err);
+        res.status(500).json({ success: false, error: 'Could not restore the video' });
     }
 });
 
