@@ -18,6 +18,13 @@
 //     was, with nothing left behind in storage; a stale edit (older version)
 //     is refused, never overwrites the newer picture
 //   • every change is in the audit log
+//   • the picture's own colours are read at upload (the most vivid hue and a
+//     second one far from it; [] for a grey picture; null when it cannot be
+//     read) and reach the homepage list and the tournament page, which now
+//     carries the picture and the sport too; a picture saved before that gets
+//     its colours the first time its tournament is shown — read back from
+//     storage once per run, never written onto a newer picture; a private
+//     tournament still never reaches a visitor
 //
 //   node test/tournament-thumbnails-server.test.js     (needs the repo's npm install)
 const fs = require('fs');
@@ -33,16 +40,25 @@ function eq(name, a, b) {
 }
 
 // ---- R2, stood in for: an in-memory bucket behind the real S3 client ----
-const BUCKET = new Map();
-let failNextPut = false;
+const BUCKET = new Map(), BODIES = new Map();
+const GOT = new Map();   // how many times each object was read back
+let failNextPut = false, gate = null;
+const got = (key) => GOT.get(key) || 0;
 const s3 = require('@aws-sdk/client-s3');
 s3.S3Client.prototype.send = async function (cmd) {
   const input = cmd.input || {};
   if (cmd instanceof s3.PutObjectCommand) {
     if (failNextPut) { failNextPut = false; throw new Error('R2 is down'); }
     BUCKET.set(input.Key, { type: input.ContentType, cache: input.CacheControl, bytes: input.Body.length, bucket: input.Bucket });
+    BODIES.set(input.Key, Buffer.from(input.Body));
+  } else if (cmd instanceof s3.GetObjectCommand) {
+    GOT.set(input.Key, got(input.Key) + 1);
+    const bytes = BODIES.get(input.Key);
+    if (gate) await gate;
+    if (!bytes) throw Object.assign(new Error('The specified key does not exist.'), { name: 'NoSuchKey' });
+    return { Body: { transformToByteArray: async () => new Uint8Array(bytes) } };
   } else if (cmd instanceof s3.DeleteObjectCommand) {
-    BUCKET.delete(input.Key);
+    BUCKET.delete(input.Key); BODIES.delete(input.Key);
   }
   return {};
 };
@@ -57,13 +73,20 @@ const PORTRAIT = file('assets/home/walk-player.webp');    // 645 × 1398
 const SMALL_PNG = file('logo.png');                       // 307 × 307
 const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
 const crc32 = (buf) => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
-function png(w, h) {
+function png(w, h, paint = () => [0x40, 0x40, 0x40]) {
   const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td)); return Buffer.concat([len, td, crc]); };
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
-  const row = Buffer.alloc(1 + w * 3, 0x40); row[0] = 0;
+  const row = Buffer.alloc(1 + w * 3); for (let x = 0; x < w; x++) row.set(paint(x), 1 + x * 3);
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(h).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
 }
-const PNG = png(1600, 900);
+const PNG = png(1600, 900);                               // grey
+const ORANGE = [0xe8, 0x61, 0x1a], BLUE = [0x1f, 0x5f, 0xd6], GREEN = [0x2a, 0xa8, 0x4a], MAGENTA = [0xc2, 0x2a, 0x8c];
+const ORANGE_BLUE = png(1600, 900, (x) => (x < 1100 ? ORANGE : BLUE));       // mostly orange
+const GREEN_MAGENTA = png(1280, 720, (x) => (x < 640 ? GREEN : MAGENTA));   // magenta is the more vivid half
+const hex = (rgb) => '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('');
+// colours read from a picture, each channel within a hair of what was painted
+const near = (got, want) => Array.isArray(got) && got.length === want.length && got.every((c, i) => /^#[0-9a-f]{6}$/.test(c) &&
+  [1, 3, 5].every((k) => Math.abs(parseInt(c.slice(k, k + 2), 16) - parseInt(want[i].slice(k, k + 2), 16)) <= 6));
 const vp8l = (w, h) => { const b = Buffer.alloc(64); b.write('RIFF', 0); b.writeUInt32LE(56, 4); b.write('WEBPVP8L', 8); b.writeUInt32LE(40, 16); b[20] = 0x2f; b.writeUInt32LE(((w - 1) & 0x3fff) | (((h - 1) & 0x3fff) << 14), 21); return b; };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -144,8 +167,10 @@ const DAY = 24 * 60 * 60 * 1000;
   eq('… a random key naming nothing, the real type and size, cached for good', [/^tournament-thumbs\/[0-9a-f]{24}\.jpg$/.test(d.thumb.key), BUCKET.get(d.thumb.key), [d.thumb.w, d.thumb.h, d.thumb.type, d.thumb.by]],
     [true, { type: 'image/jpeg', cache: 'public, max-age=31536000, immutable', bytes: JPEG.length, bucket: 'asl-test' }, [1200, 630, 'image/jpeg', 'chhayajeeth@gmail.com']]);
   eq('… the doc holds a reference, never the picture', JSON.stringify(d.thumb).length < 400, true);
+  const pal = d.thumb.palette;
+  eq('… and the picture\'s own colours, read as it was stored', Array.isArray(pal) && pal.length > 0 && pal.every((c) => /^#[0-9a-f]{6}$/.test(c)), true);
   j = await list();
-  eq('everyone sees it at once: its URL and where the frame centres — no key, no uploader', one(j, 'tokPub').thumb, { url: 'https://cdn.asl.test/' + d.thumb.key, x: 50, y: 30, w: 1200, h: 630 });
+  eq('everyone sees it at once: its URL, where the frame centres and its colours — no key, no uploader', one(j, 'tokPub').thumb, { url: 'https://cdn.asl.test/' + d.thumb.key, x: 50, y: 30, w: 1200, h: 630, palette: d.thumb.palette });
   const firstKey = d.thumb.key;
 
   console.log('\n=== replace, move, stale edits ===');
@@ -158,7 +183,7 @@ const DAY = 24 * 60 * 60 * 1000;
   eq('… and nothing left behind in storage', [...BUCKET.keys()], [d.thumb.key]);
   r = await req('POST', PUB + '/focus', { x: 50, y: 18.25, expect: 2 }, 'tok-owner');
   eq('move what the frame shows (the top of the portrait)', [r.status, r.json.thumb.y, r.json.thumbV, (await doc('pub cup')).thumb.focus], [200, 18.3, 3, { x: 50, y: 18.3 }]);
-  eq('… a position outside the picture is held to its edge', (await req('POST', PUB + '/focus', { x: -40, y: 400, expect: 3 }, 'tok-owner')).json.thumb, { url: 'https://cdn.asl.test/' + d.thumb.key, x: 0, y: 100, w: 645, h: 1398 });
+  eq('… a position outside the picture is held to its edge', (await req('POST', PUB + '/focus', { x: -40, y: 400, expect: 3 }, 'tok-owner')).json.thumb, { url: 'https://cdn.asl.test/' + d.thumb.key, x: 0, y: 100, w: 645, h: 1398, palette: d.thumb.palette });
   eq('… a stale move: refused', (await req('POST', PUB + '/focus', { x: 1, y: 1, expect: 3 }, 'tok-owner')).status, 409);
   eq('… everyone sees the new position', [one(await list(), 'tokPub').thumb.x, one(await list(), 'tokPub').thumb.y], [0, 100]);
 
@@ -174,6 +199,7 @@ const DAY = 24 * 60 * 60 * 1000;
   r = await put(PUB + '?expect=4', PNG, 'image/png', 'tok-owner');
   d = await doc('pub cup');
   eq('… and the retry works (a PNG this time)', [r.status, d.thumb.type, d.thumb.w, d.thumbV, BUCKET.size], [200, 'image/png', 1600, 5, 1]);
+  eq('… a grey picture has no colours of its own: [] (the page uses the tournament\'s own)', [d.thumb.palette, r.json.thumb.palette], [[], []]);
 
   console.log('\n=== remove ===');
   const lastKey = d.thumb.key;
@@ -203,6 +229,69 @@ const DAY = 24 * 60 * 60 * 1000;
     'Tournament thumbnail set · Pub Cup · chhayajeeth@gmail.com', 'Tournament thumbnail removed · Pub Cup · chhayajeeth@gmail.com',
     'Tournament thumbnail set · Own Cup · chhayajeeth@gmail.com', 'Tournament thumbnail set · TT::City Open · chhayajeeth@gmail.com']);
   eq('… with no storage key or token in them', (await c.audits.find({}).toArray()).some((a) => /tok-|tournament-thumbs\/[0-9a-f]{24}"/.test(JSON.stringify([a.previousValue && a.previousValue.key, a.newValue && a.newValue.key]))), false);
+
+  console.log('\n=== its colours ===');
+  const oldThumb = (key, type) => ({ key, url: 'https://cdn.asl.test/' + key, type, w: 1280, h: 720, bytes: 1000, focus: { x: 50, y: 50 }, at: Date.now() - DAY, by: 'chhayajeeth@gmail.com' });
+  const until = async (ok, what) => { for (let i = 0; i < 200; i++) { if (await ok()) return; await new Promise((res) => setTimeout(res, 25)); } throw new Error('timed out waiting for ' + what); };
+  const page = async (token, as) => req('GET', '/api/public/tournament/' + token, null, as);
+  // colours are read one picture at a time: once a picture queued last has
+  // its colours, every one before it is done too
+  const settle = async () => {
+    const key = 'tournament-thumbs/' + require('crypto').randomBytes(12).toString('hex') + '.png';
+    BODIES.set(key, ORANGE_BLUE);
+    await c.leagues.updateOne({ leagueKey: 'table tennis masters' }, { $set: { thumb: oldThumb(key, 'image/png'), thumbV: 1 } });
+    await page('tokTTM');
+    await until(async () => Array.isArray((await doc('table tennis masters')).thumb.palette), 'the colours queue');
+  };
+  let v = (await doc('pub cup')).thumbV;
+  r = await put(PUB + '?expect=' + v, ORANGE_BLUE, 'image/png', 'tok-owner');
+  d = await doc('pub cup');
+  eq('a mostly orange picture with a blue side: orange first, then blue — in the answer and saved', [r.status, near(d.thumb.palette, [hex(ORANGE), hex(BLUE)]), r.json.thumb.palette], [200, true, d.thumb.palette]);
+  const shown = { url: 'https://cdn.asl.test/' + d.thumb.key, x: 50, y: 50, w: 1600, h: 900, palette: d.thumb.palette };
+  let pg = (await page('tokPub')).json;
+  eq('… the homepage card and the tournament page get the same picture and colours — and the page its sport', [one(await list(), 'tokPub').thumb, pg.thumb, pg.sport], [shown, shown, 'cricket']);
+  pg = (await page('tokTTM')).json;
+  eq('… a tournament with no picture: thumb null, its sport still there (a legacy doc\'s, from its name)', [pg.thumb, pg.sport], [null, 'tabletennis']);
+
+  console.log('\n=== colours for a picture saved before they were read ===');
+  const OLD = 'tournament-thumbs/' + 'a1'.repeat(12) + '.png';
+  BODIES.set(OLD, GREEN_MAGENTA);
+  await c.leagues.updateOne({ leagueKey: 'juhu football league' }, { $set: { thumb: oldThumb(OLD, 'image/png'), thumbV: 1 } });
+  let openGate = null;
+  gate = new Promise((res) => { openGate = res; });
+  pg = (await page('tokFB')).json;
+  eq('shown at once, before its colours are known: the picture with palette null', [pg.thumb && pg.thumb.url, pg.thumb && pg.thumb.palette], ['https://cdn.asl.test/' + OLD, null]);
+  gate = null; openGate();
+  await until(async () => Array.isArray((await doc('juhu football league')).thumb.palette), 'the football colours');
+  d = await doc('juhu football league');
+  eq('… then read back from storage and saved on that picture: magenta (the more vivid half) first, then green', [got(OLD), near(d.thumb.palette, [hex(MAGENTA), hex(GREEN)])], [1, true]);
+  eq('… the very next visit and the homepage card show them — no stale cached page', [((await page('tokFB')).json.thumb || {}).palette, (one(await list(), 'tokFB').thumb || {}).palette], [d.thumb.palette, d.thumb.palette]);
+  const BROKEN = 'tournament-thumbs/' + 'b2'.repeat(12) + '.webp';
+  BODIES.set(BROKEN, vp8l(1280, 720));
+  await c.leagues.updateOne({ leagueKey: 'monsoon kabaddi' }, { $set: { thumb: oldThumb(BROKEN, 'image/webp'), thumbV: 1 } });
+  for (let i = 0; i < 3; i++) await page('tokKB');
+  await settle();
+  eq('a picture its colours cannot be read from: tried once per run, still shown (palette null)', [got(BROKEN), (await page('tokKB')).json.thumb.palette, (await doc('monsoon kabaddi')).thumb.palette], [1, null, undefined]);
+
+  console.log('\n=== never onto a newer picture ===');
+  const OLDER = 'tournament-thumbs/' + 'c3'.repeat(12) + '.png';
+  BODIES.set(OLDER, GREEN_MAGENTA);
+  BUCKET.set(OLDER, { type: 'image/png' });
+  v = (await doc('pub cup')).thumbV;
+  await c.leagues.updateOne({ leagueKey: 'pub cup' }, { $set: { thumb: oldThumb(OLDER, 'image/png') } });
+  gate = new Promise((res) => { openGate = res; });
+  await page('tokPub');                                                  // its colours are being read …
+  await until(() => got(OLDER) > 0, 'the older picture to be read');
+  r = await put(PUB + '?expect=' + v, ORANGE_BLUE, 'image/png', 'tok-owner');   // … while the owner puts up a new picture
+  gate = null; openGate();
+  await settle();
+  d = await doc('pub cup');
+  eq('the old picture\'s colours, read late, are never written onto the new one', [r.status, d.thumb.key !== OLDER, near(d.thumb.palette, [hex(ORANGE), hex(BLUE)])], [200, true, true]);
+
+  console.log('\n=== private stays private ===');
+  eq('a private tournament\'s page: a visitor and another creator get "not found" — a picture is no way in', [(await page('tokOwn')).status, (await page('tokOwn', 'tok-work')).status], [404, 404]);
+  pg = (await page('tokOwn', 'tok-owner')).json;
+  eq('… its owner sees it in its picture and colours', [/^https:\/\/cdn\.asl\.test\/tournament-thumbs\//.test(pg.thumb.url), Array.isArray(pg.thumb.palette)], [true, true]);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
