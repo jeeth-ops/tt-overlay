@@ -267,7 +267,6 @@
             --scrollbar-thumb: rgba(255, 255, 255, 0.15);
             --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
             --blob-opacity: 0.28;
-            --grain-opacity: 0.035;
             --ease: cubic-bezier(0.4, 0, 0.2, 1);
             --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
             color-scheme: dark;
@@ -300,7 +299,6 @@
             --scrollbar-thumb: rgba(15, 23, 42, 0.15);
             --scrollbar-thumb-hover: rgba(15, 23, 42, 0.28);
             --blob-opacity: 0.16;
-            --grain-opacity: 0.02;
             color-scheme: light;
         }
 
@@ -897,6 +895,7 @@
             animation: tkDotPulse 1.4s ease-in-out infinite;
         }
         @media (prefers-reduced-motion: reduce) { .net-status-dot { animation: none; } }
+        .net-status-banner:not(.is-visible) .net-status-dot { animation-play-state: paused; }
         @media (max-width: 560px) { .net-status-banner { font-size: 0.78rem; } }
 
 
@@ -923,6 +922,7 @@
             animation: tickerScroll 32s linear infinite;
         }
         .live-ticker:hover .live-ticker__track { animation-play-state: paused; }
+        .live-ticker.is-away .live-ticker__track, .live-ticker.is-away .live-ticker__dot { animation-play-state: paused; }
         .live-ticker__set {
             display: flex;
             align-items: center;
@@ -1061,6 +1061,12 @@
             z-index: 1;
         }
         @keyframes ctaShine { 0% { left: -75%; } 45%, 100% { left: 130%; } }
+        /* The hero's moving gradient text and shine repaint the page on every
+           frame they run — they rest while the hero is off screen (JS sets
+           .is-away), so scrolling further down costs nothing for them. */
+        .hero.is-away h1 span, .hero.is-away .cta-btn::before, .hero.is-away .hero-eyebrow-dot,
+        .hero.is-away .du-kicker-desktop, .hero.is-away .du-kicker-mobile,
+        .hero.is-away .device-uplink-kicker .dot, .hero.is-away .du-label::before { animation-play-state: paused; }
         .cta-btn:hover { background-position: 100% center; transform: translateY(-4px) scale(1.015); box-shadow: 0 18px 44px rgba(var(--accent-rgb), 0.6); }
         .cta-btn:active { transform: scale(0.96); box-shadow: 0 4px 14px rgba(var(--accent-rgb), 0.45); }
         @media (prefers-reduced-motion: reduce) { .cta-btn::after { transition: none; } }
@@ -1494,76 +1500,179 @@
             box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.4);
             transform: translateX(calc(var(--i, 0) * 100%)); transition: transform 0.45s var(--ease-spring);
         }
-        .tc-panel { position: relative; min-width: 0; }
-        .tc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 12px; }
-        .tc-title { margin: 0; font-size: 1.15rem; font-weight: 800; letter-spacing: -0.2px; }
-        .tc-title small { margin-left: 8px; font-size: 0.82rem; font-weight: 700; color: var(--text-muted); }
+        /* ===== 🎞️ The row: scrolled by the compositor, at 60 fps =====
+           The row has its own GPU layer at every pixel density (will-change:
+           scroll-position) — without it a 1x laptop screen repaints every card
+           on every frame of a scroll. Nothing inside the row paints while it
+           moves either: the LIVE pulse, a card's lift, glow, zoom and sheen,
+           and the position bar are all transform/opacity. */
+        .tc-panel { position: relative; min-width: 0; timeline-scope: --tc-row; }
+        .tc-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 2px 14px; }
+        .tc-title { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.3px; white-space: nowrap; }
+        .tc-title::before { content: ''; flex: none; width: 4px; height: 1.05em; border-radius: 3px; background: linear-gradient(180deg, var(--accent), var(--brand-orange)); }
+        .tc-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .tc-title small {
+            padding: 2px 9px; border-radius: 99px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0; line-height: 1.5;
+            color: var(--text-muted); background: var(--surface-1); border: 1px solid var(--border-color); font-variant-numeric: tabular-nums;
+        }
+        .tc-tools { display: flex; align-items: center; gap: 16px; flex: none; }
+        /* where the row is: a thumb as wide as the part in view, moved by the
+           row's own scroll (a scroll-driven animation — no script per frame;
+           browsers without one get it from the scroll handler) */
+        .tc-progress { position: relative; width: 96px; height: 4px; border-radius: 99px; background: var(--border-color); overflow: hidden; }
+        .tc-progress[hidden] { display: none; }
+        .tc-progress i {
+            position: absolute; top: 0; bottom: 0; left: 0; width: var(--tc-thumb, 40%); border-radius: inherit;
+            background: linear-gradient(90deg, var(--accent), var(--brand-orange));
+            transform: translateX(var(--tc-at, 0%));
+        }
+        @supports (animation-timeline: scroll()) and (timeline-scope: --tc-row) {
+            .tc-progress i { animation: tcProgress linear both; animation-timeline: --tc-row; }
+        }
+        @keyframes tcProgress { from { transform: translateX(0); } to { transform: translateX(var(--tc-travel, 0%)); } }
         .tc-nav { display: flex; gap: 8px; }
         .tc-nav[hidden] { display: none; }
         .tc-arrow {
-            width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+            width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
             border: 1px solid var(--border-color); background: var(--surface-1); color: var(--text-main);
-            transition: background 0.2s var(--ease), border-color 0.2s var(--ease), opacity 0.2s var(--ease), transform 0.2s var(--ease-spring);
+            box-shadow: 0 6px 18px -8px rgba(var(--shadow-rgb), 0.6);
+            transition: background 0.2s var(--ease), border-color 0.2s var(--ease), opacity 0.2s var(--ease), transform 0.25s var(--ease-spring);
         }
-        .tc-arrow svg { width: 18px; height: 18px; }
-        .tc-arrow:hover:not(:disabled) { border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.1); }
-        .tc-arrow:active:not(:disabled) { transform: scale(0.92); }
-        .tc-arrow:disabled { opacity: 0.32; cursor: default; }
+        .tc-arrow svg { width: 18px; height: 18px; transition: transform 0.25s var(--ease-spring); }
+        .tc-arrow:hover:not(:disabled) { border-color: rgba(var(--accent-rgb), 0.55); background: rgba(var(--accent-rgb), 0.14); }
+        #tcPrev:hover:not(:disabled) svg { transform: translateX(-2px); }
+        #tcNext:hover:not(:disabled) svg { transform: translateX(2px); }
+        .tc-arrow:active:not(:disabled) { transform: scale(0.9); }
+        .tc-arrow:disabled { opacity: 0.3; cursor: default; box-shadow: none; }
         .tc-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         /* the row: --tc-per cards in view (a part of the next one shows that
-           there is more) */
+           there is more). Touch snaps card by card; a mouse or trackpad
+           scrolls freely and only settles on a card when it stops near one. */
         .tournaments-grid {
             --tc-gap: 18px; --tc-per: 4.35;
-            display: flex; gap: var(--tc-gap); overflow-x: auto; overflow-y: hidden;
+            position: relative; display: flex; gap: var(--tc-gap); overflow-x: auto; overflow-y: hidden;
             scroll-snap-type: x mandatory; scroll-padding-inline: 2px; overscroll-behavior-x: contain;
-            scrollbar-width: none; padding: 6px 2px 20px; margin: -6px -2px 0;
+            scroll-timeline: --tc-row inline; will-change: scroll-position;
+            scrollbar-width: none; padding: 10px 2px 30px; margin: -10px -2px -14px;
         }
+        @media (pointer: fine) { .tournaments-grid { scroll-snap-type: x proximity; } }
         .tournaments-grid::-webkit-scrollbar { display: none; }
         .tournaments-grid[hidden] { display: none; }
         @media (max-width: 1199px) { .tournaments-grid { --tc-per: 3.35; } }
         @media (max-width: 899px) { .tournaments-grid { --tc-per: 2.3; --tc-gap: 14px; } }
         @media (max-width: 599px) { .tournaments-grid { --tc-per: 1.22; --tc-gap: 12px; } }
         .tournament-card {
-            --status-color: var(--accent); --status-rgb: var(--accent-rgb);
+            --status-rgb: var(--accent-rgb); --a: 29, 78, 216; --b: 11, 23, 57;
             position: relative; flex: 0 0 calc((100% - (var(--tc-per) - 1) * var(--tc-gap)) / var(--tc-per)); min-width: 0;
             display: flex; flex-direction: column; scroll-snap-align: start;
-            border-radius: 16px; overflow: hidden; text-decoration: none; color: var(--text-main);
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            box-shadow: 0 10px 24px rgba(var(--shadow-rgb), 0.18);
-            transition: transform 0.35s var(--ease-spring), border-color 0.3s var(--ease), box-shadow 0.35s var(--ease);
+            border-radius: 18px; text-decoration: none; color: var(--text-main);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 38%), var(--bg-card);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 14px 30px -16px rgba(var(--shadow-rgb), 0.7);
+            transition: transform 0.45s var(--ease-spring);
         }
-        .tournament-card:hover { transform: translateY(-4px); border-color: rgba(var(--status-rgb), 0.5); box-shadow: 0 18px 36px -14px rgba(var(--status-rgb), 0.5), 0 10px 24px rgba(var(--shadow-rgb), 0.28); }
-        .tournament-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-        .tournament-card.status-live { --status-color: var(--accent); --status-rgb: var(--accent-rgb); }
-        .tournament-card.status-ongoing { --status-color: var(--brand-teal); --status-rgb: var(--brand-teal-rgb); }
-        .tournament-card.status-completed { --status-color: #94a3b8; --status-rgb: 148, 163, 184; }
-        .tournament-card.status-upcoming { --status-color: var(--brand-orange); --status-rgb: var(--brand-orange-rgb); }
-        .tc-media { position: relative; flex: none; aspect-ratio: 16 / 9; overflow: hidden; background: #0b1220; container-type: inline-size; }
-        .tc-media > img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform 0.6s var(--ease); }
-        .tournament-card:hover .tc-media > img, .tournament-card:hover .tc-art { transform: scale(1.045); }
-        .tournament-card .tc-media .tournament-status-badge { position: absolute; top: 9px; left: 9px; z-index: 1; background: rgba(8, 12, 20, 0.82); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
-        /* no thumbnail: the tournament's own designed picture */
+        /* the glow in the tournament's own colour: a layer that fades in */
+        .tournament-card::after {
+            content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+            border: 1px solid rgba(var(--a), 0.85);
+            box-shadow: 0 20px 38px -16px rgba(var(--a), 0.75), 0 0 0 4px rgba(var(--a), 0.12);
+            opacity: 0; transition: opacity 0.3s var(--ease);
+        }
+        .tournament-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+        .tournament-card:focus-visible::after { opacity: 1; }
+        @media (hover: hover) {
+            .tournament-card:hover { transform: translateY(-6px); }
+            .tournament-card:hover::after { opacity: 1; }
+            .tournament-card:hover .tc-media > img, .tournament-card:hover .tc-art { transform: scale(1.06); }
+            .tournament-card:hover .tc-media::after { transform: translateX(130%); transition: transform 1s var(--ease); }
+        }
+        .tournament-card:active { transform: translateY(-2px) scale(0.985); transition-duration: 0.15s; }
+        .tournament-card.status-live { --status-rgb: var(--accent-rgb); }
+        .tournament-card.status-ongoing { --status-rgb: var(--brand-teal-rgb); }
+        .tournament-card.status-completed { --status-rgb: 148, 163, 184; }
+        .tournament-card.status-upcoming { --status-rgb: var(--brand-orange-rgb); }
+        .tc-media { position: relative; flex: none; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 17px 17px 0 0; background: #0b1220; container-type: inline-size; }
+        .tc-media > img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform 0.7s var(--ease-spring); }
+        /* a photo: shade at the top (the badge) and a little at the bottom */
+        .tc-media.is-photo::before {
+            content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+            background: linear-gradient(180deg, rgba(4, 8, 16, 0.42), rgba(4, 8, 16, 0) 34%, rgba(4, 8, 16, 0) 70%, rgba(4, 8, 16, 0.32));
+        }
+        /* the sheen that sweeps the picture on hover */
+        .tc-media::after {
+            content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+            background: linear-gradient(105deg, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, 0.18) 47%, rgba(255, 255, 255, 0.05) 55%, rgba(255, 255, 255, 0) 68%);
+            transform: translateX(-130%);
+        }
+        .tournament-card .tc-media .tournament-status-badge { position: absolute; top: 10px; left: 10px; z-index: 3; }
+        /* no thumbnail: the tournament's own poster — its colours, name,
+           monogram and sport, over a floodlit ground of that sport */
         .tc-art {
-            position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 3px;
-            padding: 7% 7.5%; color: #fff; overflow: hidden; transition: transform 0.6s var(--ease);
-            background: radial-gradient(120% 95% at 88% 8%, rgba(255, 255, 255, 0.18), transparent 55%), linear-gradient(135deg, var(--a, #1e3a8a), var(--b, #0f172a));
+            position: absolute; inset: 0; overflow: hidden; color: #fff;
+            background:
+                radial-gradient(80% 100% at 88% -6%, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0) 58%),
+                radial-gradient(90% 70% at 10% 112%, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0) 70%),
+                linear-gradient(140deg, rgb(var(--a)) 0%, rgb(var(--b)) 82%);
+            transition: transform 0.7s var(--ease-spring);
         }
-        .tc-art svg { position: absolute; top: 50%; right: -4%; width: 66%; height: auto; transform: translateY(-50%); opacity: 0.26; }
+        .tc-art::before, .tc-art::after {
+            content: ''; position: absolute; top: -8%; width: 92%; height: 120%; pointer-events: none;
+            background: conic-gradient(from 152deg at 50% 0%, rgba(255, 255, 255, 0) 0deg, rgba(220, 234, 255, 0.11) 10deg, rgba(235, 244, 255, 0.2) 19deg, rgba(220, 234, 255, 0.1) 28deg, rgba(255, 255, 255, 0) 40deg);
+        }
+        .tc-art::before { left: -34%; transform: rotate(-9deg); transform-origin: 50% 0; }
+        .tc-art::after { right: -34%; transform: scaleX(-1) rotate(-9deg); transform-origin: 50% 0; }
+        .tc-art-scene {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            -webkit-mask-image: linear-gradient(90deg, transparent 6%, rgba(0, 0, 0, 0.3) 34%, #000 60%);
+            mask-image: linear-gradient(90deg, transparent 6%, rgba(0, 0, 0, 0.3) 34%, #000 60%);
+        }
         .tc-art-mono {
-            position: relative; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-            font-family: 'Space Grotesk', 'Inter', sans-serif; font-weight: 700; line-height: 1; letter-spacing: 0.5px;
-            font-size: 1.9rem; font-size: clamp(1.3rem, 15cqw, 2.4rem); text-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+            position: absolute; top: 7.5%; right: 5%; z-index: 1; display: grid; place-items: center;
+            min-width: 15cqw; height: 15cqw; padding: 0 2.4cqw; border-radius: 4.4cqw;
+            font-family: 'Inter', sans-serif; font-weight: 900; font-size: 5.2cqw; line-height: 1; letter-spacing: 0.03em; white-space: nowrap;
+            background: linear-gradient(150deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.07));
+            border: 1px solid rgba(255, 255, 255, 0.38);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 8px 20px -6px rgba(0, 0, 0, 0.45);
         }
-        .tc-art-sport { position: relative; font-size: 0.6rem; font-weight: 800; letter-spacing: 1.6px; text-transform: uppercase; opacity: 0.85; }
-        .tc-body { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px 14px; min-width: 0; }
-        .tc-body h3 { margin: 0; min-height: 2.6em; font-size: 1rem; font-weight: 800; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-        .tc-meta, .tc-sub { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+        .tc-art-copy { position: absolute; left: 6.5%; right: 6.5%; bottom: 7.5%; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2.2cqw; }
+        .tc-art-copy::before { content: ''; position: absolute; z-index: -1; left: -14%; right: 8%; top: -34%; bottom: -30%; background: radial-gradient(closest-side, rgba(3, 7, 18, 0.42), rgba(3, 7, 18, 0)); pointer-events: none; }
+        .tc-art-name {
+            max-width: 100%; font-family: 'Space Grotesk', 'Inter', sans-serif; font-weight: 700; text-transform: uppercase;
+            font-size: var(--tc-name, 8cqw); line-height: 1; letter-spacing: -0.01em; text-wrap: balance; overflow-wrap: anywhere;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+            text-shadow: 0 2px 18px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+        }
+        .tc-art-tags { display: flex; align-items: center; gap: 1.8cqw; }
+        .tc-art-sport, .tc-art-year { display: inline-flex; align-items: center; gap: 1.4cqw; font-size: max(8.5px, 3.3cqw); font-weight: 800; letter-spacing: 0.14em; line-height: 1; text-transform: uppercase; white-space: nowrap; }
+        .tc-art-sport { opacity: 0.9; }
+        .tc-art-sport svg { width: 1.3em; height: 1.3em; flex: none; }
+        .tc-art-year { padding: 0.9cqw 1.9cqw; border-radius: 99px; letter-spacing: 0.08em; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.26); }
+        .tc-body { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 13px 15px 15px; min-width: 0; container-type: inline-size; }
+        .tc-body h3 {
+            margin: 0 0 2px; min-height: 2.6em; font-size: 1.02rem; font-weight: 800; line-height: 1.3; letter-spacing: -0.15px;
+            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+        }
+        .tc-meta, .tc-sub { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; font-weight: 600; }
+        .tc-meta span, .tc-sub span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tc-meta svg, .tc-sub svg { flex: none; width: 15px; height: 15px; }
         .tc-meta { font-size: 0.8rem; color: var(--text-muted); }
-        .tc-sub { font-size: 0.76rem; color: var(--status-color); }
-        .tc-owner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
-        .tc-owner .tournament-meta-chip { max-width: 100%; padding: 3px 9px; font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tc-sub { font-size: 0.78rem; color: rgb(var(--status-rgb)); }
+        /* the owner's view: who made it, public or private, Manage */
+        .tc-owner { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: auto; padding-top: 11px; border-top: 1px solid var(--border-color-soft); }
+        .tc-who { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 0.74rem; font-weight: 600; color: var(--text-main); }
+        .tc-who i {
+            flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+            font-style: normal; font-size: 0.66rem; font-weight: 800; color: #fff; background: linear-gradient(135deg, rgb(var(--wa, 100, 116, 139)), rgb(var(--wb, 30, 41, 59)));
+        }
+        .tc-who span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tc-vis { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px 3px 7px; border-radius: 99px; font-size: 0.68rem; font-weight: 800; }
+        .tc-vis svg { width: 12px; height: 12px; }
+        .tc-vis.private { color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.12); }
+        .tc-vis.public { color: var(--success); background: rgba(34, 197, 94, 0.12); }
+        @container (max-width: 270px) { .tournament-manage-btn span, .tc-vis span { display: none; } }
         /* loading: the cards' own shape, picture frame included */
         .tournament-card.is-skeleton { pointer-events: none; box-shadow: none; }
+        .tournament-card.is-skeleton::after { display: none; }
         .is-skeleton .tc-media, .tc-skel { position: relative; overflow: hidden; background: rgba(255, 255, 255, 0.05); }
         .tc-skel { display: block; height: 12px; border-radius: 6px; }
         .tc-skel.w1 { width: 82%; height: 15px; margin-bottom: 4px; }
@@ -1576,51 +1685,59 @@
         @keyframes tcShimmer { to { transform: translateX(100%); } }
         @media (prefers-reduced-motion: reduce) {
             .is-skeleton .tc-media::after, .tc-skel::after { animation: none; }
-            .sport-tabs-indicator, .tc-media > img, .tc-art { transition: none; }
+            .sport-tabs-indicator, .tc-media > img, .tc-art, .tournament-card, .tournament-card::after { transition: none; }
+            .tournament-card:hover, .tournament-card:active { transform: none; }
+            .tournament-card:hover .tc-media > img, .tournament-card:hover .tc-art { transform: none; }
+            .tc-media::after { display: none; }
         }
         @media (max-width: 599px) {
             .sport-tabs { margin-bottom: 18px; }
             .sport-tab { gap: 6px; min-height: 44px; padding: 6px 4px; font-size: 0.85rem; }
-            .tc-head { margin-bottom: 8px; }
+            .tc-head { margin-bottom: 10px; }
+            .tc-title { font-size: 1.08rem; }
+            .tc-progress { width: 72px; }
+            .tc-tools { gap: 10px; }
+            /* one card in view: nothing to line its text up with */
+            .tc-body h3 { min-height: 0; }
         }
         @media (max-width: 430px) { .sport-tab-count { display: none; } }
+        @media (max-width: 380px) { .tc-title { gap: 8px; font-size: 1rem; } .tc-progress { width: 44px; } }
         @media (max-width: 359px) { .sport-tab svg { display: none; } }
         /* touch screens swipe the row; the arrows are for a mouse */
         @media (pointer: coarse) { .tc-nav { display: none; } }
         .tournament-status-badge {
-            font-size: 0.68rem;
+            font-size: 0.66rem;
             font-weight: 800;
-            letter-spacing: 0.5px;
-            padding: 4px 11px;
+            letter-spacing: 0.08em;
+            line-height: 1.35;
+            padding: 4px 10px 4px 9px;
             border-radius: 20px;
             text-transform: uppercase;
             white-space: nowrap;
             display: inline-flex;
             align-items: center;
-            gap: 5px;
+            gap: 6px;
+            color: #e2e8f0;
+            background: rgba(8, 12, 20, 0.74);
+            border: 1px solid rgba(255, 255, 255, 0.14);
         }
-        .tournament-status-badge.live {
-            background: rgba(var(--accent-rgb), 0.16); color: var(--accent);
-            animation: badgePulseRing 1.8s ease-out infinite;
+        .tournament-status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        /* LIVE: the broadcast red, and a ring that pulses on the GPU */
+        .tournament-status-badge.live { position: relative; color: #fff; background: linear-gradient(135deg, #f0474b, #cf2a2f); border-color: rgba(255, 255, 255, 0.22); box-shadow: 0 4px 14px rgba(var(--accent-rgb), 0.45); }
+        .tournament-status-badge.live::before { display: none; }
+        .tournament-status-badge.live::after {
+            content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+            box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.5);
+            opacity: 0; animation: badgePulseRingGpu 1.8s ease-out infinite;
         }
-        @keyframes badgePulseRing {
-            0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45); }
-            70% { box-shadow: 0 0 0 7px rgba(var(--accent-rgb), 0); }
-            100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
-        }
-        .tournament-status-badge.live .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: livePulse 1.4s ease-in-out infinite; }
-        .tournament-status-badge.completed { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
-        .tournament-status-badge.ongoing { background: rgba(var(--brand-teal-rgb), 0.16); color: var(--brand-teal); }
-        .tournament-status-badge.upcoming { background: rgba(var(--brand-orange-rgb), 0.16); color: var(--brand-orange); }
-        .tournament-meta-chip {
-            display: inline-flex; align-items: center; gap: 6px;
-            font-size: 0.78rem; font-weight: 600; color: var(--text-muted);
-            background: var(--surface-1); border: 1px solid var(--border-color-soft);
-            padding: 5px 12px; border-radius: 999px;
-        }
-        .tournament-meta-chip.host { color: var(--text-main); }
-        .tournament-meta-chip.private { color: var(--brand-orange); background: rgba(var(--brand-orange-rgb), 0.1); border-color: rgba(var(--brand-orange-rgb), 0.25); }
-        .tournament-meta-chip.public { color: var(--success); background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.25); }
+        .tournament-status-badge.live .dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+        /* off screen — the row away, or the card scrolled out of it — the
+           pulse rests (JS sets .is-away / .is-idle) */
+        .tc-panel.is-away .tournament-status-badge.live::after, .tournament-status-badge.live.is-idle::after { animation-play-state: paused; }
+        .tournament-status-badge.completed { color: #cbd5e1; }
+        .tournament-status-badge.completed::before { background: #94a3b8; }
+        .tournament-status-badge.ongoing::before { background: var(--brand-teal); box-shadow: 0 0 8px var(--brand-teal); }
+        .tournament-status-badge.upcoming::before { background: var(--brand-orange); }
         .tournaments-empty {
             text-align: center; color: var(--text-muted); padding: 60px 20px;
             border: 1px dashed var(--border-color); border-radius: 18px;
@@ -1635,16 +1752,19 @@
            (requireOwner), so even a forged/edited DOM can't call it as
            anyone else. */
         .tournament-manage-btn {
-            position: relative; z-index: 3;
-            display: inline-flex; align-items: center; gap: 6px;
-            font-size: 0.72rem; font-weight: 800; letter-spacing: 0.3px;
+            position: relative; z-index: 3; flex: none;
+            display: inline-flex; align-items: center; gap: 5px;
+            font-size: 0.72rem; font-weight: 800; letter-spacing: 0.2px;
             color: var(--text-main); background: var(--surface-1);
             border: 1px solid var(--border-color); border-radius: 999px;
-            padding: 6px 13px; cursor: pointer;
-            transition: background 0.25s var(--ease), border-color 0.25s var(--ease), transform 0.2s var(--ease-spring);
+            padding: 5px 11px 5px 8px; cursor: pointer;
+            transition: background 0.25s var(--ease), border-color 0.25s var(--ease), color 0.25s var(--ease), transform 0.2s var(--ease-spring);
         }
-        .tournament-manage-btn:hover { background: rgba(var(--accent-rgb), 0.12); border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent); transform: translateY(-1px); }
-        .tournament-manage-btn:active { transform: scale(0.96); }
+        .tournament-manage-btn svg { width: 14px; height: 14px; flex: none; transition: transform 0.5s var(--ease-spring); }
+        .tournament-manage-btn:hover { background: rgba(var(--accent-rgb), 0.12); border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent); }
+        .tournament-manage-btn:hover svg { transform: rotate(60deg); }
+        .tournament-manage-btn:active { transform: scale(0.95); }
+        .tournament-manage-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
         #manage-modal {
             position: fixed; inset: 0; z-index: 10000;
@@ -1729,20 +1849,6 @@
             .manage-btn-spinner { animation: none; }
         }
 
-        .grain-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            height: 100dvh;
-            z-index: 9998;
-            pointer-events: none;
-            opacity: var(--grain-opacity);
-            mix-blend-mode: overlay;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-        }
-
         .cursor-glow {
             position: fixed;
             top: 0;
@@ -1776,32 +1882,34 @@
             pointer-events: none;
         }
 
-        /* ===== Living background — soft ambient blobs that drift slowly ===== */
+        /* ===== Living background — soft ambient blobs that drift slowly =====
+           Each glow is drawn already soft: the gradient is the exact light a
+           blur(90px) of the old discs gave (same centre, colour and falloff),
+           so nothing has to run a 90px blur on the GPU every frame they move. */
         .ambient-blob {
             position: absolute;
             border-radius: 50%;
-            filter: blur(90px);
             opacity: var(--blob-opacity);
             will-change: transform;
             pointer-events: none;
             transition: opacity 0.35s var(--ease);
         }
         .ambient-blob.b1 {
-            width: 520px; height: 520px;
-            top: -120px; left: -80px;
-            background: radial-gradient(circle, rgba(var(--accent-rgb), 0.55), transparent 70%);
+            width: 880px; height: 880px;
+            top: -300px; left: -260px;
+            background: radial-gradient(circle closest-side, rgba(var(--accent-rgb), 0.31) 0%, rgba(var(--accent-rgb), 0.296) 10%, rgba(var(--accent-rgb), 0.259) 20%, rgba(var(--accent-rgb), 0.206) 30%, rgba(var(--accent-rgb), 0.147) 40%, rgba(var(--accent-rgb), 0.094) 50%, rgba(var(--accent-rgb), 0.052) 60%, rgba(var(--accent-rgb), 0.025) 70%, rgba(var(--accent-rgb), 0.01) 80%, rgba(var(--accent-rgb), 0.004) 90%, rgba(var(--accent-rgb), 0) 100%);
             animation: driftA 26s ease-in-out infinite;
         }
         .ambient-blob.b2 {
-            width: 620px; height: 620px;
-            bottom: -180px; right: -120px;
-            background: radial-gradient(circle, rgba(53, 179, 193, 0.4), transparent 70%);
+            width: 980px; height: 980px;
+            bottom: -360px; right: -300px;
+            background: radial-gradient(circle closest-side, rgba(53, 179, 193, 0.253) 0%, rgba(53, 179, 193, 0.242) 10%, rgba(53, 179, 193, 0.213) 20%, rgba(53, 179, 193, 0.171) 30%, rgba(53, 179, 193, 0.124) 40%, rgba(53, 179, 193, 0.08) 50%, rgba(53, 179, 193, 0.045) 60%, rgba(53, 179, 193, 0.021) 70%, rgba(53, 179, 193, 0.008) 80%, rgba(53, 179, 193, 0.003) 90%, rgba(53, 179, 193, 0) 100%);
             animation: driftB 32s ease-in-out infinite;
         }
         .ambient-blob.b3 {
-            width: 420px; height: 420px;
-            top: 40%; left: 60%;
-            background: radial-gradient(circle, rgba(242, 166, 72, 0.3), transparent 70%);
+            width: 780px; height: 780px;
+            top: calc(40% - 180px); left: calc(60% - 180px);
+            background: radial-gradient(circle closest-side, rgba(242, 166, 72, 0.141) 0%, rgba(242, 166, 72, 0.134) 10%, rgba(242, 166, 72, 0.117) 20%, rgba(242, 166, 72, 0.092) 30%, rgba(242, 166, 72, 0.066) 40%, rgba(242, 166, 72, 0.042) 50%, rgba(242, 166, 72, 0.024) 60%, rgba(242, 166, 72, 0.012) 70%, rgba(242, 166, 72, 0.005) 80%, rgba(242, 166, 72, 0.002) 90%, rgba(242, 166, 72, 0) 100%);
             animation: driftC 22s ease-in-out infinite;
         }
         @keyframes driftA {
@@ -1885,9 +1993,9 @@
              invisible there, so it's dropped (nav + menu keep theirs).
            • Loops that animate background-position / left / box-shadow
              repaint (or re-layout) on the main thread every frame, forever:
-             hero gradient text, CTA shine, live-card accent shimmer, live
-             badge ring. They rest in their normal look on phones; the live
-             badge keeps a pulse, done with transform+opacity (GPU only). */
+             hero gradient text, CTA shine, live-card accent shimmer. They
+             rest in their normal look on phones (the live badge's pulse is
+             transform+opacity — the GPU — everywhere). */
         @media (max-width: 900px), (pointer: coarse) {
             .tournament-card,
             .sport-card,
@@ -1903,27 +2011,12 @@
             .cta-btn::before {
                 animation: none !important;
             }
-            .tournament-status-badge.live {
-                animation: none !important;
-                position: relative;
-            }
-            .tournament-status-badge.live::after {
-                content: '';
-                position: absolute;
-                inset: 0;
-                border-radius: inherit;
-                box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.35);
-                opacity: 0;
-                pointer-events: none;
-                animation: badgePulseRingGpu 1.8s ease-out infinite;
-            }
             /* The small blinking "live" dots (20+ in the ticker alone) were
                the rest of the per-frame style work while scrolling: on
                phones they sit solid instead of blinking. The ticker keeps
                moving and live badges keep their (GPU) pulse ring. */
             .hero-eyebrow-dot,
             .tournaments-live-count .dot,
-            .tournament-status-badge.live .dot,
             .device-uplink-kicker .dot,
             .du-label::before,
             .live-ticker__dot.tk-dot-live,
@@ -1946,9 +2039,8 @@
            drift, floodlight dust rising, the outline of the ground at the
            bottom, the sky lit navy above and the grass green below.
            Everything moves by transform/opacity only (the compositor), with
-           no blur filter and no blend mode; the film grain, a full-screen
-           blend over every frame, is left out on phones. Reduced motion:
-           the same picture, still. */
+           no blur filter and no blend mode. Reduced motion: the same
+           picture, still. */
         .bg-m { display: none; }
         @media (max-width: 900px), (pointer: coarse) {
             .bg-animations {
@@ -1957,8 +2049,7 @@
                     radial-gradient(150% 48% at 50% 108%, rgba(18, 98, 72, 0.45), rgba(18, 98, 72, 0) 72%),
                     var(--bg-dark);
             }
-            .grain-overlay { display: none; }
-            .ambient-blob { filter: none; opacity: 1; will-change: transform; }
+            .ambient-blob { opacity: 1; will-change: transform; }
             .ambient-blob.b1 {
                 width: 105vw; height: 105vw; top: -24vw; left: -38vw;
                 background: radial-gradient(circle closest-side, rgba(var(--accent-rgb), 0.34), rgba(var(--accent-rgb), 0.16) 45%, rgba(var(--accent-rgb), 0) 100%);
@@ -3602,8 +3693,6 @@
         </div>
     </div>
 
-    <div class="grain-overlay"></div>
-
     <div class="cursor-glow"></div>
 
     <nav class="animate-in">
@@ -4273,9 +4362,12 @@
         <div class="tc-panel reveal-on-scroll delay-2" id="tournamentsPanel" role="tabpanel" aria-labelledby="sportTab-cricket">
             <div class="tc-head">
                 <h3 class="tc-title" id="tournamentsRowTitle">Cricket tournaments</h3>
-                <div class="tc-nav" id="tcNav" hidden>
-                    <button type="button" class="tc-arrow" id="tcPrev" aria-label="Previous tournaments" aria-controls="tournaments-grid" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
-                    <button type="button" class="tc-arrow" id="tcNext" aria-label="More tournaments" aria-controls="tournaments-grid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></button>
+                <div class="tc-tools">
+                    <span class="tc-progress" id="tcProgress" aria-hidden="true" hidden><i></i></span>
+                    <div class="tc-nav" id="tcNav" hidden>
+                        <button type="button" class="tc-arrow" id="tcPrev" aria-label="Previous tournaments" aria-controls="tournaments-grid" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+                        <button type="button" class="tc-arrow" id="tcNext" aria-label="More tournaments" aria-controls="tournaments-grid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></button>
+                    </div>
                 </div>
             </div>
             <div class="tournaments-grid" id="tournaments-grid" aria-label="Cricket tournaments" aria-busy="true">
@@ -5084,7 +5176,7 @@
             tournamentsSig = sig;
             allTournaments = next;
             streamPicks = picks;
-            renderTournaments();
+            renderTournaments(quiet ? { background: true } : undefined);
             renderTicker();
             renderStatsBar();
             renderStreams();
@@ -5309,10 +5401,23 @@
         }
         let tournamentSport = sportFromUrl();
 
-        function renderTournaments() {
+        // The row is being moved right now — a finger or the mouse is down on
+        // it, or it scrolled a moment ago. A refresh in the background waits
+        // for it: swapping cards under a moving row is what makes it stutter.
+        let tournamentRowMovedAt = 0;
+        let tournamentRowHeld = false;
+        function tournamentRowBusy() { return tournamentRowHeld || performance.now() - tournamentRowMovedAt < 350; }
+        let tournamentRowLater = null;
+
+        function renderTournaments(opts) {
             const grid = document.getElementById('tournaments-grid');
             const empty = document.getElementById('tournaments-empty');
             if (!grid) return;
+            clearTimeout(tournamentRowLater);
+            if (opts && opts.background && tournamentRowBusy()) {
+                tournamentRowLater = setTimeout(() => renderTournaments(opts), 400);
+                return;
+            }
 
             updateTournamentsLiveCount();
             updateSportTabs();
@@ -5327,17 +5432,15 @@
                 .filter(t => tournamentMatchesQuery(t, tournamentQuery))
                 .sort((a, b) => (TOURNAMENT_STATUS_ORDER[a.status] ?? 4) - (TOURNAMENT_STATUS_ORDER[b.status] ?? 4));
             renderTournamentsCount(list.length, byStatus.length);
-            document.getElementById('tournamentsRowTitle').innerHTML = `${tkEscape(sport.label)} tournaments${ofSport.length ? ` <small>${ofSport.length}</small>` : ''}`;
+            document.getElementById('tournamentsRowTitle').innerHTML = `<span>${tkEscape(sport.label)} tournaments</span>${ofSport.length ? ` <small>${ofSport.length}</small>` : ''}`;
             grid.setAttribute('aria-label', `${sport.label} tournaments`);
             // still loading: the skeleton cards stay
             if (!tournamentsLoaded && !tournamentsLoadError) return;
             grid.removeAttribute('aria-busy');
 
-            // a refresh keeps the row where the visitor left it; another
-            // sport starts at its beginning
-            const keepScroll = grid.dataset.sport === tournamentSport ? grid.scrollLeft : 0;
+            // another sport starts at its beginning (and its cards play in)
+            const fresh = grid.dataset.sport !== tournamentSport;
             grid.dataset.sport = tournamentSport;
-            grid.innerHTML = '';
             const failed = tournamentsLoadError && !tournamentsLoaded;
             document.getElementById('tournamentsRetry').hidden = !failed;
 
@@ -5354,28 +5457,108 @@
                                 ? `No completed ${sport.label.toLowerCase()} tournaments yet.`
                                 : `No ${sport.label.toLowerCase()} tournaments right now.`));
                 document.getElementById('tournamentsEmptyClear').hidden = !filtered;
+                [...grid.children].forEach(dropTournamentCard);
                 grid.hidden = true;
                 empty.style.display = 'block';
                 updateTournamentRowNav();
                 return;
             }
             empty.style.display = 'none';
+            const shown = !grid.hidden;
             grid.hidden = false;
-            list.forEach(t => grid.appendChild(tournamentCard(t)));
-            grid.scrollLeft = keepScroll;
+
+            // Only what changed is touched: a card whose tournament reads the
+            // same is kept as it is (its picture, its place, the row's scroll),
+            // so a refresh never blinks or moves the row.
+            const owner = !!window.__isOwnerViewer;
+            const kept = new Map();
+            for (const el of grid.children) if (el.dataset.token) kept.set(el.dataset.token, el);
+            const cards = list.map(t => {
+                const key = tournamentCardKey(t, owner);
+                const old = kept.get(t.token);
+                // a kept card works from the newest copy of its tournament
+                if (old && old.__cardKey === key) { old.__tournament = t; return old; }
+                const card = tournamentCard(t);
+                card.__cardKey = key;
+                return card;
+            });
+            cards.forEach((card, i) => { if (grid.children[i] !== card) grid.insertBefore(card, grid.children[i] || null); });
+            while (grid.children.length > cards.length) dropTournamentCard(grid.lastElementChild);
+            if (fresh) grid.scrollLeft = 0;
             updateTournamentRowNav();
+            if (fresh || !shown) playTournamentRowIn(grid);
         }
 
+        // A live card's pulse runs only while the card is in view in the row
+        // (every running animation costs the page a little on every frame).
+        let tcPulseWatch = null;
+        function watchLivePulse(card) {
+            const grid = document.getElementById('tournaments-grid');
+            if (!grid || !('IntersectionObserver' in window)) return;
+            if (!tcPulseWatch) tcPulseWatch = new IntersectionObserver((entries) => entries.forEach((e) => {
+                const badge = e.target.querySelector('.tournament-status-badge.live');
+                if (badge) badge.classList.toggle('is-idle', !e.isIntersecting);
+            }), { root: grid, rootMargin: '0px 32px' });
+            tcPulseWatch.observe(card);
+        }
+        function dropTournamentCard(card) {
+            if (tcPulseWatch) tcPulseWatch.unobserve(card);
+            card.remove();
+        }
+
+        // What a card shows (and its Manage dialog works from). The list's
+        // updatedAt and stream links change all the time and show nowhere on
+        // a card, so they never make one be drawn again.
+        function tournamentCardKey(t, owner) {
+            const { updatedAt, streams, ...shown } = t;
+            return (owner ? 'o' : 'v') + JSON.stringify(shown);
+        }
+
+        // A sport's cards come in one after another — only those in view, by
+        // transform/opacity (the GPU), and not at all with reduced motion.
+        function playTournamentRowIn(grid) {
+            if (!grid.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const end = grid.scrollLeft + grid.clientWidth;
+            let i = 0;
+            for (const card of grid.children) {
+                if (card.offsetLeft > end) break;
+                card.animate([{ opacity: 0, transform: 'translateY(18px) scale(0.97)' }, { opacity: 1, transform: 'none' }],
+                    { duration: 560, delay: i++ * 60, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' });
+            }
+        }
+
+        const TC_ICONS = {
+            lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+            globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+            gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+            calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17"/></svg>',
+            matches: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 9.5h4M7 14.5h4M14.5 9.5h2.5M14.5 14.5h2.5"/></svg>'
+        };
+        // the sport tabs' own icons, for the cards
+        const TOURNAMENT_SPORT_ICONS = {
+            cricket: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="1.8" width="6" height="14" rx="2" transform="rotate(45 12 8.8)" fill="currentColor" fill-opacity=".22"/><path d="M6.6 14.2L3 17.8" stroke-width="2.8"/><circle cx="18.2" cy="18.2" r="2.6" fill="currentColor" stroke="none"/></svg>',
+            football: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5l4.2 3-1.6 5h-5.2l-1.6-5z"/><path d="M12 3v4.5M20.6 9.5l-4.4 1M17.4 19.3l-2.8-3.8M6.6 19.3l2.8-3.8M3.4 9.5l4.4 1"/></svg>',
+            tabletennis: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="9" r="6.8" fill="currentColor" fill-opacity=".22"/><rect x="9" y="15.6" width="3" height="6" rx="1.4" fill="currentColor"/><circle cx="19.6" cy="17.4" r="2" fill="currentColor" stroke="none"/></svg>'
+        };
+
         // One card: the 16:9 picture (the owner's thumbnail, or the
-        // tournament's designed one), the name, and what kind of tournament it
+        // tournament's own poster), the name, and what kind of tournament it
         // is. It opens the tournament's own page (by its token, never its name).
         function tournamentCard(t) {
             const tournamentUrl = `/score/tournament/${encodeURIComponent(t.token)}`;
             const statusKey = ['live', 'ongoing', 'completed'].includes(t.status) ? t.status : 'upcoming';
+            const sportKey = TOURNAMENT_SPORTS[t.sport] ? t.sport : 'cricket';
+            const [a, b] = tournamentPalette(t.token || t.name);
             const card = document.createElement('a');
             card.className = `tournament-card status-${statusKey}`;
             card.href = tournamentUrl;
             card.dataset.token = t.token;
+            // the tournament it shows (a refresh that keeps the card swaps in
+            // the newest copy — see renderTournaments)
+            card.__tournament = t;
+            // its colours: the glow on hover
+            card.style.setProperty('--a', a);
+            card.style.setProperty('--b', b);
             card.addEventListener('click', (e) => {
                 // The tournament page (scorecards + clips) needs a signed-in
                 // Google account: signed-out visitors get the sign-in gate
@@ -5399,32 +5582,40 @@
             // in the owner's payload): who made it, public or private, and the
             // Manage control. The real checks are on the server.
             const showManage = window.__isOwnerViewer && t.ownerUid && t.leagueKey;
-            const ownerHtml = t.createdBy ? `<div class="tc-owner">
-                    <span class="tournament-meta-chip host">👤 ${tkEscape(t.createdBy)}</span>
-                    ${t.isPrivate ? '<span class="tournament-meta-chip private">🔒 Private</span>' : '<span class="tournament-meta-chip public">🌐 Public</span>'}
-                    ${showManage ? '<button type="button" class="tournament-manage-btn" data-manage-btn>⚙️ Manage</button>' : ''}
-                </div>` : '';
+            let ownerHtml = '';
+            if (t.createdBy) {
+                const [wa, wb] = tournamentPalette(t.createdBy);
+                ownerHtml = `<div class="tc-owner">
+                    <span class="tc-who" title="Created by ${tkEscape(t.createdBy)}" style="--wa: ${wa}; --wb: ${wb}"><i aria-hidden="true">${tkEscape((Array.from(String(t.createdBy))[0] || '?').toUpperCase())}</i><span>${tkEscape(t.createdBy)}</span></span>
+                    ${t.isPrivate ? `<span class="tc-vis private" title="Private">${TC_ICONS.lock}<span>Private</span></span>` : `<span class="tc-vis public" title="Public">${TC_ICONS.globe}<span>Public</span></span>`}
+                    ${showManage ? `<button type="button" class="tournament-manage-btn" data-manage-btn title="Manage this tournament">${TC_ICONS.gear}<span>Manage</span></button>` : ''}
+                </div>`;
+            }
             const sub = tournamentCardSub(t);
+            const subIcon = statusKey === 'upcoming' && !(Number(t.matchCount) > 0) ? TC_ICONS.calendar : TC_ICONS.matches;
             card.innerHTML = `
                 <div class="tc-media">${statusHtml}</div>
                 <div class="tc-body">
                     <h3>${tkEscape(t.name)}</h3>
-                    <p class="tc-meta">${tkEscape(tournamentCardMeta(t))}</p>
-                    ${sub ? `<p class="tc-sub">${tkEscape(sub)}</p>` : ''}
+                    <p class="tc-meta">${TOURNAMENT_SPORT_ICONS[sportKey]}<span>${tkEscape(tournamentCardMeta(t))}</span></p>
+                    ${sub ? `<p class="tc-sub">${subIcon}<span>${tkEscape(sub)}</span></p>` : ''}
                     ${ownerHtml}
                 </div>
             `;
             const media = card.querySelector('.tc-media');
-            media.insertBefore(tournamentPicture(t), media.firstChild);
+            const picture = tournamentPicture(t);
+            if (picture.tagName === 'IMG') media.classList.add('is-photo');
+            media.insertBefore(picture, media.firstChild);
+            if (statusKey === 'live') watchLivePulse(card);
 
             if (showManage) {
                 const manageBtn = card.querySelector('[data-manage-btn]');
-                manageBtn.__openManage = () => openManageModal(t);
+                manageBtn.__openManage = () => openManageModal(card.__tournament);
                 manageBtn.addEventListener('click', (e) => {
                     // the card itself is a link — this click must not navigate
                     e.preventDefault();
                     e.stopImmediatePropagation();
-                    openManageModal(t);
+                    openManageModal(card.__tournament);
                 }, true);
             }
             return card;
@@ -5454,7 +5645,7 @@
 
         // The picture: the owner's thumbnail in the 16:9 frame (centred where
         // they set it), or — without one, or if it fails to load — the
-        // tournament's designed picture. A failed picture is never retried.
+        // tournament's own poster. A failed picture is never retried.
         function tournamentPicture(t) {
             const th = t.thumb;
             if (th && /^https:\/\/[^\s"'<>]+$/i.test(th.url || '')) {
@@ -5465,7 +5656,10 @@
                 img.width = 1600;
                 img.height = 900;
                 img.style.objectPosition = `${thumbPct(th.x)}% ${thumbPct(th.y)}%`;
-                img.addEventListener('error', () => img.replaceWith(tournamentArt(t)), { once: true });
+                img.addEventListener('error', () => {
+                    if (img.parentNode && img.parentNode.classList) img.parentNode.classList.remove('is-photo');
+                    img.replaceWith(tournamentArt(t));
+                }, { once: true });
                 img.src = th.url;
                 return img;
             }
@@ -5473,32 +5667,63 @@
         }
         function thumbPct(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(Math.min(100, Math.max(0, n)) * 10) / 10 : 50; }
 
-        // The designed picture: the tournament's own colours (picked from its
-        // token, so they never change), its initials and its sport's field.
-        const TOURNAMENT_ART_COLOURS = [['#1d4ed8', '#0b1739'], ['#be123c', '#3b0a1a'], ['#0f766e', '#062a28'], ['#7c3aed', '#1e0b3d'],
-            ['#c2410c', '#3a1406'], ['#0369a1', '#082236'], ['#4d7c0f', '#172607'], ['#a21caf', '#2e0632']];
-        const TOURNAMENT_ART_FIELDS = {
-            cricket: '<svg viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.6" aria-hidden="true"><ellipse cx="60" cy="40" rx="56" ry="36"/><ellipse cx="60" cy="40" rx="30" ry="20" stroke-dasharray="3 4"/><rect x="56" y="28" width="8" height="24" rx="1"/><path d="M52.5 31.5h15M52.5 48.5h15"/></svg>',
-            football: '<svg viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.6" aria-hidden="true"><rect x="4" y="4" width="112" height="72" rx="2"/><path d="M60 4v72"/><circle cx="60" cy="40" r="11"/><path d="M4 22h16v36H4M116 22h-16v36h16M4 31h6v18H4M116 31h-6v18h6"/></svg>',
-            tabletennis: '<svg viewBox="0 0 120 80" fill="none" stroke="#fff" stroke-width="1.6" aria-hidden="true"><rect x="10" y="12" width="100" height="56" rx="2"/><path d="M60 7v66" stroke-width="2.6"/><path d="M10 40h100" stroke-dasharray="3 4"/><circle cx="85" cy="27" r="3.2" fill="#fff" stroke="none"/></svg>'
+        // The poster: the tournament's own colours (picked from its token, so
+        // they never change), its name, monogram and year, and its sport's
+        // ground under floodlights. Colours are "r, g, b": [bright, deep].
+        const TOURNAMENT_ART_COLOURS = [['37, 99, 235', '9, 22, 64'], ['225, 29, 72', '62, 8, 28'], ['13, 148, 136', '4, 42, 40'], ['124, 58, 237', '30, 10, 70'],
+            ['234, 88, 12', '62, 20, 6'], ['2, 132, 199', '6, 32, 58'], ['77, 140, 20', '18, 40, 8'], ['192, 38, 211', '50, 8, 58']];
+        function tournamentPalette(seed) {
+            let h = 0;
+            for (const ch of String(seed || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+            return TOURNAMENT_ART_COLOURS[h % TOURNAMENT_ART_COLOURS.length];
+        }
+        const TOURNAMENT_ART_SCENES = {
+            // a ground seen from behind the bowler: the stands, the boundary,
+            // the 30-yard circle, the pitch, the far stumps and a lofted shot
+            cricket: '<svg class="tc-art-scene" viewBox="0 0 160 90" preserveAspectRatio="xMaxYMax slice" fill="none" stroke="#fff" aria-hidden="true"><ellipse cx="134" cy="104" rx="100" ry="54" stroke-opacity=".12" stroke-width="1.2"/><ellipse cx="134" cy="101" rx="76" ry="40" fill="#fff" fill-opacity=".05" stroke-opacity=".2"/><ellipse cx="134" cy="99" rx="42" ry="19" stroke-opacity=".26" stroke-dasharray="2.2 2.6"/><path d="M129.2 63.5h9.6l3.4 26.5h-16.4z" fill="#e8d3a2" fill-opacity=".24" stroke-opacity=".4"/><path d="M128.8 66.6h10.4M126.2 86.6h15.6" stroke-opacity=".55" stroke-width=".8"/><path d="M132.7 60.4v4.4M134 60.4v4.4M135.3 60.4v4.4" stroke-opacity=".9" stroke-width=".9" stroke-linecap="round"/><path d="M135 82C133 58 126 38 116.6 29.4" stroke-opacity=".34" stroke-dasharray="1 2.4" stroke-linecap="round"/><circle cx="115.8" cy="28.6" r="2.3" fill="#fff" stroke="none"/></svg>',
+            // a pitch from the side: halfway line, centre circle, a box, the ball
+            football: '<svg class="tc-art-scene" viewBox="0 0 160 90" preserveAspectRatio="xMaxYMax slice" fill="none" stroke="#fff" aria-hidden="true"><path d="M96 61 92 90M112 61 111 90M144 61 147 90" stroke-opacity=".06" stroke-width="8"/><path d="M70 61h96l24 29H44z" fill="#fff" fill-opacity=".05" stroke-opacity=".26"/><path d="M128 61v29" stroke-opacity=".26"/><ellipse cx="128" cy="74" rx="15" ry="5.4" stroke-opacity=".26"/><circle cx="128" cy="74" r=".8" fill="#fff" fill-opacity=".7" stroke="none"/><path d="M66.4 65h16l-4.4 19.6H57.3" stroke-opacity=".22"/><circle cx="146" cy="71" r="3.4" fill="#fff" fill-opacity=".95" stroke="none"/><path d="M146 69.25l1.45 1.05-.55 1.7h-1.8l-.55-1.7z" fill="#0b1220" fill-opacity=".55" stroke="none"/></svg>',
+            // a table from one end: the net across it, a ball over it, a bat
+            tabletennis: '<svg class="tc-art-scene" viewBox="0 0 160 90" preserveAspectRatio="xMaxYMax slice" fill="none" stroke="#fff" aria-hidden="true"><path d="M92 58h52l12 24H80z" fill="#3b82f6" fill-opacity=".24" stroke-opacity=".42"/><path d="M118 58v24" stroke-opacity=".34" stroke-width=".8"/><path d="M80 82v6M156 82v6M90 82v5M146 82v5" stroke-opacity=".24"/><path d="M86 65.4h64v3.4H86z" fill="#fff" fill-opacity=".1" stroke-opacity=".5"/><path d="M104 60Q118 34 132 47" stroke-opacity=".32" stroke-dasharray="1 2.2" stroke-linecap="round"/><circle cx="132.6" cy="47.8" r="2.1" fill="#fff" stroke="none"/><g transform="rotate(32 150 70)"><ellipse cx="150" cy="66" rx="7.6" ry="8.6" fill="#ef4444" fill-opacity=".72" stroke="none"/><rect x="148.3" y="73.8" width="3.4" height="9" rx="1.5" fill="#fff" fill-opacity=".5" stroke="none"/></g></svg>'
         };
+        // The monogram: a short name the operator set, else the initials of
+        // the first four words — not of numbers, years or formats ("20th D Y
+        // Patil T20 Cup 2026" → DYPC).
         function tournamentInitials(t) {
             const short = String((t.info && t.info.shortName) || '').trim();
             if (short) return short.slice(0, 8).toUpperCase();
             const words = String(t.name || '').split(/[^\p{L}\p{N}]+/u)
-                .filter(w => /\p{L}/u.test(w) && !/^(the|of|and|by|a|an|for|in)$/i.test(w));
+                .filter(w => /^\p{L}/u.test(w) && !/^(the|of|and|by|a|an|for|in)$/i.test(w) && !/^t\d+$/i.test(w));
             return words.slice(0, 4).map(w => Array.from(w)[0]).join('').toUpperCase() || '🏆';
+        }
+        // The poster's title and year: "MIG TOURNAMENT 2026" → MIG TOURNAMENT
+        // and 2026; "MCA President Cup 2026 - 27" → 2026–27; else the season
+        // the operator set, when it is a year.
+        function tournamentArtTitle(t) {
+            const name = String(t.name || '').replace(/\s+/g, ' ').trim();
+            const range = (y, to) => to ? `${y}–${to.slice(-2)}` : y;
+            const m = /^(.*?)[\s,(–—-]*\b((?:19|20)\d{2})(?:\s*[-–—/]\s*(\d{2}|(?:19|20)\d{2}))?\)?$/.exec(name);
+            if (m && m[1].trim()) return { title: m[1].trim(), year: range(m[2], m[3]) };
+            const s = /^((?:19|20)\d{2})(?:\s*[-–—/]\s*(\d{2}|(?:19|20)\d{2}))?$/.exec(String((t.info && t.info.season) || '').trim());
+            return { title: name, year: s ? range(s[1], s[2]) : '' };
         }
         function tournamentArt(t) {
             const art = document.createElement('div');
-            art.className = 'tc-art';
-            let h = 0;
-            for (const ch of String(t.token || t.name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
-            const [a, b] = TOURNAMENT_ART_COLOURS[h % TOURNAMENT_ART_COLOURS.length];
+            const sport = TOURNAMENT_SPORTS[t.sport] ? t.sport : 'cricket';
+            const [a, b] = tournamentPalette(t.token || t.name);
+            const { title, year } = tournamentArtTitle(t);
+            const n = Array.from(title).length;
+            art.className = `tc-art tc-art--${sport}`;
+            art.setAttribute('aria-hidden', 'true');
             art.style.setProperty('--a', a);
             art.style.setProperty('--b', b);
-            const sport = TOURNAMENT_SPORTS[t.sport] ? t.sport : 'cricket';
-            art.innerHTML = `${TOURNAMENT_ART_FIELDS[sport]}<span class="tc-art-mono">${tkEscape(tournamentInitials(t))}</span><span class="tc-art-sport">${tkEscape(TOURNAMENT_SPORTS[sport].label)}</span>`;
+            // the longer the name, the smaller it is set (two lines at most)
+            art.style.setProperty('--tc-name', `${n <= 10 ? 10 : n <= 16 ? 8.6 : n <= 24 ? 7.4 : n <= 34 ? 6.3 : 5.4}cqw`);
+            art.innerHTML = TOURNAMENT_ART_SCENES[sport]
+                + `<span class="tc-art-mono">${tkEscape(tournamentInitials(t))}</span>`
+                + `<span class="tc-art-copy"><span class="tc-art-name">${tkEscape(title)}</span>`
+                + `<span class="tc-art-tags"><span class="tc-art-sport">${TOURNAMENT_SPORT_ICONS[sport]}${tkEscape(TOURNAMENT_SPORTS[sport].label)}</span>`
+                + `${year ? `<span class="tc-art-year">${tkEscape(year)}</span>` : ''}</span></span>`;
             return art;
         }
 
@@ -5553,38 +5778,83 @@
             updateSportTabs();
         })();
 
-        // The row's arrows: hidden when everything fits, each disabled at its
-        // end; a press moves by the cards in view. Touch screens just swipe.
+        // The row's arrows (hidden when everything fits, each disabled at its
+        // end) and its position bar. Touch screens just swipe. Writes only
+        // what changed, so a scroll frame costs nothing when nothing did.
+        const tcScrollDriven = typeof CSS !== 'undefined' && !!CSS.supports && CSS.supports('animation-timeline: scroll()') && CSS.supports('timeline-scope: --tc-row');
         function updateTournamentRowNav() {
             const grid = document.getElementById('tournaments-grid');
             const nav = document.getElementById('tcNav');
+            const bar = document.getElementById('tcProgress');
             if (!grid || !nav) return;
             const max = grid.scrollWidth - grid.clientWidth;
-            nav.hidden = grid.hidden || max <= 4;
-            document.getElementById('tcPrev').disabled = grid.scrollLeft <= 4;
-            document.getElementById('tcNext').disabled = grid.scrollLeft >= max - 4;
+            const off = grid.hidden || max <= 4;
+            if (nav.hidden !== off) nav.hidden = off;
+            if (bar && bar.hidden !== off) bar.hidden = off;
+            const prev = document.getElementById('tcPrev'), next = document.getElementById('tcNext');
+            const atStart = grid.scrollLeft <= 4, atEnd = grid.scrollLeft >= max - 4;
+            if (prev.disabled !== atStart) prev.disabled = atStart;
+            if (next.disabled !== atEnd) next.disabled = atEnd;
+            if (!bar || off) return;
+            // the thumb: as wide as the part in view, and how far it travels
+            const seen = grid.clientWidth / grid.scrollWidth;
+            const css = (prop, v) => { if (bar['_' + prop] !== v) { bar['_' + prop] = v; bar.style.setProperty(prop, v); } };
+            css('--tc-thumb', `${(seen * 100).toFixed(2)}%`);
+            css('--tc-travel', `${((1 - seen) / seen * 100).toFixed(2)}%`);
+            if (!tcScrollDriven) css('--tc-at', `${((1 - seen) / seen * 100 * Math.min(1, Math.max(0, grid.scrollLeft / max))).toFixed(2)}%`);
         }
         (function tournamentRow() {
             const grid = document.getElementById('tournaments-grid');
             if (!grid) return;
-            let ticking = false;
+            const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            // While the row moves, no script runs per frame: the position bar
+            // follows the scroll by itself and the arrows are set once it
+            // stops. (Browsers without scroll-driven animations move the bar
+            // from here, once a frame.)
+            let ticking = false, settle = null;
+            const settled = () => { clearTimeout(settle); updateTournamentRowNav(); };
             grid.addEventListener('scroll', () => {
-                if (ticking) return;
+                tournamentRowMovedAt = performance.now();
+                clearTimeout(settle);
+                settle = setTimeout(settled, 150);
+                if (tcScrollDriven || ticking) return;
                 ticking = true;
                 requestAnimationFrame(() => { ticking = false; updateTournamentRowNav(); });
             }, { passive: true });
+            grid.addEventListener('scrollend', settled);
+            grid.addEventListener('pointerdown', () => { tournamentRowHeld = true; }, { passive: true });
+            ['pointerup', 'pointercancel', 'blur'].forEach(type => window.addEventListener(type, () => { tournamentRowHeld = false; }, { passive: true }));
             window.addEventListener('resize', updateTournamentRowNav, { passive: true });
+            // a press moves by the cards in view and lands on a card's start
             const page = (dir) => {
-                const card = grid.querySelector('.tournament-card');
-                const step = card ? card.getBoundingClientRect().width + (parseFloat(getComputedStyle(grid).columnGap) || 0) : grid.clientWidth;
-                const inView = Math.max(1, Math.floor((grid.clientWidth + 2) / step));
-                grid.scrollBy({ left: dir * step * inView, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+                const cards = grid.querySelectorAll('.tournament-card');
+                if (!cards.length) return;
+                const first = cards[0].offsetLeft;
+                const step = cards.length > 1 ? cards[1].offsetLeft - first : grid.clientWidth;
+                const inView = Math.max(1, Math.floor((grid.clientWidth + 4) / step));
+                const at = grid.scrollLeft / step;
+                const i = Math.max(0, Math.min(cards.length - 1, dir > 0 ? Math.floor(at + 0.02) + inView : Math.ceil(at - 0.02) - inView));
+                grid.scrollTo({ left: cards[i].offsetLeft - first, behavior: reduced() ? 'auto' : 'smooth' });
             };
             document.getElementById('tcPrev').addEventListener('click', () => page(-1));
             document.getElementById('tcNext').addEventListener('click', () => page(1));
+            // ← → move between the cards (Home / End: the first, the last)
+            grid.addEventListener('keydown', (e) => {
+                const card = e.target;
+                if (!card.classList || !card.classList.contains('tournament-card') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+                const cards = [...grid.querySelectorAll('.tournament-card')];
+                const i = cards.indexOf(card);
+                const j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? cards.length - 1 : null;
+                if (j === null) return;
+                e.preventDefault();
+                if (!cards[j] || j === i) return;
+                cards[j].focus({ preventScroll: true });
+                cards[j].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
+            });
             document.getElementById('tournamentsRetry').addEventListener('click', () => {
                 // back to the loading cards, then try again
                 tournamentsLoadError = false;
+                [...grid.children].forEach(dropTournamentCard);
                 grid.innerHTML = Array(5).fill('<div class="tournament-card is-skeleton" aria-hidden="true"><div class="tc-media"></div><div class="tc-body"><span class="tc-skel w1"></span><span class="tc-skel w2"></span></div></div>').join('');
                 grid.hidden = false;
                 grid.setAttribute('aria-busy', 'true');
@@ -6283,6 +6553,16 @@
                 });
             }
         }
+
+        // Decorative loops rest while their part of the page is off screen:
+        // the hero's moving gradients and shine (they repaint the whole page
+        // on every frame they run), the ticker, and the live tournaments'
+        // pulse. Each gets .is-away (see the CSS beside each).
+        (function restWhenAway() {
+            if (!('IntersectionObserver' in window)) return;
+            const io = new IntersectionObserver((entries) => entries.forEach((e) => e.target.classList.toggle('is-away', !e.isIntersecting)));
+            ['hero-section', 'liveTicker', 'tournamentsPanel'].forEach((id) => { const el = document.getElementById(id); if (el) io.observe(el); });
+        })();
 
         // ===== Mobile hamburger menu =====
         (function mobileNav() {
