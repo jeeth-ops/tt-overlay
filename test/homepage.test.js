@@ -18,6 +18,14 @@
 //     and Download; the right screen is in front at each tap; the loop's end
 //     is its start; it runs only on screen; a step jumps there; reduced
 //     motion shows each step's still; phones get the step tabs under it
+//   • broadcast graphics: the TV plays the real overlay clip (local WebM +
+//     MP4, muted, loop, poster, nothing loaded before it is shown) only on
+//     screen; the step lights up with the clip's time, labels over the score
+//     bar one by one, a step seeks there; reduced motion: no autoplay, a step
+//     shows its own frame
+//   • phones: no match setup in Try it yourself (a Reset in the panel
+//     instead); a living background — floodlight beams, dust, glows — that
+//     moves only by transform/opacity, and stays still under reduced motion
 //   • no sideways scrolling from 320px to 1440px, the flow chain at rest
 //     under reduced motion
 // Plus the server half: youTubeVideoId / tournamentStreams, taken out of
@@ -99,7 +107,7 @@ const firebaseStub = (owner) => `(function(){ var user = ${owner ? `{ uid: 'u-ow
   onAuthStateChanged(cb){ setTimeout(function(){ cb(user); }, 0); return function(){}; }, signOut(){ return Promise.resolve(); },
   getRedirectResult(){ return Promise.resolve({}); }, signInWithPopup(){ return Promise.reject(new Error('no')); } }; }, { GoogleAuthProvider: function(){} }),
   firestore(){ return { collection(){ return { add(){ return Promise.resolve(); } }; } }; } }; })();`;
-const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.pdf': 'application/pdf', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.webm': 'video/webm', '.pdf': 'application/pdf', '.ico': 'image/x-icon' };
 let gsapJs = null;
 try { gsapJs = fs.readFileSync(require.resolve('gsap/dist/gsap.min.js')); } catch (e) { /* the page falls back to CSS */ }
 
@@ -127,13 +135,21 @@ async function openHome(browser, { width = 1440, height = 900, reduced = false, 
       }
       if (u.pathname === '/api/get-sports') return route.fulfill({ contentType: 'application/json', body: '[]' });
       const f = path.join(ROOT, u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname));
-      if (f.startsWith(ROOT) && fs.existsSync(f) && fs.statSync(f).isFile()) return route.fulfill({ contentType: MIME[path.extname(f)] || 'application/octet-stream', body: fs.readFileSync(f) });
+      if (f.startsWith(ROOT) && fs.existsSync(f) && fs.statSync(f).isFile()) {
+        const body = fs.readFileSync(f), type = MIME[path.extname(f)] || 'application/octet-stream';
+        const m = /^bytes=(\d*)-(\d*)$/.exec(route.request().headers()['range'] || '');
+        if (m) {   // byte ranges, as express.static serves them: a video can seek
+          const start = m[1] ? Number(m[1]) : Math.max(0, body.length - Number(m[2])), end = m[1] && m[2] ? Math.min(Number(m[2]), body.length - 1) : body.length - 1;
+          return route.fulfill({ status: 206, headers: { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${body.length}` }, body: body.subarray(start, end + 1) });
+        }
+        return route.fulfill({ headers: { 'Content-Type': type, 'Accept-Ranges': 'bytes' }, body });
+      }
       return route.fulfill({ status: 404, body: '' });
     }
     if (u.hostname === 'www.gstatic.com' && /firebase-app-compat/.test(u.pathname)) return route.fulfill({ contentType: 'application/javascript', body: firebaseStub(owner) });
     if (u.hostname === 'www.gstatic.com') return route.fulfill({ contentType: 'application/javascript', body: '' });
     if (u.hostname === 'cdnjs.cloudflare.com' && gsapJs) return route.fulfill({ contentType: 'application/javascript', body: gsapJs });
-    if (u.hostname === 'i.ytimg.com') return route.fulfill({ contentType: 'image/webp', body: fs.readFileSync(path.join(ROOT, 'assets/home/broadcast-640.webp')) });
+    if (u.hostname === 'i.ytimg.com') return route.fulfill({ contentType: 'image/webp', body: fs.readFileSync(path.join(ROOT, 'assets/home/broadcast-tv-poster.webp')) });
     if (route.request().resourceType() === 'image') offsite.push(u.href);
     return route.abort();
   });
@@ -157,8 +173,8 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     eq('the hero leads with what is different', [await page.textContent('.hero h1'), await page.getAttribute('.hero .cta-btn', 'href'), await page.$$eval('.hero-usps a', (a) => a.map((x) => x.getAttribute('href')))],
       ['Every Ball Live. Highlights Instantly.', '#tournaments', ['#feat-clips', '#feat-highlights', '#feat-report', '#feat-broadcast', '#feat-tournament']]);
     eq('… and every chip lands on its section', await page.$$eval('.hero-usps a', (a) => a.every((x) => !!document.querySelector(x.getAttribute('href')))), true);
-    eq('seven feature rows, each with words and a picture', await page.$$eval('.feat-row', (r) => r.map((x) => x.id + ':' + (x.querySelectorAll('.feat-points li').length) + ':' + (x.querySelectorAll('.feat-media img, .feat-media video').length > 0))),
-      ['feat-clips:3:true', 'feat-highlights:3:true', 'feat-report:3:true', 'feat-scoreboard:3:true', 'feat-tournament:3:true', 'feat-broadcast:3:true', 'feat-led:3:true']);
+    eq('seven feature rows, each with words and a picture (the broadcast row: 4 steps beside its TV)', await page.$$eval('.feat-row', (r) => r.map((x) => x.id + ':' + (x.querySelectorAll('.feat-points li, .tv-step').length) + ':' + (x.querySelectorAll('.feat-media img, .feat-media video').length > 0))),
+      ['feat-clips:3:true', 'feat-highlights:3:true', 'feat-report:3:true', 'feat-scoreboard:3:true', 'feat-tournament:3:true', 'feat-broadcast:4:true', 'feat-led:3:true']);
     eq('the flow: four steps, in order — titles only', [await page.$$eval('.flow-step h3', (h) => h.map((x) => x.textContent)), await page.$$eval('.flow-step p', (p) => p.length)],
       [['Ball scored', 'Clip cut automatically', 'Highlights ready', 'PDF report at the final ball'], 0]);
     eq('the hero line: short, no "on its own", no PDF part', await page.textContent('.hero > p'), 'Ball-by-ball scoring and HD streaming with TV-style graphics. Every 4, 6 and wicket becomes an HD clip, and any player\'s highlights are one tap away.');
@@ -169,7 +185,7 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     const imgs = await page.$$eval('main img, section img', (list) => list.filter((i) => !i.closest('#hero-section') && !i.closest('#tournaments-grid') && !i.closest('#streamsGrid') && !i.closest('#walk'))
       .map((i) => ({ src: i.getAttribute('src'), srcset: i.getAttribute('srcset') || '', lazy: i.getAttribute('loading'), dec: i.getAttribute('decoding'), w: i.getAttribute('width'), h: i.getAttribute('height'), alt: i.getAttribute('alt') })));
     eq('every product picture: a local WebP, lazy, async, sized, described', imgs.filter((i) => !(/^\/assets\/home\/[\w-]+\.webp$/.test(i.src) && i.lazy === 'lazy' && i.dec === 'async' && +i.w > 0 && +i.h > 0 && i.alt && i.alt.length > 10)).map((i) => i.src), []);
-    eq('… all 13 of them (10 in the feature rows, 3 sport tiles)', imgs.length, 13);
+    eq('… all 11 of them (8 in the feature rows, 3 sport tiles)', imgs.length, 11);
     const refs = [...new Set((HTML.match(/\/assets\/home\/[\w.-]+/g) || []))];
     eq('every /assets/home file the page names exists', refs.filter((r) => !fs.existsSync(path.join(ROOT, r))), []);
     eq('nothing comes from Wikimedia any more', /wikimedia/i.test(HTML), false);
@@ -497,12 +513,100 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await ph.ctx.close();
   }
 
+  console.log('\n=== broadcast graphics: the overlay on a TV ===');
+  {
+    const tvState = (page) => page.evaluate(() => { const v = document.getElementById('tvVideo');
+      return { paused: v.paused, t: v.currentTime, src: (v.currentSrc || '').split('/').pop(), lit: [...document.querySelectorAll('#tvSteps .tv-step')].map((s) => s.classList.contains('is-on') ? 1 : 0).join(''),
+        labels: [...document.querySelectorAll('#tvDemo .tv-co')].map((l) => l.classList.contains('is-on') ? 1 : 0).join(''), current: [...document.querySelectorAll('#tvSteps button')].map((b) => b.getAttribute('aria-current') || '-').join(',') }; });
+    const seek = (page, t) => page.evaluate((t) => new Promise((res) => { const v = document.getElementById('tvVideo'); v.pause(); v.addEventListener('seeked', () => setTimeout(res, 50), { once: true }); v.currentTime = t; }), t);
+    const { ctx, page, errors } = await openHome(browser);
+    eq('four steps: the score bar, 4 · 6 · wicket, player stats, the points table', await page.$$eval('#tvSteps .tv-step', (l) => l.map((x) => [x.querySelector('b').textContent, Number(x.dataset.at)])),
+      [['Live score bar', 0], ['FOUR, SIX & WICKET', 6.2], ['Player stats', 24.8], ['Points table', 29.3]]);
+    const vid = await page.$eval('#tvVideo', (v) => ({ muted: v.muted, loop: v.loop, inline: v.hasAttribute('playsinline'), preload: v.getAttribute('preload'), poster: v.getAttribute('poster'), label: v.getAttribute('aria-label').length > 40,
+      sources: [...v.querySelectorAll('source')].map((x) => [x.getAttribute('src'), x.getAttribute('type')]) }));
+    eq('the clip: muted, looping, inline, nothing loaded until shown, a poster first, described', [vid.muted, vid.loop, vid.inline, vid.preload, vid.poster, vid.label], [true, true, true, 'none', '/assets/home/broadcast-tv-poster.webp', true]);
+    eq('… WebM (VP9) first, MP4 for the rest — both here, both small', [vid.sources, vid.sources.map(([src]) => fs.existsSync(path.join(ROOT, src)) && fs.statSync(path.join(ROOT, src)).size < 1.5e6), fs.existsSync(path.join(ROOT, vid.poster))],
+      [[['/assets/home/broadcast-tv.webm', 'video/webm; codecs="vp9"'], ['/assets/home/broadcast-tv.mp4', 'video/mp4']], [true, true], true]);
+    eq('off screen: not playing', (await tvState(page)).paused, true);
+    await page.evaluate(() => window.scrollTo(0, document.getElementById('feat-broadcast').getBoundingClientRect().top + scrollY - 60));
+    await page.waitForFunction(() => { const v = document.getElementById('tvVideo'); return !v.paused && v.currentTime > 2.7; }, null, { timeout: 15000 });
+    let st = await tvState(page);
+    eq('on screen it plays, from the start: step 1 lit, the score bar labelled one by one', [st.src, st.lit, st.labels.startsWith('11'), st.current], ['broadcast-tv.webm', '1000', true, 'step,-,-,-']);
+    for (const [t, lit, labels, what] of [[3.2, '1000', '1100', 'two labels so far'], [5, '1000', '1111', 'all four labels'], [8.2, '0100', '0000', 'the FOUR: step 2, labels gone'],
+      [26.5, '0010', '0000', 'the batter\'s card: step 3'], [32, '0001', '0000', 'the points table: step 4']]) {
+      await seek(page, t);
+      st = await tvState(page);
+      eq(`${t}s: ${what}`, [st.lit, st.labels], [lit, labels]);
+    }
+    await page.evaluate(() => document.getElementById('tvVideo').play());
+    await page.click('#tvSteps .tv-step:nth-child(3) button');
+    await page.waitForTimeout(400);
+    st = await tvState(page);
+    eq('tap step 3: the clip jumps to the player card and plays on', [st.lit, st.t >= 24.8 && st.t < 26.5, st.paused, st.current], ['0010', true, false, '-,-,step,-']);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(400);
+    eq('scrolled away: it pauses', (await tvState(page)).paused, true);
+    eq('no page errors', errors, []);
+    await ctx.close();
+
+    const rm = await openHome(browser, { reduced: true });
+    await rm.page.evaluate(() => window.scrollTo(0, document.getElementById('feat-broadcast').getBoundingClientRect().top + scrollY - 60));
+    await rm.page.waitForTimeout(900);
+    eq('reduced motion: on screen, still the poster — it never plays by itself', (await tvState(rm.page)).paused, true);
+    await rm.page.click('#tvSteps .tv-step:nth-child(2) button');
+    await rm.page.waitForFunction(() => document.getElementById('tvVideo').currentTime > 8, null, { timeout: 15000 });
+    await rm.page.waitForTimeout(200);
+    st = await tvState(rm.page);
+    eq('… tap step 2: that step\'s own frame (the FOUR), still paused', [+st.t.toFixed(2), st.lit, st.paused], [8.2, '0100', true]);
+    await rm.page.click('#tvSteps .tv-step:nth-child(1) button');
+    await rm.page.waitForFunction(() => Math.abs(document.getElementById('tvVideo').currentTime - 5.5) < 0.01, null, { timeout: 15000 });
+    await rm.page.waitForTimeout(200);
+    st = await tvState(rm.page);
+    eq('… tap step 1: the score bar with all its labels', [st.lit, st.labels], ['1000', '1111']);
+    await rm.ctx.close();
+  }
+
+  console.log('\n=== phones: Try it yourself, the background ===');
+  {
+    const look = (page) => page.evaluate(() => {
+      const cs = (sel) => getComputedStyle(document.querySelector(sel));
+      const moving = [...document.querySelectorAll('.bg-m *, .ambient-blob')].flatMap((e) => e.getAnimations()).filter((a) => a.playState === 'running');
+      const props = [...new Set(moving.flatMap((a) => a.effect.getKeyframes().flatMap((k) => Object.keys(k).filter((p) => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)))))].sort();
+      return { setup: cs('#hiSetup').display, panelReset: cs('#hiResetPanelBtn').display, bgM: cs('.bg-m').display, grain: cs('.grain-overlay').display,
+        blobFilter: cs('.ambient-blob.b1').filter, moving: moving.length, props, beams: document.querySelectorAll('.bg-m-beam').length, dust: document.querySelectorAll('.bg-m-p').length };
+    });
+    const desk = await openHome(browser);
+    let v = await look(desk.page);
+    eq('desktop: Match setup as before, no extra Reset; the video background, blurred blobs, no phone graphics', [v.setup, v.panelReset, v.bgM, v.grain, v.blobFilter], ['block', 'none', 'none', 'block', 'blur(90px)']);
+    await desk.ctx.close();
+    const ph = await openHome(browser, { width: 390, height: 844 });
+    v = await look(ph.page);
+    eq('390px: no Match setup; Reset sits in the panel', [v.setup, v.panelReset], ['none', 'block']);
+    eq('390px: the living background — two beams, ten specks of dust, glows without a blur filter, no grain', [v.bgM, v.beams, v.dust, v.blobFilter, v.grain], ['block', 2, 10, 'none', 'none']);
+    eq('… all of it moving, by transform and opacity only', [v.moving, v.props], [15, ['opacity', 'transform']]);
+    // the panel's Reset brings a finished innings back
+    await ph.page.evaluate(() => document.getElementById('hiEditor').scrollIntoView({ block: 'center' }));
+    for (const x of ['6', '4', 'W']) await ph.page.click(x === 'W' ? '#hiOutcomeGrid [data-outcome="wicket"]' : `#hiOutcomeGrid [data-value="${x}"]`);
+    await ph.page.waitForTimeout(150);
+    const before = await ph.page.textContent('[data-du="score"]');
+    await ph.page.click('#hiResetPanelBtn');
+    await ph.page.waitForTimeout(150);
+    eq('… the panel\'s Reset starts the match again', [before !== await ph.page.textContent('[data-du="score"]'), await ph.page.isDisabled('#hiUndoBtn')], [true, true]);
+    eq('the innings-over line no longer points into Match setup', await ph.page.textContent('#hiInningsOver'), 'Innings complete — tap Reset to bowl another.');
+    eq('390px: no page errors', ph.errors, []);
+    await ph.ctx.close();
+    const prm = await openHome(browser, { width: 390, height: 844, reduced: true });
+    v = await look(prm.page);
+    eq('390px, reduced motion: the same picture, nothing moving', [v.bgM, v.moving], ['block', 0]);
+    await prm.ctx.close();
+  }
+
   console.log('\n=== no sideways scrolling, every width ===');
   for (const [w, h] of [[320, 640], [390, 844], [768, 1024], [1024, 768], [1440, 900]]) {
     const { ctx, page, errors } = await openHome(browser, { width: w, height: h });
     const r = await page.evaluate(() => {
       const out = [];
-      document.querySelectorAll('.hero-ctas, .hero-usps, .flow-step, .feat-copy, .feat-media, .feat-media img, .reel-chip, .shot-phone, .shot-card, .walk-phone, .walk-step, .walk-cap, .sport-tile, .tournament-tools, .stream-card, .channel-card').forEach((el) => {
+      document.querySelectorAll('.hero-ctas, .hero-usps, .flow-step, .feat-copy, .feat-media, .feat-media img, .reel-chip, .shot-phone, .shot-card, .walk-phone, .walk-step, .walk-cap, .tv, .tv-step, .tv-co b, .hi-editor, .sport-tile, .tournament-tools, .stream-card, .channel-card').forEach((el) => {
         const b = el.getBoundingClientRect();
         if (b.width && getComputedStyle(el).display !== 'none' && (b.left < -0.5 || b.right > innerWidth + 0.5)) out.push(el.className.split(' ')[0] + ' ' + Math.round(b.left) + '..' + Math.round(b.right));
       });

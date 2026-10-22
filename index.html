@@ -1813,7 +1813,9 @@
            WebViews/Chrome. It also makes the fixed-size red blob cover a
            much bigger share of a small phone screen than a laptop screen,
            which is why the accent red looks stronger on mobile. On touch /
-           narrow screens we shrink the blobs and drop their blur + animation.
+           narrow screens the blobs drop their blur filter (soft gradients
+           instead) and move by transform only — see "Phones: a living
+           background".
 
            We also dial the glass blur itself down to real iOS strength.
            The desktop blur values (12–26px) read as intended on a big
@@ -1825,14 +1827,7 @@
            translucent, just not foggy. */
         @media (max-width: 900px), (pointer: coarse) {
             .bg-video { display: none !important; }
-            .ambient-blob {
-                animation: none !important;
-                filter: blur(40px);
-                opacity: calc(var(--blob-opacity) * 0.6);
-            }
-            .ambient-blob.b1 { width: 220px; height: 220px; }
-            .ambient-blob.b2 { width: 260px; height: 260px; }
-            .ambient-blob.b3 { width: 180px; height: 180px; }
+            /* the blobs: see "Phones: a living background" below */
 
             nav {
                 -webkit-backdrop-filter: blur(8px);
@@ -1921,6 +1916,90 @@
             0% { transform: scale(1); opacity: 0.9; }
             70% { transform: scale(1.35); opacity: 0; }
             100% { transform: scale(1.35); opacity: 0; }
+        }
+
+        /* ===== 📱 Phones: a living background =====
+           Phones never get the desktop's video (5 MB, and a live blur over
+           it — see bgVideoEl), which left a flat dark page. Instead: a
+           floodlit night ground drawn in CSS — two floodlight beams that
+           sway from the top corners, soft colour glows (the old blobs) that
+           drift, floodlight dust rising, the outline of the ground at the
+           bottom, the sky lit navy above and the grass green below.
+           Everything moves by transform/opacity only (the compositor), with
+           no blur filter and no blend mode; the film grain, a full-screen
+           blend over every frame, is left out on phones. Reduced motion:
+           the same picture, still. */
+        .bg-m { display: none; }
+        @media (max-width: 900px), (pointer: coarse) {
+            .bg-animations {
+                background:
+                    radial-gradient(120% 55% at 50% -8%, rgba(42, 72, 140, 0.55), rgba(42, 72, 140, 0) 70%),
+                    radial-gradient(150% 48% at 50% 108%, rgba(18, 98, 72, 0.45), rgba(18, 98, 72, 0) 72%),
+                    var(--bg-dark);
+            }
+            .grain-overlay { display: none; }
+            .ambient-blob { filter: none; opacity: 1; will-change: transform; }
+            .ambient-blob.b1 {
+                width: 105vw; height: 105vw; top: -24vw; left: -38vw;
+                background: radial-gradient(circle closest-side, rgba(var(--accent-rgb), 0.34), rgba(var(--accent-rgb), 0.16) 45%, rgba(var(--accent-rgb), 0) 100%);
+                animation: bgDriftA 19s ease-in-out infinite;
+            }
+            .ambient-blob.b2 {
+                width: 120vw; height: 120vw; top: auto; bottom: -34vw; right: -46vw;
+                background: radial-gradient(circle closest-side, rgba(53, 179, 193, 0.3), rgba(53, 179, 193, 0.13) 45%, rgba(53, 179, 193, 0) 100%);
+                animation: bgDriftB 23s ease-in-out infinite;
+            }
+            .ambient-blob.b3 {
+                width: 86vw; height: 86vw; top: 38%; left: 34%;
+                background: radial-gradient(circle closest-side, rgba(242, 166, 72, 0.24), rgba(242, 166, 72, 0.1) 45%, rgba(242, 166, 72, 0) 100%);
+                animation: bgDriftC 17s ease-in-out infinite;
+            }
+            .bg-m { display: block; position: absolute; inset: 0; overflow: hidden; }
+            .bg-m-beam {
+                position: absolute; top: -6vh; width: 150vw; height: 118vh;
+                transform-origin: 50% 0; will-change: transform;
+                -webkit-mask-image: linear-gradient(#000 8%, transparent 92%);
+                mask-image: linear-gradient(#000 8%, transparent 92%);
+            }
+            .bg-m-beam.l {
+                left: -75vw;
+                background: conic-gradient(from 126deg at 50% 0%, transparent 0deg, rgba(186, 212, 255, 0.09) 13deg, rgba(222, 236, 255, 0.17) 24deg, rgba(186, 212, 255, 0.09) 35deg, transparent 48deg);
+                animation: bgBeamL 13s ease-in-out infinite alternate;
+            }
+            .bg-m-beam.r {
+                right: -75vw;
+                background: conic-gradient(from 186deg at 50% 0%, transparent 0deg, rgba(186, 212, 255, 0.09) 13deg, rgba(222, 236, 255, 0.17) 24deg, rgba(186, 212, 255, 0.09) 35deg, transparent 48deg);
+                animation: bgBeamR 16s ease-in-out infinite alternate;
+            }
+            .bg-m-p {
+                position: absolute; bottom: -3vh; left: var(--x); width: var(--s); height: var(--s); border-radius: 50%;
+                background: rgba(232, 241, 255, 0.95); box-shadow: 0 0 7px 1px rgba(150, 196, 255, 0.6);
+                opacity: 0; will-change: transform, opacity;
+                animation: bgRise var(--d) linear var(--dl) infinite;
+            }
+            .bg-m-field { position: absolute; left: -22vw; bottom: 0; width: 144vw; height: auto; }
+        }
+        @keyframes bgDriftA {
+            0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+            50% { transform: translate3d(22vw, 16vh, 0) scale(1.16); }
+        }
+        @keyframes bgDriftB {
+            0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+            50% { transform: translate3d(-26vw, -20vh, 0) scale(1.1); }
+        }
+        @keyframes bgDriftC {
+            0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+            50% { transform: translate3d(-30vw, 12vh, 0) scale(0.86); }
+        }
+        @keyframes bgBeamL { from { transform: rotate(-8deg); } to { transform: rotate(7deg); } }
+        @keyframes bgBeamR { from { transform: rotate(7deg); } to { transform: rotate(-8deg); } }
+        @keyframes bgRise {
+            0% { transform: translate3d(0, 0, 0); opacity: 0; }
+            12%, 78% { opacity: var(--o); }
+            100% { transform: translate3d(var(--dx), -108vh, 0); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .bg-m-beam, .bg-m-p { animation: none !important; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -2207,6 +2286,68 @@
             filter: blur(40px);
         }
         .feat-media img, .feat-media video { display: block; width: 100%; height: auto; }
+        /* ===== 📺 Broadcast graphics: the real overlay, on a TV =====
+           A 39s clip of the REAL cricket overlay, recorded frame by frame
+           over the ground: the score bar comes on, a dot ball, FOUR, SIX, a
+           single, WICKET, the batter's card, the points table. The clip's
+           own time is the clock: the step beside it lights up as it gets
+           there, tapping a step jumps there, and while the score bar is
+           alone on air its parts are labelled one by one. It plays only on
+           screen; reduced motion or Data Saver: the poster, and a tapped
+           step shows its own frame. The labels sit over the bar's parts as
+           recorded: the bar's top is 13% up from the screen's bottom. */
+        .feat-row#feat-broadcast { grid-template-columns: minmax(0, 1.14fr) minmax(0, 0.86fr); gap: 52px; }
+        .tv { position: relative; padding-bottom: 24px; }
+        .tv-frame {
+            position: relative; padding: 9px; border-radius: 14px;
+            background: linear-gradient(160deg, #2b313d, #0c0f15 40%, #05070b 70%, #222834);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.6), 0 30px 70px -22px rgba(0, 0, 0, 0.75);
+        }
+        .tv-screen { position: relative; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #000; isolation: isolate; }
+        .feat-media .tv-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+        .tv-glare { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(115deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 38%); }
+        .tv-stand { position: absolute; left: 50%; bottom: 0; width: 30%; height: 24px; transform: translateX(-50%); pointer-events: none; }
+        .tv-stand::before { content: ''; position: absolute; left: 50%; top: 0; width: 22%; height: 17px; transform: translateX(-50%); background: linear-gradient(#141821, #0b0e14); }
+        .tv-stand::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 7px; border-radius: 6px 6px 3px 3px; background: linear-gradient(#2b313d, #10131a); box-shadow: 0 8px 18px rgba(0, 0, 0, 0.5); }
+        .tv-live {
+            position: absolute; top: -11px; left: 18px; z-index: 2;
+            display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px;
+            background: #e11d48; color: #fff; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.6px;
+            box-shadow: 0 6px 16px rgba(225, 29, 72, 0.4);
+        }
+        .tv-live i { width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: livePulse 1.6s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .tv-live i { animation: none; } .tv-co b, .tv-co i, .tv-step { transition: none; } }
+        .tv-callouts { position: absolute; inset: 0; pointer-events: none; }
+        .tv-co { position: absolute; inset: 0; }
+        .tv-co b {
+            position: absolute; left: var(--x); bottom: var(--y); transform: translate(-50%, 6px); opacity: 0;
+            padding: 4px 9px; border-radius: 7px; white-space: nowrap;
+            background: rgba(8, 12, 20, 0.88); border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+            color: #fff; font-size: clamp(0.56rem, 1.25vw, 0.74rem); font-weight: 800; line-height: 1.2;
+            transition: opacity 0.35s var(--ease), transform 0.5s var(--ease-spring);
+        }
+        .tv-co i {
+            position: absolute; left: var(--x); top: calc(100% - var(--y)); height: calc(var(--y) - 13%); width: 1.5px; margin-left: -0.75px;
+            background: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.35));
+            transform: scaleY(0); transform-origin: 50% 0; transition: transform 0.4s var(--ease) 0.08s;
+        }
+        .tv-co.is-on b { opacity: 1; transform: translate(-50%, 0); }
+        .tv-co.is-on i { transform: scaleY(1); }
+        .tv-steps { list-style: none; display: grid; gap: 8px; margin: 0; }
+        .tv-step { position: relative; border-radius: 13px; overflow: hidden; border: 1px solid var(--border-color-soft); background: rgba(255, 255, 255, 0.02); opacity: 0.62; transition: opacity 0.35s var(--ease), border-color 0.35s var(--ease), background 0.35s var(--ease); }
+        .tv-step.is-on { opacity: 1; border-color: rgba(var(--k-rgb), 0.55); background: rgba(var(--k-rgb), 0.08); }
+        .tv-step button { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 11px 14px 12px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+        .tv-step button:focus-visible { outline: 2px solid var(--k); outline-offset: -2px; border-radius: 13px; }
+        .tv-num {
+            flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px;
+            font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 0.82rem; font-weight: 700;
+            color: var(--k); border: 1.5px solid rgba(var(--k-rgb), 0.55);
+            transition: background 0.35s var(--ease), color 0.35s var(--ease), border-color 0.35s var(--ease);
+        }
+        .tv-step.is-on .tv-num { background: var(--k); color: #fff; border-color: transparent; }
+        .tv-txt b { display: block; font-size: 0.97rem; font-weight: 700; }
+        .tv-txt small { display: block; margin-top: 1px; color: var(--text-muted); font-size: 0.85rem; line-height: 1.4; }
+        .tv-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2.5px; background: var(--k); transform-origin: 0 50%; transform: scaleX(0); }
         /* A screenshot sits in a plain browser window */
         .shot {
             position: relative; border-radius: 14px; overflow: hidden;
@@ -2269,13 +2410,12 @@
         .led-screen img { border-radius: 6px; }
         .led-stand { width: 28%; height: 34px; margin: 0 auto; background: linear-gradient(180deg, #1f1f1f, #0b0b0b); clip-path: polygon(30% 0, 70% 0, 100% 100%, 0 100%); }
         @media (max-width: 900px) {
-            .feat-row { grid-template-columns: 1fr; gap: 34px; padding: 42px 0; }
+            .feat-row, .feat-row#feat-broadcast { grid-template-columns: 1fr; gap: 34px; padding: 42px 0; }
             .feat-row.flip .feat-copy { order: 0; }
             .feat-copy > p { max-width: none; }
             .shot-phone { right: 6px; bottom: -22px; width: 30%; }
             .shot-card { left: 6px; top: -20px; width: 46%; }
             .feat-row.has-inset { padding-bottom: 66px; }
-            .feat-row#feat-broadcast { padding-top: 62px; padding-bottom: 42px; }
         }
         @media (max-width: 560px) {
             .reel-chip { display: none; }
@@ -2895,6 +3035,15 @@
         }
         .hi-reset-btn:hover { background: var(--border-color); border-color: var(--accent); }
         .hi-editor-note { margin-top: 16px; font-size: 0.72rem; color: var(--text-muted); text-align: center; }
+        /* Phones: no match setup (names, colours, target) — just the scorer
+           buttons under the overlay. Reset sits in the panel there instead
+           (an innings bowled out on a phone must still be able to start
+           again; the state is kept between visits). */
+        .hi-reset-btn.hi-reset-panel { display: none; }
+        @media (max-width: 900px) {
+            .hi-setup { display: none; }
+            .hi-reset-btn.hi-reset-panel { display: block; width: 100%; margin-top: 10px; }
+        }
 
         /* -- Shared "panel card" language for the two main blocks (locked
            SCORE summary + BALL OUTCOME buttons): dark surface, a thin green
@@ -3394,6 +3543,26 @@
         <div class="ambient-blob b1"></div>
         <div class="ambient-blob b2"></div>
         <div class="ambient-blob b3"></div>
+        <!-- 📱 phones: a floodlit ground, drawn (see "Phones: a living background") -->
+        <div class="bg-m" aria-hidden="true">
+            <i class="bg-m-beam l"></i><i class="bg-m-beam r"></i>
+            <i class="bg-m-p" style="--x:6%;--s:2px;--d:19s;--dl:-2s;--o:0.55;--dx:18px"></i>
+            <i class="bg-m-p" style="--x:14%;--s:3px;--d:23s;--dl:-11s;--o:0.7;--dx:-14px"></i>
+            <i class="bg-m-p" style="--x:31%;--s:4px;--d:27s;--dl:-19s;--o:0.6;--dx:-10px"></i>
+            <i class="bg-m-p" style="--x:39%;--s:2px;--d:21s;--dl:-3s;--o:0.45;--dx:16px"></i>
+            <i class="bg-m-p" style="--x:47%;--s:3px;--d:25s;--dl:-14s;--o:0.65;--dx:-20px"></i>
+            <i class="bg-m-p" style="--x:63%;--s:3px;--d:22s;--dl:-16s;--o:0.7;--dx:-16px"></i>
+            <i class="bg-m-p" style="--x:71%;--s:2px;--d:20s;--dl:-5s;--o:0.5;--dx:20px"></i>
+            <i class="bg-m-p" style="--x:79%;--s:4px;--d:28s;--dl:-22s;--o:0.55;--dx:-12px"></i>
+            <i class="bg-m-p" style="--x:86%;--s:2px;--d:19s;--dl:-12s;--o:0.5;--dx:14px"></i>
+            <i class="bg-m-p" style="--x:93%;--s:3px;--d:24s;--dl:-7s;--o:0.65;--dx:-18px"></i>
+            <svg class="bg-m-field" viewBox="0 0 400 150" fill="none">
+                <ellipse cx="200" cy="148" rx="226" ry="92" stroke="rgba(255,255,255,.08)" stroke-width="1.2"/>
+                <ellipse cx="200" cy="148" rx="138" ry="50" stroke="rgba(255,255,255,.07)" stroke-dasharray="3 5"/>
+                <path d="M191 104h18l7 46h-32z" fill="rgba(222,196,142,.06)" stroke="rgba(255,255,255,.08)"/>
+                <path d="M189 112h22M186 140h28" stroke="rgba(255,255,255,.08)"/>
+            </svg>
+        </div>
     </div>
 
     <div class="grain-overlay"></div>
@@ -3673,8 +3842,9 @@
                     <button type="button" class="hi-out-btn hi-out-btn--extra" data-outcome="extra" data-value="legbye">Leg Bye</button>
                 </div>
                 <button type="button" id="hiUndoBtn" class="hi-undo-btn" disabled>Undo Last Ball (U)</button>
+                <button type="button" id="hiResetPanelBtn" class="hi-reset-btn hi-reset-panel">↺ Reset match</button>
                 <p class="hi-shortcuts">Shortcuts: <kbd>0-6</kbd> runs · <kbd>W</kbd> wicket · <kbd>S</kbd> swap strike · <kbd>U</kbd> undo</p>
-                <p class="hi-innings-over hidden" id="hiInningsOver">Innings complete — tap Reset in Match setup to bowl another.</p>
+                <p class="hi-innings-over hidden" id="hiInningsOver">Innings complete — tap Reset to bowl another.</p>
             </div>
 
         </div>
@@ -3860,24 +4030,37 @@
             </figure>
         </article>
 
-        <article class="feat-row flip has-inset" id="feat-broadcast" style="--k:#3b82f6; --k-rgb:59, 130, 246;">
+        <article class="feat-row flip" id="feat-broadcast" style="--k:#3b82f6; --k-rgb:59, 130, 246;">
             <div class="feat-copy reveal-on-scroll">
                 <span class="feat-kicker">📺 Broadcast graphics</span>
                 <h3>TV-style graphics on your YouTube stream</h3>
-                <ul class="feat-points">
-                    <li>Score bar with the chase, this over and the bowler's figures</li>
-                    <li>FOUR, SIX and WICKET animations, over and innings summaries</li>
-                    <li>Points table, player and team cards between overs</li>
-                </ul>
+                <ol class="tv-steps" id="tvSteps">
+                    <li class="tv-step" data-at="0" data-still="5.5"><button type="button"><span class="tv-num">1</span><span class="tv-txt"><b>Live score bar</b><small>Score, the chase, batters, bowler and this over — every ball</small></span></button><i class="tv-bar"></i></li>
+                    <li class="tv-step" data-at="6.2" data-still="8.2"><button type="button"><span class="tv-num">2</span><span class="tv-txt"><b>FOUR, SIX &amp; WICKET</b><small>Every big moment animates — plus over and innings summaries</small></span></button><i class="tv-bar"></i></li>
+                    <li class="tv-step" data-at="24.8" data-still="26.5"><button type="button"><span class="tv-num">3</span><span class="tv-txt"><b>Player stats</b><small>A batter's, bowler's or team's card between balls</small></span></button><i class="tv-bar"></i></li>
+                    <li class="tv-step" data-at="29.3" data-still="32"><button type="button"><span class="tv-num">4</span><span class="tv-txt"><b>Points table</b><small>The live table between overs</small></span></button><i class="tv-bar"></i></li>
+                </ol>
             </div>
             <figure class="feat-media reveal-on-scroll delay-1">
-                <div class="shot">
-                    <img src="/assets/home/broadcast-1200.webp" srcset="/assets/home/broadcast-640.webp 640w, /assets/home/broadcast-1200.webp 1200w" sizes="(max-width: 900px) calc(100vw - 32px), 600px" width="1200" height="675" loading="lazy" decoding="async"
-                         alt="A live stream with the score bar: both teams, 121 for 3 after 15.4 overs, the batters, the bowler, this over and the chase — need 47 runs from 26 balls">
-                </div>
-                <div class="shot-card">
-                    <img src="/assets/home/points-card-900.webp" srcset="/assets/home/points-card-480.webp 480w, /assets/home/points-card-900.webp 900w" sizes="(max-width: 900px) 52vw, 330px" width="900" height="538" loading="lazy" decoding="async"
-                         alt="The points table graphic shown on the stream between overs">
+                <div class="tv" id="tvDemo">
+                    <span class="tv-live" aria-hidden="true"><i></i>LIVE</span>
+                    <div class="tv-frame">
+                        <div class="tv-screen">
+                            <video id="tvVideo" muted loop playsinline preload="none" width="960" height="540" poster="/assets/home/broadcast-tv-poster.webp"
+                                   aria-label="The real overlay on a live stream: the score bar comes on, then a FOUR, a SIX and a WICKET each with its own animation, the batter's card, and the points table">
+                                <source src="/assets/home/broadcast-tv.webm" type='video/webm; codecs="vp9"'>
+                                <source src="/assets/home/broadcast-tv.mp4" type="video/mp4">
+                            </video>
+                            <div class="tv-callouts" aria-hidden="true">
+                                <span class="tv-co" style="--x:19%; --y:22%"><b>Score &amp; overs</b><i></i></span>
+                                <span class="tv-co" style="--x:41%; --y:33%"><b>Batters</b><i></i></span>
+                                <span class="tv-co" style="--x:57.3%; --y:22%"><b>The chase</b><i></i></span>
+                                <span class="tv-co" style="--x:75%; --y:33%"><b>Bowler · this over</b><i></i></span>
+                            </div>
+                            <i class="tv-glare" aria-hidden="true"></i>
+                        </div>
+                    </div>
+                    <span class="tv-stand" aria-hidden="true"></span>
                 </div>
             </figure>
         </article>
@@ -6313,8 +6496,10 @@
                 bindText('hi' + key.charAt(0).toUpperCase() + key.slice(1), key);
             });
 
-            const resetBtn = document.getElementById('hiResetBtn');
-            if (resetBtn) {
+            // Reset: in Match setup, and in the panel on phones (no setup there)
+            ['hiResetBtn', 'hiResetPanelBtn'].forEach(id => {
+                const resetBtn = document.getElementById(id);
+                if (!resetBtn) return;
                 resetBtn.addEventListener('click', () => {
                     state = Object.assign({}, setupDefaults, playingDefaults);
                     history = [];
@@ -6323,7 +6508,7 @@
                     updateUndoBtn();
                     applyState();
                 });
-            }
+            });
 
             // Outcome button taps
             const outcomeGrid = document.getElementById('hiOutcomeGrid');
@@ -6404,6 +6589,59 @@
                 else v.pause();
             }), { threshold: 0.35 }).observe(v);
             document.addEventListener('visibilitychange', () => { if (document.hidden) v.pause(); });
+        })();
+
+        // 📺 Broadcast graphics: the real overlay plays on the TV. The clip's
+        // own time is the clock — the step it is on lights up, with how far
+        // through it is, and while the score bar is alone on air its parts
+        // are labelled one by one. It plays only on screen, muted; a step
+        // jumps there. Reduced motion / Data Saver: no autoplay — the poster,
+        // and a tapped step shows that step's frame.
+        (function broadcastTv() {
+            const tv = document.getElementById('tvDemo'), v = document.getElementById('tvVideo');
+            if (!tv || !v) return;
+            const steps = [...document.querySelectorAll('#tvSteps .tv-step')];
+            const bars = steps.map((s) => s.querySelector('.tv-bar'));
+            const labels = [...tv.querySelectorAll('.tv-co')];
+            const STARTS = steps.map((s) => Number(s.dataset.at)), STILLS = steps.map((s) => Number(s.dataset.still));
+            const LABELS_AT = [1.6, 2.5, 3.4, 4.3], LABELS_OFF = 5.9;   // the score bar alone on air
+            const still = prefersReducedMotionMQ.matches || !!(navigator.connection && navigator.connection.saveData);
+            let on = -1, raf = 0, seen = false;
+            const show = (i, p) => {
+                if (i !== on) {
+                    on = i;
+                    steps.forEach((s, k) => {
+                        s.classList.toggle('is-on', k === i);
+                        const b = s.querySelector('button');
+                        if (k === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+                        if (k !== i) bars[k].style.transform = 'scaleX(0)';
+                    });
+                }
+                bars[i].style.transform = `scaleX(${Math.min(1, Math.max(0, p)).toFixed(4)})`;
+            };
+            const sync = () => {
+                const t = v.currentTime || 0, end = v.duration || 38.8;
+                let i = 0;
+                while (i + 1 < STARTS.length && t >= STARTS[i + 1]) i++;
+                show(i, still ? 0 : (t - STARTS[i]) / ((i + 1 < STARTS.length ? STARTS[i + 1] : end) - STARTS[i]));
+                labels.forEach((l, k) => l.classList.toggle('is-on', t >= LABELS_AT[k] && t < LABELS_OFF));
+                cancelAnimationFrame(raf);
+                if (!v.paused) raf = requestAnimationFrame(sync);
+            };
+            v.addEventListener('play', sync);
+            v.addEventListener('seeked', sync);
+            show(0, 0);
+            steps.forEach((s, k) => s.querySelector('button').addEventListener('click', () => {
+                if (still) v.preload = 'auto';
+                v.currentTime = still ? STILLS[k] : STARTS[k];
+                show(k, 0);
+                if (!still && seen && v.paused && !document.hidden) v.play().catch(() => {});
+            }));
+            if (still || !('IntersectionObserver' in window)) return;
+            v.muted = true;
+            const go = () => { if (seen && !document.hidden) v.play().catch(() => {}); else v.pause(); };
+            new IntersectionObserver((entries) => entries.forEach((e) => { seen = e.isIntersecting; go(); }), { threshold: 0.35 }).observe(tv);
+            document.addEventListener('visibilitychange', go);
         })();
 
         // From ball to highlight: the chain only animates while on screen.
