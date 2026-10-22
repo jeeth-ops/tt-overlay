@@ -220,14 +220,18 @@ const S = {
 };
 const SIZES = [[1920, 1080], [1920, 1280], [1536, 864], [1366, 768], [1280, 720], [854, 480]];
 
-// what the chase panel says (null: not up)
+// what the chase panel says (null: not up): the target; while the chase is
+// live, the NEED face's two lines (kept current whichever face is on air);
+// once it cannot go on, the state face; the rates under the score
 const chaseText = (page) => page.evaluate(() => {
-  const seg = document.getElementById('crr-seg');
-  if(seg.style.display === 'none') return null;
-  const t = (id) => { const e = document.getElementById(id); return e && !e.hidden && e.offsetParent ? e.textContent.replace(/\s+/g, ' ').trim() : null; };
-  const visibleText = (id) => { const e = document.getElementById(id); return e && !e.hidden ? [...e.children].filter(c => !c.hidden).map(c => c.textContent.trim()).join(' ') : null; };
-  return { target: t('ch-target'), line: t('ch-state') || visibleText('ch-eq'), rate: visibleText('ch-rate') || null };
+  if(document.getElementById('crr-seg').style.display === 'none') return null;
+  const txt = (el) => [...el.childNodes].filter(n => n.nodeType === 3 || !n.hidden).map(n => n.textContent.trim()).filter(Boolean).join(' ');
+  const face = (id) => [...document.getElementById(id).querySelectorAll('.ch-line, .ch-state-target, .ch-state')].filter(l => !l.hidden).map(txt).filter(Boolean).join(' ');
+  const live = !!(chaseShown && chaseShown.phase === 'live');
+  return { target: document.getElementById('ch-target').textContent, need: live ? face('ch-face-need') : null, state: live ? null : face('ch-face-state'),
+    urgent: document.getElementById('ch-sub').classList.contains('urgent'), rates: txt(document.getElementById('score-rate-line')) };
 });
+const faceOnAir = (page) => page.evaluate(() => [chaseFace, [...document.querySelectorAll('#crr-seg .ch-face.is-on')].map(f => f.id.replace('ch-face-', '')).join(',')]);
 
 async function barMatrix(browser){
   console.log('\n######## The bar fits every output, in every state ########');
@@ -267,45 +271,89 @@ async function chasePanel(browser){
   console.log('\n######## The chase panel says what the state says ########');
   const O = await open(browser, 1920, 1080);
   const say = async (id) => { await O.emit('liveCricketScore', S[id]); await O.page.waitForTimeout(700); return chaseText(O.page); };
-  eq('the screenshot: the real target (122 was the runs needed, under a TARGET label)', await say('chase (the screenshot)'), { target: '142', line: 'NEED 122 FROM 116 BALLS', rate: 'REQ. RATE 6.31' });
-  eq('the chase starts', await say('chase starts'), { target: '142', line: 'NEED 142 FROM 120 BALLS', rate: 'REQ. RATE 7.10' });
-  eq('final over: tagged', await say('chase, final over'), { target: '142', line: 'NEED 14 FROM 6 BALLS', rate: 'REQ. RATE 14.00 FINAL OVER' });
-  eq('last ball: BALL, singular, tagged', await say('chase, last ball'), { target: '142', line: 'NEED 5 FROM 1 BALL', rate: 'REQ. RATE 30.00 LAST BALL' });
-  eq('one run needed', await say('chase, 1 run needed'), { target: '142', line: 'NEED 1 FROM 10 BALLS', rate: 'REQ. RATE 0.60' });
-  eq('three-digit figures (ODI)', await say('chase, long names, light team colour'), { target: '287', line: 'NEED 84 FROM 40 BALLS', rate: 'REQ. RATE 12.60' });
-  eq('past the target before the result: TARGET REACHED, never "need 0"', await say('chase, target reached (result not called yet)'), { target: '142', line: 'TARGET REACHED', rate: '8 BALLS TO SPARE' });
-  eq('all out before the result: ALL OUT, never a "need" that cannot happen', await say('chase, all out (result not called yet)'), { target: '142', line: 'ALL OUT', rate: null });
-  eq('balls used up one short: SCORES LEVEL', await say('chase, scores level after the last ball'), { target: '142', line: 'SCORES LEVEL', rate: null });
-  eq('Test 4th innings: runs and wickets left, no balls or rate', await say('Test, 4th innings chase'), { target: '287', line: 'NEED 120 RUNS', rate: 'WICKETS LEFT 6' });
-  eq('Super Over chase: its own target, no FINAL OVER tag (the whole thing is one over)', await say('Super Over chase'), { target: '12', line: 'NEED 7 FROM 3 BALLS', rate: 'REQ. RATE 14.00' });
+  const live = (target, need, urgent, rates) => ({ target, need, state: null, urgent, rates });
+  eq('the screenshot: the real target (122 was the runs needed, under a TARGET label)', await say('chase (the screenshot)'), live('142', 'NEED 122 RUNS FROM 116 BALLS', false, 'CRR 30.00 RRR 6.31'));
+  eq('the chase starts', await say('chase starts'), live('142', 'NEED 142 RUNS FROM 120 BALLS', false, 'CRR 0.00 RRR 7.10'));
+  eq('final over: the balls line turns urgent', await say('chase, final over'), live('142', 'NEED 14 RUNS FROM 6 BALLS', true, 'CRR 6.74 RRR 14.00'));
+  eq('last ball: OFF THE LAST BALL', await say('chase, last ball'), live('142', 'NEED 5 RUNS OFF THE LAST BALL', true, 'CRR 6.91 RRR 30.00'));
+  eq('one run needed: RUN, singular', await say('chase, 1 run needed'), live('142', 'NEED 1 RUN FROM 10 BALLS', false, 'CRR 7.69 RRR 0.60'));
+  eq('three-digit figures (ODI)', await say('chase, long names, light team colour'), live('287', 'NEED 84 RUNS FROM 40 BALLS', false, 'CRR 4.68 RRR 12.60'));
+  const ended = (state, rates) => ({ target: '142', need: null, state, urgent: false, rates });
+  eq('past the target before the result: TARGET 142 REACHED, never "need 0"', { ...(await say('chase, target reached (result not called yet)')), urgent: false }, ended('TARGET 142 REACHED 8 BALLS TO SPARE', 'CRR 7.77'));
+  eq('all out before the result: ALL OUT, never a "need" that cannot happen', { ...(await say('chase, all out (result not called yet)')), urgent: false }, ended('TARGET 142 ALL OUT', 'CRR 6.61'));
+  eq('balls used up one short: SCORES LEVEL', { ...(await say('chase, scores level after the last ball')), urgent: false }, ended('TARGET 142 SCORES LEVEL', 'CRR 7.05'));
+  eq('Test 4th innings: runs and wickets left, no balls or rate', await say('Test, 4th innings chase'), live('287', 'NEED 120 RUNS 6 WKTS LEFT', false, 'CRR 3.25'));
+  eq('Super Over chase: its own target, not "final over" (the whole thing is one over)', await say('Super Over chase'), live('12', 'NEED 7 RUNS FROM 3 BALLS', false, 'CRR 10.00 RRR 14.00'));
   eq('a target from another innings is never shown — Super Over 1st innings', await say('Super Over 1st innings, regulation target still in the state'), null);
   eq('… or a 1st innings', await say('1st innings, a target still in the state'), null);
   eq('first innings: no chase panel', await say('first innings'), null);
   eq('the result is up: the chase panel goes with the live strip', await say('chase won'), null);
   eq('a tie to be settled by a Super Over: no stale "need 1 off 0"', await say('tied, Super Over to follow'), null);
-  eq('the required rate lives in the chase panel only — the line under the score is CRR', await O.page.evaluate(() => document.getElementById('score-rate-line').textContent.replace(/\s+/g, ' ').trim()), 'CRR 7.05');
+  eq('no chase: under the score, CRR alone', await O.page.evaluate(() => [...document.getElementById('score-rate-line').children].filter(c => !c.hidden).map(c => c.textContent.trim()).join(' ')), 'CRR 7.05');
+  await say('chase (the screenshot)');
+  eq('the chase panel keeps the old TARGET box\'s room (180 design px), so the names keep theirs', await O.page.evaluate(() => Math.round(document.getElementById('crr-seg').getBoundingClientRect().width)), 180);
 
   // a figure losing a digit moves nothing beside it
   const base = { striker: pl('Himesh', 'p1', 60, 40), nonStriker: pl('Raj', 'p2', 30, 30), bowler: bw('Ankit Sharma', 'b9', 3, 2, 30, 1) };
-  const geo = () => O.page.evaluate(() => ['ch-plate', 'crr-seg', 'batters-seg', 'bowler-seg', 'striker-name'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [Math.round(r.left), Math.round(r.width)]; }).concat([getComputedStyle(document.getElementById('striker-name')).fontSize]));
+  const geo = () => O.page.evaluate(() => ['crr-seg', 'batters-seg', 'bowler-seg', 'striker-name'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [Math.round(r.left), Math.round(r.width)]; }).concat([getComputedStyle(document.getElementById('striker-name')).fontSize]));
   await O.emit('liveCricketScore', chase({ target: 250, ...base, score: sc(150, 1, 0, 0) }));
   await O.page.waitForTimeout(700);
   const g1 = await geo();
   await O.emit('liveCricketScore', chase({ target: 250, ...base, score: sc(151, 1, 3, 3) }));
   await O.page.waitForTimeout(700);
   const g2 = await geo();
-  eq('need 100 -> 99 and balls 120 -> 99: the plate, the segments and the names stay put', g2, g1);
+  eq('need 100 -> 99 and balls 120 -> 99: the panel, the segments and the names stay put', g2, g1);
 
-  // names: full while they fit; the scorecard form (initials + surname) when one cannot
-  await O.emit('liveCricketScore', S['first innings, long names, 9 deliveries']);
+  // names stay big: full while they fit at 24 design px, else initials + surname
+  const names = () => O.page.evaluate(() => { const els = ['striker-name', 'nonstriker-name', 'bowler-name-val'].map(id => document.getElementById(id)); return [els.map(e => e.textContent), [...new Set(els.map(e => Math.round(parseFloat(getComputedStyle(e).fontSize))))]]; });
+  await O.emit('liveCricketScore', chase({ score: sc(60, 2, 8, 1), striker: pl('Suryakumar Yadav', 'p1', 30, 20), nonStriker: pl('Rahul Tewatia', 'p2', 20, 12), bowler: bw('Ravichandran Ashwin', 'b9', 2, 1, 15, 1) }));
   await O.page.waitForTimeout(800);
-  eq('long names that fit their segments: shown in full', await O.page.evaluate(() => ['striker-name', 'nonstriker-name', 'bowler-name-val'].map(id => document.getElementById(id).textContent)), [LONG1.name, LONG2.name, LONGB.name]);
+  const [plain, plainSizes] = await names();
+  eq('ordinary names in a chase: in full, at one size, 28 design px or more', [plain, plainSizes.length, plainSizes[0] >= 28], [['Suryakumar Yadav', 'Rahul Tewatia', 'Ravichandran Ashwin'], 1, true]);
   await O.emit('liveCricketScore', S['chase, long names, light team colour']);
   await O.page.waitForTimeout(800);
-  eq('with the chase panel beside them: initials + surname, one shared size',
-    await O.page.evaluate(() => { const els = ['striker-name', 'nonstriker-name', 'bowler-name-val'].map(id => document.getElementById(id)); return [els.map(e => e.textContent), new Set(els.map(e => getComputedStyle(e).fontSize)).size]; }),
-    [['MAR Siddiqui', 'V Raghunathan', 'C Fitzgerald-Montgomery'], 1]);
+  const [longNames, sizes] = await names();
+  eq('very long names: initials + surname at one shared size, never below 24 design px', [longNames, sizes.length, sizes[0] >= 24], [['MAR Siddiqui', 'V Raghunathan', 'C Fitzgerald-Montgomery'], 1, true]);
   eq('the score on a light team colour is in dark ink, not white', await O.page.evaluate(() => getComputedStyle(document.getElementById('score-value')).color), 'rgb(20, 17, 10)');
+  eq('no script errors', O.errors, []);
+  await O.ctx.close();
+}
+
+// The TARGET face's turn: 8 s as the chase begins, after every over, when
+// the target is corrected and when the bar comes back on air (the
+// between-overs cards take it off at every over's end) — the NEED face the
+// rest of the time, and at once on the next delivery.
+async function rotation(browser){
+  console.log('\n######## TARGET for its turn, then NEED x RUNS FROM y BALLS ########');
+  const O = await open(browser, 1920, 1080);
+  await O.page.evaluate(() => {
+    CHASE_TARGET_HOLD_MS = 900;
+    // every frame from here on: how many faces are visible at once (opacity counted, at rest or mid-change)
+    window.__facesMax = 0; window.__faceFrames = 0;
+    const tick = () => {
+      const on = [...document.querySelectorAll('#crr-seg .ch-face')].filter(f => { const cs = getComputedStyle(f); return cs.visibility !== 'hidden' && parseFloat(cs.opacity) > 0.02; }).length;
+      window.__facesMax = Math.max(window.__facesMax, on); window.__faceFrames++;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  const p = (runs, overs, balls, o) => chase(Object.assign({ score: sc(runs, 1, overs, balls), striker: pl('Himesh', 'p1', 30, 20), nonStriker: pl('Raj', 'p2', 9, 9), bowler: bw('Ankit', 'b1', 1, balls, 10, 1) }, o || {}));
+  const at = async (s, ms) => { if(s) await O.emit('liveCricketScore', s); await O.page.waitForTimeout(ms); return faceOnAir(O.page); };
+  eq('the chase begins: TARGET', await at(p(40, 5, 4), 350), ['target', 'target']);
+  eq('… for its turn, then NEED', await at(null, 900), ['need', 'need']);
+  eq('mid-over: NEED', await at(p(41, 5, 5), 350), ['need', 'need']);
+  eq('the over ends: TARGET', await at(p(45, 6, 0), 350), ['target', 'target']);
+  eq('the same score again (a new bowler picked): still TARGET', await at({ ...p(45, 6, 0), bowler: bw('Raj', 'b2', 0, 0, 0, 0) }, 300), ['target', 'target']);
+  eq('the next delivery: NEED at once', await at(p(46, 6, 1), 350), ['need', 'need']);
+  eq('the target corrected: TARGET again, with the new figure', [...(await at(p(46, 6, 1, { target: 150 }), 350)), await O.page.evaluate(() => document.getElementById('ch-target').textContent)], ['target', 'target', '150']);
+  eq('… then NEED', await at(null, 900), ['need', 'need']);
+  eq('an over ends, then the delivery is undone: NEED', [await at(p(53, 7, 0), 300), await at(p(52, 6, 5), 350)], [['target', 'target'], ['need', 'need']]);
+  // the bar off air (as under the between-overs cards) and back: the TARGET face takes its turn from then
+  await O.page.evaluate(() => fullBar.take('layout-test', 900));
+  await O.page.waitForTimeout(250);
+  eq('the bar comes back on air: TARGET', await at(null, 1200), ['target', 'target']);
+  eq('… for its turn, then NEED', await at(null, 1000), ['need', 'need']);
+  eq('frame by frame through all of the above: never two faces on screen at once', await O.page.evaluate(() => [window.__faceFrames > 100, window.__facesMax]), [true, 1]);
   eq('no script errors', O.errors, []);
   await O.ctx.close();
 }
@@ -345,6 +393,12 @@ async function frames(browser){
       await O.emit('liveCricketScore', S['first innings']); await O.page.waitForTimeout(800);
       await O.emit('liveCricketScore', S['innings break']); await O.page.waitForTimeout(1200);
       await O.emit('liveCricketScore', S['chase starts']);
+    }],
+    ['the chase panel changing face: TARGET -> NEED, back to TARGET as the over ends, NEED on the next ball', 2600, async (O) => {
+      await O.page.evaluate(() => { CHASE_TARGET_HOLD_MS = 700; });
+      await O.emit('liveCricketScore', p({ score: sc(40, 1, 5, 5), thisOver: ['1', '4', '0', '1', '2'] })); await O.page.waitForTimeout(1100);
+      await O.emit('liveCricketScore', p({ score: sc(41, 1, 6, 0), thisOver: [] })); await O.page.waitForTimeout(500);
+      await O.emit('liveCricketScore', p({ score: sc(45, 1, 6, 1), thisOver: ['4'] }));
     }],
     ['free hit on and off', 1800, async (O) => {
       await O.emit('liveCricketScore', S['chase, free hit']); await O.page.waitForTimeout(700);
@@ -415,6 +469,7 @@ async function stripsAndCards(browser){
   try {
     await barMatrix(browser);
     await chasePanel(browser);
+    await rotation(browser);
     await frames(browser);
     await stripsAndCards(browser);
   } finally {

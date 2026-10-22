@@ -109,7 +109,7 @@ async function limitedOvers(){
   O.render(st({ ...chase, score: { runs: 100, wickets: 3, overs: 12, balls: 0 } }));
   eq('chase: live strip back, break strip gone', panel(O), { live: true, brk: false, res: false });
   eq('chase: target 242, need 142 from 48 balls, required rate 17.75',
-    [O.text('#ch-target'), O.text('#ch-need'), O.text('#ch-balls'), O.text('#ch-balls-w'), O.text('#rrr-val'), O.shown('crr-seg')], ['242', '142', '48', 'BALLS', '17.75', true]);
+    [O.text('#ch-target'), O.text('#ch-need'), O.text('#ch-balls'), O.text('#ch-sub-b'), O.text('#rrr-val'), O.shown('crr-seg')], ['242', '142', '48', 'BALLS', '17.75', true]);
 
   // Target reached, but the panel has not called the result: the overlay does not either.
   O.render(st({ ...chase, score: { runs: 242, wickets: 5, overs: 19, balls: 2 } }));

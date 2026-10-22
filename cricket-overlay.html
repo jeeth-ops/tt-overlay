@@ -319,16 +319,16 @@
     flex:none; display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
     gap:calc(3 * var(--bu)); padding:0 calc(16 * var(--bu)) 0 calc(20 * var(--bu)); min-width:calc(182 * var(--bu));
   }
-  /* Small permanent CRR readout under the score. (It used to swap to RRR
-     every 15s during a chase; the required rate now has its own permanent
-     place in the chase panel — see #crr-seg — so the two never show twice
-     or take turns.) */
+  /* The rates under the score: CRR always, and in a live run-chase the
+     required rate beside it — both on air together, side by side, where
+     they used to take turns (a 15s swap of one slot). */
   #score-rate-line{ height:calc(18 * var(--bu)); display:flex; align-items:baseline; gap:calc(6 * var(--bu)); white-space:nowrap; }
   /* The score sits on the batting side's own colour, so it takes that
      colour's readable ink (--bat-ink, as the caps do): dark on a light or
      pastel team colour, where white used to all but vanish. */
   .srl-lbl{ font-family:var(--font-ui); font-weight:800; font-size:calc(10.5 * var(--bu)); letter-spacing:calc(.7 * var(--bu)); color:var(--bat-ink,#fff); opacity:.68; text-transform:uppercase; }
   .srl-val{ font-family:var(--font-num); font-weight:800; font-size:calc(14.5 * var(--bu)); color:var(--bat-ink,#fff); font-variant-numeric:tabular-nums; }
+  #rrr-lbl{ margin-left:calc(8 * var(--bu)); }
   #score-value{
     font-family:var(--font-num); font-weight:900; color:var(--bat-ink,#fff);
     font-size:calc(46 * var(--bu)); letter-spacing:calc(.5 * var(--bu)); font-variant-numeric:tabular-nums;
@@ -447,52 +447,51 @@
   .brow .bballs{ font-family:var(--font-num); font-weight:700; font-size:calc(15 * var(--bu)); color:var(--ink-dim); margin-left:calc(6 * var(--bu)); min-width:calc(20 * var(--bu)); font-variant-numeric:tabular-nums; }
 
   /* ---- 🎯 Chase panel (second innings / Super Over / Test 4th innings) ----
-     Shown only while a side is chasing a real target (setChaseMode); the
-     batters and bowler segments simply take the room back otherwise.
-       • the TARGET plate — the anchor: a dark plate with the target in
-         white, the bar's orange accent along its foot (as on the caps)
-       • the chase in one line: NEED <runs> FROM <balls> BALLS — the runs in
-         the score blue, the balls in ink, the words small
-       • a quieter line under it: the required rate, plus a FINAL OVER /
-         LAST BALL tag when it comes to that
-     Once the chase can no longer go on (target reached, all out, balls
-     used up) the two lines give way to what has happened — never a stale
-     "need". Every number is tabular; the panel holds the room for
-     three-digit figures and never squeezes — the names beside it are
-     fitted to what is left (see syncPlayerNameSizes). Sizes are design px
-     (--bu). */
-  #crr-seg{
-    flex:none; flex-direction:row; align-items:center; justify-content:flex-start; gap:calc(16 * var(--bu));
-    padding:0 calc(22 * var(--bu)) 0 calc(20 * var(--bu));
-    /* room for the widest live chase — three-digit runs and balls — held
-       all through it: a figure losing a digit (120 balls -> 99) never moves
-       the plate, the dividers or the names beside the panel */
-    min-width:calc(422 * var(--bu));
+     Shown only while a side is chasing a real target (setChaseMode), in the
+     same room the old TARGET box had, so the names either side keep theirs.
+     It holds one face at a time, in turn (renderChase / showChaseFace):
+       • TARGET — the real target, white on a dark plate with the bar's
+         orange accent along its foot (as on the caps): for 8 seconds as the
+         chase begins, after every over (from when the bar is back on air
+         after the between-overs cards) and when the target is corrected
+       • NEED <runs> RUNS / FROM <balls> BALLS — the rest of the time; the
+         balls line a dark orange in the final over, OFF THE LAST BALL on
+         the last one
+       • once the chase can no longer go on (target reached, all out, balls
+         used up) what has happened, under the target — never a stale "need"
+     The faces lie on top of each other in one fixed box — the panel never
+     changes size, so nothing beside it moves — and one leaves before the
+     next arrives, so two are never on screen together. The required rate
+     sits under the score, beside CRR (#score-rate-line). Every figure is
+     tabular. Sizes are design px (--bu). */
+  #crr-seg{ flex:none; width:calc(180 * var(--bu)); padding:0; }
+  .ch-face{
+    position:absolute; inset:0; padding:0 calc(14 * var(--bu));
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:calc(6 * var(--bu));
+    visibility:hidden; opacity:0;
   }
+  .ch-face.is-on{ visibility:visible; opacity:1; }
   .ch-plate{
-    flex:none; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:calc(3 * var(--bu));
-    min-width:calc(104 * var(--bu)); height:calc(84 * var(--bu)); padding:0 calc(14 * var(--bu)) calc(4 * var(--bu));
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:calc(3 * var(--bu));
+    min-width:calc(110 * var(--bu)); height:calc(84 * var(--bu)); padding:0 calc(14 * var(--bu)) calc(4 * var(--bu));
     border-radius:calc(10 * var(--bu));
     background:linear-gradient(165deg, #1d2d63 0%, #0c1534 100%);
     box-shadow:inset 0 calc(-4 * var(--bu)) 0 var(--badge), 0 calc(6 * var(--bu)) calc(14 * var(--bu)) rgba(16,25,58,.22);
   }
-  .ch-plate-lbl{ font-family:var(--font-ui); font-weight:800; font-size:calc(11.5 * var(--bu)); line-height:1; letter-spacing:calc(2.2 * var(--bu)); color:rgba(255,255,255,.66); text-transform:uppercase; white-space:nowrap; }
+  .ch-plate-lbl{ font-family:var(--font-ui); font-weight:800; font-size:calc(11.5 * var(--bu)); line-height:1; letter-spacing:calc(2.2 * var(--bu)); color:rgba(255,255,255,.66); white-space:nowrap; }
   .ch-plate-val{ font-family:var(--font-num); font-weight:900; font-size:calc(40 * var(--bu)); line-height:1; letter-spacing:calc(.3 * var(--bu)); color:#fff; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .ch-body{ display:flex; flex-direction:column; justify-content:center; gap:calc(10 * var(--bu)); min-width:0; }
-  .ch-eq, .ch-rate{ display:flex; align-items:baseline; white-space:nowrap; }
-  .ch-eq{ gap:calc(7 * var(--bu)); }
-  .ch-rate{ gap:calc(8 * var(--bu)); }
-  .ch-w{ font-family:var(--font-ui); font-weight:800; font-size:calc(13 * var(--bu)); letter-spacing:calc(1.2 * var(--bu)); color:var(--ink-dim); text-transform:uppercase; }
-  .ch-n{ font-family:var(--font-num); font-weight:900; font-size:calc(30 * var(--bu)); line-height:1; color:var(--ink); font-variant-numeric:tabular-nums; }
-  #ch-need{ color:#1c4fd8; }
-  /* a state in words (TARGET REACHED / ALL OUT …) in the equation's place */
-  .ch-state{ font-family:var(--font-event); font-weight:400; font-size:calc(30 * var(--bu)); line-height:1; letter-spacing:calc(.6 * var(--bu)); color:var(--ink); text-transform:uppercase; }
-  .ch-rate-lbl{ font-family:var(--font-ui); font-weight:800; font-size:calc(11.5 * var(--bu)); letter-spacing:calc(1.4 * var(--bu)); color:var(--ink-dim); text-transform:uppercase; }
-  .ch-rate-val{ font-family:var(--font-num); font-weight:800; font-size:calc(17 * var(--bu)); color:var(--ink); font-variant-numeric:tabular-nums; }
-  .ch-tag{
-    font-family:var(--font-ui); font-weight:900; font-size:calc(10.5 * var(--bu)); letter-spacing:calc(1.2 * var(--bu)); line-height:1;
-    padding:calc(4 * var(--bu)) calc(8 * var(--bu)); border-radius:99px; align-self:center;
-    color:var(--badge-ink,#fff); background:var(--badge); text-transform:uppercase;
+  .ch-line{ display:flex; align-items:baseline; justify-content:center; gap:calc(6 * var(--bu)); white-space:nowrap; }
+  .ch-w{ font-family:var(--font-ui); font-weight:800; font-size:calc(12 * var(--bu)); letter-spacing:calc(1.1 * var(--bu)); color:var(--ink-dim); }
+  .ch-need{ font-family:var(--font-num); font-weight:900; font-size:calc(36 * var(--bu)); line-height:1; color:#1c4fd8; font-variant-numeric:tabular-nums; }
+  .ch-num{ font-family:var(--font-num); font-weight:900; font-size:calc(20 * var(--bu)); line-height:1; color:var(--ink); font-variant-numeric:tabular-nums; }
+  /* the final over / the last ball: the balls line in a dark orange that still reads on white */
+  .ch-line.urgent .ch-w, .ch-line.urgent .ch-num{ color:#c2410c; }
+  /* the state face: the target, small, over what has happened */
+  .ch-state-target{ font-family:var(--font-ui); font-weight:800; font-size:calc(11.5 * var(--bu)); letter-spacing:calc(1.6 * var(--bu)); color:var(--ink-dim); white-space:nowrap; }
+  .ch-state-target b{ font-family:var(--font-num); font-weight:900; font-size:calc(15 * var(--bu)); letter-spacing:0; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .ch-state{
+    font-family:var(--font-event); font-weight:400; font-size:calc(26 * var(--bu)); line-height:1.02; letter-spacing:calc(.5 * var(--bu));
+    color:var(--ink); text-align:center; max-width:100%;
   }
   #crr-seg [hidden]{ display:none; }
   /* while a fit measures (atRest, script): every part at rest, not mid-animation */
@@ -1972,6 +1971,8 @@
           <div id="score-rate-line">
             <span class="srl-lbl">CRR</span>
             <span class="srl-val" id="crr-val">0.00</span>
+            <span class="srl-lbl" id="rrr-lbl" hidden>RRR</span>
+            <span class="srl-val" id="rrr-val" hidden></span>
           </div>
         </div>
         <div id="overs-badge"><div class="ov-num" id="ov-num">0.0</div><div class="ov-lbl">OVERS</div></div>
@@ -1984,18 +1985,17 @@
               <div class="brow" id="row-nonstriker"><span class="bname" id="nonstriker-name">Batsman 2</span><span class="bruns" id="nonstriker-runs">0</span><span class="bballs" id="nonstriker-balls">0</span></div>
             </div>
             <div class="wseg" id="crr-seg" style="display:none">
-              <div class="ch-plate" id="ch-plate">
-                <span class="ch-plate-lbl">TARGET</span>
-                <span class="ch-plate-val" id="ch-target">—</span>
+              <div class="ch-face" id="ch-face-target">
+                <div class="ch-plate"><span class="ch-plate-lbl">TARGET</span><span class="ch-plate-val" id="ch-target">—</span></div>
               </div>
-              <div class="ch-body">
-                <div class="ch-eq" id="ch-eq">
-                  <span class="ch-w">NEED</span><b class="ch-n" id="ch-need">—</b><span class="ch-w" id="ch-need-w" hidden></span><span class="ch-w" id="ch-from">FROM</span><b class="ch-n" id="ch-balls">—</b><span class="ch-w" id="ch-balls-w">BALLS</span>
-                </div>
-                <div class="ch-state" id="ch-state" hidden></div>
-                <div class="ch-rate" id="ch-rate">
-                  <span class="ch-rate-lbl" id="ch-rate-lbl">REQ. RATE</span><b class="ch-rate-val" id="rrr-val">—</b><span class="ch-tag" id="ch-tag" hidden></span>
-                </div>
+              <div class="ch-face" id="ch-face-need">
+                <div class="ch-line"><span class="ch-w">NEED</span><b class="ch-need" id="ch-need">—</b><span class="ch-w" id="ch-runs-w">RUNS</span></div>
+                <div class="ch-line" id="ch-sub"><span class="ch-w" id="ch-sub-a">FROM</span><b class="ch-num" id="ch-balls">—</b><span class="ch-w" id="ch-sub-b">BALLS</span></div>
+              </div>
+              <div class="ch-face" id="ch-face-state">
+                <div class="ch-state-target">TARGET <b id="ch-state-target">—</b></div>
+                <div class="ch-state" id="ch-state"></div>
+                <div class="ch-line" id="ch-state-sub" hidden><b class="ch-num" id="ch-spare">—</b><span class="ch-w" id="ch-spare-w">BALLS TO SPARE</span></div>
               </div>
             </div>
             <div class="wseg" id="bowler-seg">
@@ -2770,21 +2770,31 @@ function setNameText(elId, name){
 }
 
 /* ============================================================
-   🎯 CHASE PANEL — TARGET · NEED x FROM y BALLS · REQ. RATE
-   chaseView() turns ONE state into everything the panel shows — the
-   target, the runs still needed, the legal balls left, the rate and the
-   phase — so the figures on air always describe the same delivery; they
-   are never updated one at a time. renderChase() then writes only what
-   changed, and plays the small tick only on a figure that moved.
-   The overlay never calls a result: past the target the panel says
-   TARGET REACHED, out of wickets or balls it says what happened, and the
-   result itself is the scoring panel's (renderResultSeg).
+   🎯 CHASE PANEL — TARGET 142, then NEED 122 RUNS FROM 116 BALLS
+   chaseView() turns ONE state into everything the chase shows — the
+   target, the runs still needed, the legal balls left, the required rate
+   and the phase — so the figures on air always describe the same
+   delivery; they are never updated one at a time. renderChase() keeps
+   every face current and decides whose turn it is: the TARGET face for 8
+   seconds as the chase begins, after every over and when the target is
+   corrected (a new delivery ends its turn early), the NEED face the rest
+   of the time. The overlay never
+   calls a result: past the target the panel says REACHED, out of wickets
+   or balls it says what happened, and the result itself is the scoring
+   panel's (renderResultSeg).
    ============================================================ */
-let inChaseMode = false;   // whether the chase panel is up
-let chaseShown = null;     // the view on air, for change detection
+let CHASE_TARGET_HOLD_MS = 8000;   // the TARGET face's turn: as the chase begins, and after every over
+let inChaseMode = false;           // whether the chase panel is up
+let chaseShown = null;             // the view on air, for change detection
+let chaseFace = null;              // the face on air: 'target' | 'need' | 'state' (null: none yet)
+let chaseFaceTl = null;            // a change of face in progress
+let chaseTargetTimer = null;       // the end of the TARGET face's turn
+let chaseOvers = null;             // completed overs at the last render — one more, and the TARGET face is back
+let chaseTargetSig = '';           // the score the TARGET face went up with — the next delivery ends its turn
 const pluralWord = (n, word) => word + (n === 1 ? '' : 'S');
-// What the chase panel shows for this state, or null when no side is chasing.
+// What the chase shows for this state, or null when no side is chasing.
 //   o: { inSO, matchOver, tiePending, ballsLimit (null = no limit), ballsBowled, wicketLimit }
+//   -> { target, need, phase: live|reached|ended, state, spare, sub: { a, n, b }, urgent, rrr }
 function chaseView(s, o){
   const target = Number(s.target);
   if(!s.target || !Number.isFinite(target) || target <= 0 || o.matchOver || o.tiePending) return null;
@@ -2799,32 +2809,32 @@ function chaseView(s, o){
   const need = Math.max(target - runs, 0);
   const limited = o.ballsLimit !== null;
   const ballsLeft = limited ? Math.max(o.ballsLimit - o.ballsBowled, 0) : null;
-  const v = { target, need, ballsLeft, limited, phase: 'live', state: '', rateLbl: '', rate: '', tag: '' };
+  const v = { target, need, phase: 'live', state: '', spare: null, sub: null, urgent: false, rrr: '' };
   if(need === 0){
     v.phase = 'reached';
-    v.state = 'TARGET REACHED';
-    if(limited && ballsLeft > 0) v.rateLbl = `${ballsLeft} ${pluralWord(ballsLeft, 'BALL')} TO SPARE`;
+    v.state = 'REACHED';   // (under "TARGET 142")
+    if(limited && ballsLeft > 0) v.spare = ballsLeft;
   } else if(wickets >= o.wicketLimit || (limited && ballsLeft === 0)){
     // (the panel's result follows; until it does, no "need" that can no longer happen)
     v.phase = 'ended';
     v.state = need === 1 ? 'SCORES LEVEL' : wickets >= o.wicketLimit ? 'ALL OUT' : 'INNINGS OVER';
   } else if(limited){
-    v.rateLbl = 'REQ. RATE';
-    v.rate = (need * 6 / ballsLeft).toFixed(2);
-    v.tag = ballsLeft === 1 ? 'LAST BALL' : (ballsLeft <= 6 && o.ballsLimit > 6 ? 'FINAL OVER' : '');
+    v.sub = ballsLeft === 1 ? { a: 'OFF THE LAST BALL', n: null, b: '' } : { a: 'FROM', n: ballsLeft, b: pluralWord(ballsLeft, 'BALL') };
+    // the final over (of a longer innings) and the last ball: the balls line turns urgent
+    v.urgent = ballsLeft === 1 || (ballsLeft <= 6 && o.ballsLimit > 6);
+    v.rrr = (need * 6 / ballsLeft).toFixed(2);
   } else {
     // no overs limit (a Test's 4th innings): what is left is wickets, not balls
     const left = Math.max(o.wicketLimit - wickets, 0);
-    v.rateLbl = left === 1 ? 'WICKET LEFT' : 'WICKETS LEFT';
-    v.rate = String(left);
+    v.sub = { a: '', n: left, b: left === 1 ? 'WKT LEFT' : 'WKTS LEFT' };
   }
   return v;
 }
 // A figure in the panel: the new value is written at once (never a stale
 // number on air); if it moved, it settles in — a short fade up from 94% of
 // its size, about its own centre: opacity and scale only, never a slide, so
-// it never leaves its own box (a slide carried the target up into its own
-// TARGET label) and nothing beside it moves. A newer update restarts it.
+// it never leaves its own box and nothing beside it moves. A newer update
+// restarts it.
 function setChaseNum(el, value, before){
   const text = String(value);
   if(el.textContent === text) return;
@@ -2833,36 +2843,85 @@ function setChaseNum(el, value, before){
   gsap.killTweensOf(el);
   gsap.fromTo(el, { scale: 0.94, opacity: 0.25 }, { scale: 1, opacity: 1, duration: 0.3, ease: 'power2.out', transformOrigin: '50% 50%', clearProps: 'transform,opacity' });
 }
-function renderChase(v){
+// barEntering: the bar is coming (back) on air with this state — after the
+// between-overs cards, a full-size card or a hide — so the TARGET face takes
+// its 8 seconds from now, when it can be seen, and faces change at once.
+function renderChase(v, s, barEntering){
   setChaseMode(!!v);
+  // the required rate, beside CRR under the score — only while there is one
+  const rrrLbl = document.getElementById('rrr-lbl'), rrrVal = document.getElementById('rrr-val');
+  rrrLbl.hidden = rrrVal.hidden = !(v && v.rrr);
+  rrrVal.textContent = (v && v.rrr) || '';
   if(!v) return;
   const $ = (id) => document.getElementById(id);
   const prev = chaseShown;
   const wasLive = !!(prev && prev.phase === 'live');
   const live = v.phase === 'live';
+  // every face is kept current, whichever one is on air
   setChaseNum($('ch-target'), v.target, prev ? prev.target : null);
-  $('ch-eq').hidden = !live;
-  $('ch-state').hidden = live;
+  $('ch-state-target').textContent = v.target;
   if(live){
     setChaseNum($('ch-need'), v.need, wasLive ? prev.need : null);
-    // limited overs: NEED 45 FROM 30 BALLS; no limit: NEED 120 RUNS
-    $('ch-need-w').hidden = v.limited;
-    $('ch-need-w').textContent = pluralWord(v.need, 'RUN');
-    ['ch-from', 'ch-balls', 'ch-balls-w'].forEach(id => { $(id).hidden = !v.limited; });
-    if(v.limited){
-      setChaseNum($('ch-balls'), v.ballsLeft, wasLive ? prev.ballsLeft : null);
-      $('ch-balls-w').textContent = pluralWord(v.ballsLeft, 'BALL');
-    }
-  } else {
-    $('ch-state').textContent = v.state;
+    $('ch-runs-w').textContent = pluralWord(v.need, 'RUN');
+    $('ch-sub').classList.toggle('urgent', v.urgent);
+    $('ch-sub-a').hidden = !v.sub.a;
+    $('ch-sub-a').textContent = v.sub.a;
+    $('ch-balls').hidden = v.sub.n === null;
+    if(v.sub.n !== null) setChaseNum($('ch-balls'), v.sub.n, wasLive && prev.sub ? prev.sub.n : null);
+    $('ch-sub-b').hidden = !v.sub.b;
+    $('ch-sub-b').textContent = v.sub.b;
   }
-  $('ch-rate').hidden = !v.rateLbl;
-  $('ch-rate-lbl').textContent = v.rateLbl;
-  $('rrr-val').hidden = !v.rate;
-  $('rrr-val').textContent = v.rate;
-  $('ch-tag').hidden = !v.tag;
-  $('ch-tag').textContent = v.tag;
+  // (the state face says nothing while the chase is live — never a stale word waiting on it)
+  $('ch-state').textContent = live ? '' : v.state;
+  $('ch-state-sub').hidden = live || v.spare === null;
+  if(!live && v.spare !== null){ $('ch-spare').textContent = v.spare; $('ch-spare-w').textContent = `${pluralWord(v.spare, 'BALL')} TO SPARE`; }
+  // whose turn it is
+  const overs = s.score?.overs ?? 0, inOver = s.score?.balls ?? 0;
+  const sig = [s.score?.runs ?? 0, s.score?.wickets ?? 0, overs, inOver].join('/');
+  if(!live){ endTargetTurn(); showChaseFace('state', barEntering); }
+  // the chase begins, the bar comes back on air (the between-overs cards
+  // take it off at every over's end), the target is corrected, an over ends
+  else if(chaseFace === null || barEntering || (prev && prev.target !== v.target) || (chaseOvers !== null && overs > chaseOvers && inOver === 0)) startTargetTurn(sig, barEntering);
+  else if(chaseFace === 'target' && sig !== chaseTargetSig){ endTargetTurn(); showChaseFace('need'); }   // the next delivery is in
+  else if(chaseFace === 'state') showChaseFace('need');
+  chaseOvers = overs;
   chaseShown = v;
+}
+// The TARGET face's turn: up now, back to NEED after CHASE_TARGET_HOLD_MS —
+// one timer, restarted (never stacked) by the next over.
+function startTargetTurn(sig, instant){
+  chaseTargetSig = sig;
+  clearTimeout(chaseTargetTimer);
+  chaseTargetTimer = setTimeout(() => {
+    chaseTargetTimer = null;
+    if(inChaseMode && chaseFace === 'target') showChaseFace('need');
+  }, CHASE_TARGET_HOLD_MS);
+  showChaseFace('target', instant);
+}
+function endTargetTurn(){
+  clearTimeout(chaseTargetTimer);
+  chaseTargetTimer = null;
+}
+// Puts one face on air. The faces share one fixed box; the face on air
+// leaves first (fade, a few design px up) and only then does the next
+// arrive — two faces are never on screen at once. A change still going
+// when the next is asked for is finished at once first.
+function showChaseFace(name, instant){
+  if(chaseFace === name) return;
+  if(chaseFaceTl){ chaseFaceTl.progress(1).kill(); chaseFaceTl = null; }
+  const face = (n) => document.getElementById('ch-face-' + n);
+  const from = chaseFace ? face(chaseFace) : null, to = face(name);
+  chaseFace = name;
+  const settle = (el, on) => { el.classList.toggle('is-on', on); gsap.set(el, { clearProps: 'opacity,visibility,transform' }); };
+  if(!from || instant || !hasEntered || reduceMotion()){
+    ['target', 'need', 'state'].forEach(n => settle(face(n), n === name));
+    return;
+  }
+  const u = barUnit();
+  chaseFaceTl = gsap.timeline({ onComplete: () => { chaseFaceTl = null; } })
+    .to(from, { opacity: 0, y: -6 * u, duration: 0.22, ease: 'power2.in' })
+    .call(() => { settle(from, false); to.classList.add('is-on'); })
+    .fromTo(to, { opacity: 0, y: 6 * u }, { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out', clearProps: 'opacity,transform' });
 }
 // Shows/hides the chase panel on the transition edge only (a chase just
 // started / just ended) — never re-laid-out on a routine ball-by-ball update.
@@ -2873,11 +2932,14 @@ function setChaseMode(on){
   const seg = document.getElementById('crr-seg');
   seg.style.display = on ? 'flex' : 'none';
   if(!on){
-    // nothing half-animated waits in a hidden panel for the next chase
-    const nums = seg.querySelectorAll('.ch-plate-val, .ch-n');
-    gsap.killTweensOf(nums);
-    gsap.set(nums, { clearProps: 'transform,opacity' });
-    chaseShown = null;
+    // nothing half-animated or timed waits in a hidden panel for the next chase
+    if(chaseFaceTl){ chaseFaceTl.kill(); chaseFaceTl = null; }
+    endTargetTurn();
+    const parts = seg.querySelectorAll('.ch-face, .ch-plate-val, .ch-need, .ch-num');
+    gsap.killTweensOf(parts);
+    gsap.set(parts, { clearProps: 'transform,opacity,visibility' });
+    seg.querySelectorAll('.ch-face').forEach(f => f.classList.remove('is-on'));
+    chaseShown = null; chaseFace = null; chaseOvers = null;
   }
 }
 
@@ -2895,6 +2957,7 @@ function renderState(s){
   applyTheme(s);
 
   const battingA = s.battingTeam !== 'B';
+  const barEntering = !hasEntered;   // (coming on air with this state — see renderChase)
   if(!hasEntered){
     currentLeftIsA = battingA;
     layoutTeams(s, false);
@@ -3001,11 +3064,11 @@ function renderState(s){
   else if(breakMode) endStrip = renderBreakSeg(s, { inSO, soRules, oversLimit, allOut: wicketsAllOut, oversDone: oversAllBowled });
   showEndStrip(endStrip);
 
-  // ---- 🎯 The chase panel (TARGET · NEED x FROM y BALLS · REQ. RATE) ----
+  // ---- 🎯 The chase panel (TARGET, then NEED x RUNS FROM y BALLS; RRR by CRR) ----
   // Any innings with a real target to chase: a limited-overs 2nd innings,
   // a Super Over's 2nd, a Test's 4th (no overs limit: runs and wickets
   // left instead of balls and a rate). Derived in one go — see chaseView.
-  renderChase(chaseView(s, { inSO, matchOver, tiePending, ballsLimit: inningsBallsLimit, ballsBowled: totalBalls, wicketLimit }));
+  renderChase(chaseView(s, { inSO, matchOver, tiePending, ballsLimit: inningsBallsLimit, ballsBowled: totalBalls, wicketLimit }), s, barEntering);
 
   setFreeHitChip(s.freeHit);
 
@@ -3146,11 +3209,13 @@ function fitCapName(el, force){
 // The striker, the non-striker and the bowler share ONE name size: the
 // largest at which all three rows fit the room their segments really have
 // (a segment's width is its share of the bar — never its content's, see
-// #mid-row). A full name is kept down to 20 design px; one that cannot fit
-// even then is written the scorecard way — initials and surname
-// ("Mohammed Abdul Rahman Siddiqui" -> "MAR Siddiqui") — and the three are
-// fitted again, down to 13. Rows that still do not fit are scaled down, all
-// three by the same factor, so the names never differ in size. Everything
+// #mid-row). Names stay big: a full name is kept down to 24 design px (the
+// runs beside it are 25), and one that cannot fit even then is written the
+// scorecard way — initials and surname ("Mohammed Abdul Rahman Siddiqui"
+// -> "MAR Siddiqui") — rather than shrunk further; the three are then
+// fitted again, down to 20 (15 only for a single-word name too long for
+// even that). Rows that still do not fit are scaled down, all three by the
+// same factor, so the names never differ in size. Everything
 // is measured in layout px (scrollWidth / clientWidth), never through a
 // transform: the bar's entrance (the middle band at scaleX 0) and the
 // name pop put transforms on these rows, and measuring through them used
@@ -3165,18 +3230,21 @@ function initialsName(full){
   const init = parts.map(p => /^[A-Z]{1,3}\.?$/.test(p) ? p.replace(/\./g, '') : p.charAt(0).toUpperCase()).join('');
   return `${init} ${last}`;
 }
-// (measured only when something that decides the fit has changed: a name,
-// a figure gaining or losing a digit — the figures are tabular, so the
-// digits themselves never change a width — the chase panel or a badge
-// coming or going, the output size; `force` after a webfont arrives)
+// (measured only when something that decides the fit has changed: the
+// room the two segments have — whatever changed it: the chase panel or a
+// badge coming or going, the score or the rates growing a digit, the
+// output size — a name, or a figure beside a name gaining or losing a
+// digit (the figures are tabular, so the digits themselves never change a
+// width); `force` after a webfont arrives)
 let nameFitKey = '';
 function syncPlayerNameSizes(force){
   // (nothing to measure while the live strip is down — a break or result strip has the panel)
   const segs = document.getElementById('live-segs');
   if(!segs || segs.style.display === 'none') return;
   const t = (id) => { const e = document.getElementById(id); return e ? (e.dataset.full ?? e.textContent).replace(/\d/g, '0') + (e.style.display === 'none' ? '~' : '') : ''; };
-  const key = [innerWidth, chaseShown ? chaseShown.phase : '-', ...['striker-name', 'striker-runs', 'striker-balls', 'nonstriker-name', 'nonstriker-runs', 'nonstriker-balls',
-    'bowler-name-val', 'bowler-figures-val', 'bowler-overs-val', 'test-day-badge', 'so-badge', 'score-row'].map(t)].join('|');
+  const room = (id) => { const e = document.getElementById(id); return e ? e.clientWidth : 0; };
+  const key = [room('batters-seg'), room('bowler-seg'), ...['striker-name', 'striker-runs', 'striker-balls', 'nonstriker-name', 'nonstriker-runs', 'nonstriker-balls',
+    'bowler-name-val', 'bowler-figures-val', 'bowler-overs-val'].map(t)].join('|');
   if(!force && key === nameFitKey) return;
   nameFitKey = key;
   atRest(document.getElementById('live-segs'), syncPlayerNameSizesNow);
@@ -3208,15 +3276,16 @@ function syncPlayerNameSizesNow(){
     setSize(lo);
     return lo;
   };
-  if(fitBetween(Math.min(natural, 20 * u), natural) !== null) return;
-  setSize(Math.min(natural, 20 * u));
+  const FULL = Math.min(natural, 24 * u), SHORT = Math.min(natural, 20 * u), LAST = Math.min(natural, 15 * u);
+  if(fitBetween(FULL, natural) !== null) return;
+  setSize(FULL);
   els.forEach(el => {
     if(fits(el.parentElement)) return;
     const full = el.dataset.full ?? el.textContent;
     const short = initialsName(full);
     if(short && short.length < full.length) el.textContent = short;
   });
-  if(fitBetween(Math.min(natural, 13 * u), natural) !== null) return;
+  if(fitBetween(SHORT, natural) !== null || fitBetween(LAST, SHORT) !== null) return;
   // 🩹 Safety net: still too wide at the floor — scale all three rows down
   // together by the worst row's factor, so nothing is cut off and the names
   // stay one size. (A batter row grows to the right, the centred bowler
@@ -3617,7 +3686,7 @@ function animateEntry(){
     .from('.digit-col', { opacity: 0, yPercent: 60, duration: 0.36, stagger: 0.035 }, 0.6)
     .from('#overs-badge > *', { opacity: 0, y: 10 * u, duration: 0.3, stagger: 0.05 }, 0.66)
     .from('#batters-seg .brow', { opacity: 0, x: -10 * u, duration: 0.32, stagger: 0.07 }, 0.72)
-    .from('#crr-seg > *', { opacity: 0, y: 8 * u, duration: 0.3, stagger: 0.05 }, 0.78)
+    .from('#crr-seg', { opacity: 0, y: 8 * u, duration: 0.3 }, 0.78)
     .from('#bowler-line > *', { opacity: 0, y: 8 * u, duration: 0.3, stagger: 0.05 }, 0.78)
     .from('#thisover-row', { opacity: 0, y: 8 * u, duration: 0.3 }, 0.86);
 }

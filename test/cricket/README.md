@@ -28,8 +28,9 @@ node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Over
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
 NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the overlay's score bar in Chromium at 1920x1080 / 1920x1280 / 1536x864 /
                                                   # 1366x768 / 1280x720 / 854x480: nothing off screen, cut or overlapping in any state (measured from the
-                                                  # rendered page), frame by frame through updates, events and innings changes; the chase panel's
-                                                  # TARGET / NEED x FROM y BALLS / REQ. RATE in every chase state; TOSS + team record on a 480p output
+                                                  # rendered page), frame by frame through updates, events and innings changes; the chase panel in
+                                                  # every chase state (TARGET for 8 s as the chase begins / after each over / when the bar returns,
+                                                  # else NEED x RUNS FROM y BALLS; RRR beside CRR), never two faces at once; TOSS + team record on 480p
                                                   # (gsap + webfonts from node_modules when installed: npm install --no-save gsap@3.12.5
                                                   #  @fontsource/inter @fontsource/manrope @fontsource/anton; else their CDNs. SHOTS=<dir> saves pictures)
 node test/cricket/wicket-bowler-test.js          # Wicket Details + optional / late / corrected bowler (tests 1-45): both panels, scorecard, overlay, database
