@@ -13,6 +13,11 @@
 //     a refresh never removes a video someone is watching
 //   • the WhatsApp card: both contacts (wa.me with the message typed in),
 //     opened from the button and from the hero, closed by Escape / elsewhere
+//   • players' 3 taps: the phone plays the real screens on one loop — the
+//     finger lands on Watch Live, the video icon by the name, the six's play
+//     and Download; the right screen is in front at each tap; the loop's end
+//     is its start; it runs only on screen; a step jumps there; reduced
+//     motion shows each step's still; phones get the step tabs under it
 //   • no sideways scrolling from 320px to 1440px, the flow chain at rest
 //     under reduced motion
 // Plus the server half: youTubeVideoId / tournamentStreams, taken out of
@@ -39,7 +44,9 @@ const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 /* ---------------- server: the latest streams of a tournament ---------------- */
 {
   console.log('\n=== server: latest streams ===');
-  const api = new Function([H.grab('isUpcomingRecord'), H.grab('youTubeVideoId'), H.grab('tournamentStreams'), 'return { youTubeVideoId, tournamentStreams };'].join('\n'))();
+  const api = new Function([H.grabConst('LIVE_STREAM_FRESH_MS'), H.grab('isUpcomingRecord'), H.grab('youTubeVideoId'), H.grab('tournamentStreams'), 'return { youTubeVideoId, tournamentStreams };'].join('\n'))();
+  const NOW = Date.parse('2026-10-22T12:00:00Z');
+  const fresh = (matchId) => ({ matchId, roomId: 'r-' + matchId, startedAt: NOW - 60 * 1000 });     // the panel pinged a minute ago
   eq('a video id from every link shape the panel accepts',
     ['https://www.youtube.com/watch?v=AbCdEfGhI_1', 'https://youtube.com/watch?feature=share&v=AbCdEfGhI-2&t=3', 'https://youtu.be/AbCdEfGhI_3?si=x', 'https://www.youtube.com/live/AbCdEfGhI_4?si=y',
       'https://youtube.com/shorts/AbCdEfGhI_5', 'https://www.youtube.com/embed/AbCdEfGhI_6', '  https://youtu.be/AbCdEfGhI_7  '].map(api.youTubeVideoId),
@@ -55,12 +62,17 @@ const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     T('m6', 'https://youtu.be/AAAAAAAAAA6', null, { upcoming: true }),                // a fixture not started
     T('m7', 'https://youtu.be/AAAAAAAAAA7', '2026-10-03T10:00:00Z'),
   ];
-  const st = api.tournamentStreams(matches, [{ matchId: 'm3', roomId: 'r3' }]);
+  const st = api.tournamentStreams(matches, [fresh('m3')], 3, null, NOW);
   eq('the match being scored now first, then the newest; one per video, at most 3', st.map((s) => s.videoId), ['AAAAAAAAAA3', 'AAAAAAAAAA2', 'AAAAAAAAAA7']);
   eq('… each with its title, label, time and live flag — and nothing else', st[0], { videoId: 'AAAAAAAAAA3', title: 'BOR vs Andheri Lions', label: 'Match 4', at: '2026-09-20T10:00:00Z', live: true });
   eq('a stage name wins over the match number', st[1].label, 'Semi Final');
-  eq('a fixture not started is left out, unless it is live', [api.tournamentStreams([matches[5]], []).length, api.tournamentStreams([matches[5]], [{ matchId: 'm6' }]).map((s) => s.live)], [0, [true]]);
+  eq('a fixture not started is left out, unless it is live', [api.tournamentStreams([matches[5]], [], 3, null, NOW).length, api.tournamentStreams([matches[5]], [fresh('m6')], 3, null, NOW).map((s) => s.live)], [0, [true]]);
   eq('no matches / no links: none', [api.tournamentStreams(null, null), api.tournamentStreams([matches[4]], [])], [[], []]);
+  const stale = [{ matchId: 'm3', roomId: 'r3', startedAt: NOW - 26 * 24 * 3600 * 1000 }, { matchId: 'm1', roomId: 'r1' }];
+  eq('"live" only while the panel keeps pinging: a weeks-old or undated pointer is not live', api.tournamentStreams(matches, stale, 5, null, NOW).map((s) => s.videoId + (s.live ? ':live' : '')),
+    ['AAAAAAAAAA2', 'AAAAAAAAAA7', 'AAAAAAAAAA1', 'AAAAAAAAAA3']);
+  eq('a video the owner took off is skipped — and the next one takes its place', api.tournamentStreams(matches, [fresh('m3')], 3, new Set(['AAAAAAAAAA2']), NOW).map((s) => s.videoId),
+    ['AAAAAAAAAA3', 'AAAAAAAAAA7', 'AAAAAAAAAA1']);
 }
 
 /* ---------------- the page ---------------- */
@@ -81,32 +93,44 @@ const TOURNAMENTS = [
   TT({ token: 't7', name: 'MCA President Cup 2026 - 27', status: 'ongoing', matchCount: 21, info: { season: '2026-27', startDate: '2026-10-10', endDate: '2027-01-31', venue: 'Cross Maidan', city: ' mumbai ', teamCount: 24, format: 'Custom', overs: 25 } }),
   TT({ token: 'tf', name: 'Football Friendly', sport: 'football', status: 'live' }),
 ];
-const FIREBASE_STUB = `window.firebase = { initializeApp(){ return {}; }, auth: Object.assign(function(){ return { currentUser: null,
-  onAuthStateChanged(cb){ setTimeout(function(){ cb(null); }, 0); return function(){}; }, signOut(){ return Promise.resolve(); },
+// Firebase stood in for: signed out, or (owner: true) signed in as chhayajeeth@gmail.com
+const firebaseStub = (owner) => `(function(){ var user = ${owner ? `{ uid: 'u-owner', email: 'chhayajeeth@gmail.com', displayName: 'Jeeth', getIdToken: function(){ return Promise.resolve('test-owner-token'); } }` : 'null'};
+  window.firebase = { initializeApp(){ return {}; }, auth: Object.assign(function(){ return { currentUser: user,
+  onAuthStateChanged(cb){ setTimeout(function(){ cb(user); }, 0); return function(){}; }, signOut(){ return Promise.resolve(); },
   getRedirectResult(){ return Promise.resolve({}); }, signInWithPopup(){ return Promise.reject(new Error('no')); } }; }, { GoogleAuthProvider: function(){} }),
-  firestore(){ return { collection(){ return { add(){ return Promise.resolve(); } }; } }; } };`;
+  firestore(){ return { collection(){ return { add(){ return Promise.resolve(); } }; } }; } }; })();`;
 const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.pdf': 'application/pdf', '.ico': 'image/x-icon' };
 let gsapJs = null;
 try { gsapJs = fs.readFileSync(require.resolve('gsap/dist/gsap.min.js')); } catch (e) { /* the page falls back to CSS */ }
 
-async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS } = {}) {
+async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, timezoneId: 'Asia/Kolkata', reducedMotion: reduced ? 'reduce' : 'no-preference', isMobile: width < 800, hasTouch: width < 800 });
   const page = await ctx.newPage();
   await page.clock.install({ time: new Date('2026-10-22T12:00:00+05:30') });
   const errors = [], offsite = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  const state = { list };
+  const state = { list, picks, adminCalls: [] };
   await page.route('**/*', (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === 'site.test') {
-      if (u.pathname === '/api/public/tournaments') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, tournaments: state.list }) });
+      if (u.pathname === '/api/public/tournaments') {
+        // the owner's own view also lists what was taken off
+        const ownerView = route.request().headers()['authorization'] === 'Bearer test-owner-token';
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, tournaments: state.list, streamPicks: ownerView ? state.picks : { added: state.picks.added } }) });
+      }
+      if (u.pathname.startsWith('/api/admin/streams')) {
+        const call = { path: u.pathname, auth: route.request().headers()['authorization'] || null, body: JSON.parse(route.request().postData() || '{}') };
+        state.adminCalls.push(call);
+        const out = admin ? admin(call, state) : { status: 200, json: { success: true } };
+        return route.fulfill({ status: out.status, contentType: 'application/json', body: JSON.stringify(out.json) });
+      }
       if (u.pathname === '/api/get-sports') return route.fulfill({ contentType: 'application/json', body: '[]' });
       const f = path.join(ROOT, u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname));
       if (f.startsWith(ROOT) && fs.existsSync(f) && fs.statSync(f).isFile()) return route.fulfill({ contentType: MIME[path.extname(f)] || 'application/octet-stream', body: fs.readFileSync(f) });
       return route.fulfill({ status: 404, body: '' });
     }
-    if (u.hostname === 'www.gstatic.com' && /firebase-app-compat/.test(u.pathname)) return route.fulfill({ contentType: 'application/javascript', body: FIREBASE_STUB });
+    if (u.hostname === 'www.gstatic.com' && /firebase-app-compat/.test(u.pathname)) return route.fulfill({ contentType: 'application/javascript', body: firebaseStub(owner) });
     if (u.hostname === 'www.gstatic.com') return route.fulfill({ contentType: 'application/javascript', body: '' });
     if (u.hostname === 'cdnjs.cloudflare.com' && gsapJs) return route.fulfill({ contentType: 'application/javascript', body: gsapJs });
     if (u.hostname === 'i.ytimg.com') return route.fulfill({ contentType: 'image/webp', body: fs.readFileSync(path.join(ROOT, 'assets/home/broadcast-640.webp')) });
@@ -135,9 +159,14 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     eq('… and every chip lands on its section', await page.$$eval('.hero-usps a', (a) => a.every((x) => !!document.querySelector(x.getAttribute('href')))), true);
     eq('seven feature rows, each with words and a picture', await page.$$eval('.feat-row', (r) => r.map((x) => x.id + ':' + (x.querySelectorAll('.feat-points li').length) + ':' + (x.querySelectorAll('.feat-media img, .feat-media video').length > 0))),
       ['feat-clips:3:true', 'feat-highlights:3:true', 'feat-report:3:true', 'feat-scoreboard:3:true', 'feat-tournament:3:true', 'feat-broadcast:3:true', 'feat-led:3:true']);
-    eq('the flow: four steps, in order', await page.$$eval('.flow-step h3', (h) => h.map((x) => x.textContent)), ['Ball scored', 'Clip cut automatically', 'Highlights ready', 'PDF report at the final ball']);
+    eq('the flow: four steps, in order — titles only', [await page.$$eval('.flow-step h3', (h) => h.map((x) => x.textContent)), await page.$$eval('.flow-step p', (p) => p.length)],
+      [['Ball scored', 'Clip cut automatically', 'Highlights ready', 'PDF report at the final ball'], 0]);
+    eq('the hero line: short, no "on its own", no PDF part', await page.textContent('.hero > p'), 'Ball-by-ball scoring and HD streaming with TV-style graphics. Every 4, 6 and wicket becomes an HD clip, and any player\'s highlights are one tap away.');
+    eq('the report row: the new heading, no paragraph under it', await page.$eval('#feat-report .feat-copy', (c) => [c.querySelector('h3').textContent, c.querySelectorAll(':scope > p').length]),
+      ['A stunning, professional match report for every match', 0]);
+    eq('the broadcast row: no paragraph under the heading', await page.$eval('#feat-broadcast .feat-copy', (c) => c.querySelectorAll(':scope > p').length), 0);
     eq('three sports', await page.$$eval('.sport-tile h3', (h) => h.map((x) => x.textContent.replace(/^\W+/, ''))), ['Cricket', 'Table Tennis', 'Football']);
-    const imgs = await page.$$eval('main img, section img', (list) => list.filter((i) => !i.closest('#hero-section') && !i.closest('#tournaments-grid') && !i.closest('#streamsGrid'))
+    const imgs = await page.$$eval('main img, section img', (list) => list.filter((i) => !i.closest('#hero-section') && !i.closest('#tournaments-grid') && !i.closest('#streamsGrid') && !i.closest('#walk'))
       .map((i) => ({ src: i.getAttribute('src'), srcset: i.getAttribute('srcset') || '', lazy: i.getAttribute('loading'), dec: i.getAttribute('decoding'), w: i.getAttribute('width'), h: i.getAttribute('height'), alt: i.getAttribute('alt') })));
     eq('every product picture: a local WebP, lazy, async, sized, described', imgs.filter((i) => !(/^\/assets\/home\/[\w-]+\.webp$/.test(i.src) && i.lazy === 'lazy' && i.dec === 'async' && +i.w > 0 && +i.h > 0 && i.alt && i.alt.length > 10)).map((i) => i.src), []);
     eq('… all 13 of them (10 in the feature rows, 3 sport tiles)', imgs.length, 13);
@@ -245,6 +274,101 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await ctx.close();
   }
 
+  console.log('\n=== latest streams: the owner\'s tools ===');
+  {
+    // A stand-in for the owner-only /api/admin/streams routes, with the same
+    // rules as server.js (test/homepage-streams-server.test.js checks the
+    // real ones): only the owner's token, a YouTube link, hide / restore.
+    const removedFrom = {};
+    let failNext = false;
+    const admin = (call, state) => {
+      if (call.auth !== 'Bearer test-owner-token') return { status: 403, json: { success: false, error: 'Access Denied' } };
+      if (failNext) { failNext = false; return { status: 500, json: { success: false, error: 'Could not remove the video' } }; }
+      const m = /^\/api\/admin\/streams(?:\/([A-Za-z0-9_-]{11})\/(hide|restore))?$/.exec(call.path);
+      if (!m) return { status: 404, json: { success: false } };
+      if (!m[1]) {
+        const id = (String(call.body.url || '').match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/) || [])[1];
+        if (!id) return { status: 400, json: { success: false, error: 'Paste a YouTube video link (youtube.com/watch?v=… or youtu.be/…)' } };
+        state.picks.added.unshift({ videoId: id, title: call.body.title || 'From YouTube', label: call.body.label || '', tournament: '', at: Date.now() });
+        return { status: 200, json: { success: true } };
+      }
+      const id = m[1];
+      if (m[2] === 'hide') {
+        const added = state.picks.added.find((a) => a.videoId === id);
+        state.picks.added = state.picks.added.filter((a) => a.videoId !== id);
+        state.list = state.list.map((t) => {
+          const hit = (t.streams || []).find((x) => x.videoId === id);
+          if (hit) (removedFrom[id] = removedFrom[id] || []).push({ token: t.token, stream: hit });
+          return Object.assign({}, t, { streams: (t.streams || []).filter((x) => x.videoId !== id) });
+        });
+        state.picks.hidden.unshift({ videoId: id, title: added ? added.title : call.body.title, label: added ? added.label : call.body.label, tournament: added ? '' : call.body.tournament, at: Date.now(), wasAdded: !!added });
+      } else {
+        const h = state.picks.hidden.find((x) => x.videoId === id);
+        state.picks.hidden = state.picks.hidden.filter((x) => x.videoId !== id);
+        if (h && h.wasAdded) state.picks.added.unshift({ videoId: id, title: h.title, label: h.label, tournament: '', at: Date.now() });
+        else (removedFrom[id] || []).forEach((r) => { state.list = state.list.map((t) => (t.token === r.token ? Object.assign({}, t, { streams: [...t.streams, r.stream] }) : t)); });
+      }
+      return { status: 200, json: { success: true } };
+    };
+    const signedOut = await openHome(browser);
+    eq('signed out: no owner tools, no remove buttons', [await signedOut.page.$eval('#streamsOwner', (b) => b.hidden), await signedOut.page.$$eval('.stream-remove', (b) => b.length)], [true, 0]);
+    await signedOut.ctx.close();
+
+    const { ctx, page, errors, state } = await openHome(browser, { owner: true, admin, picks: { added: [], hidden: [] } });
+    await page.waitForFunction(() => !document.getElementById('streamsOwner').hidden);
+    const order = () => page.$$eval('#streamsGrid .stream-card', (c) => c.map((x) => x.querySelector('[data-yt]').dataset.yt));
+    const note = () => page.$eval('#soNote', (n) => [n.className, n.textContent]);
+    eq('the owner: the toolbar, a ✕ on every card, nothing removed yet', [await page.isVisible('#soAddToggle'), await page.$$eval('.stream-remove', (b) => b.length), await page.isHidden('#soHiddenToggle')], [true, 5, true]);
+    eq('… and the owner\'s list was fetched with the owner\'s token', state.adminCalls.length, 0);
+
+    await page.click('#soAddToggle');
+    eq('＋ Add YouTube video opens the form, the link box focused', [await page.isVisible('#soAddForm'), await page.evaluate(() => document.activeElement.id)], [true, 'soUrl']);
+    await page.fill('#soUrl', 'https://vimeo.com/12345');
+    await page.click('#soAddForm button[type="submit"]');
+    await page.waitForFunction(() => /^✕/.test(document.getElementById('soNote').textContent));
+    eq('a link that is not a YouTube video: the server\'s reason, the form stays open', [await note(), await page.isVisible('#soAddForm')],
+      [['so-note err', '✕ Paste a YouTube video link (youtube.com/watch?v=… or youtu.be/…)'], true]);
+    await page.fill('#soUrl', 'https://youtu.be/NEWVIDEO001');
+    await page.fill('#soTitle', 'Grand <b>Final</b>');
+    await page.fill('#soLabel', 'Final · 26 Oct');
+    await page.click('#soAddForm button[type="submit"]');
+    await page.waitForFunction(() => /^✓/.test(document.getElementById('soNote').textContent));
+    const addCall = state.adminCalls[state.adminCalls.length - 1];
+    eq('add: the owner\'s token, the link, the title and the line', [addCall.path, addCall.auth, addCall.body], ['/api/admin/streams', 'Bearer test-owner-token', { url: 'https://youtu.be/NEWVIDEO001', title: 'Grand <b>Final</b>', label: 'Final · 26 Oct' }]);
+    eq('… the video shows straight after the live ones; the form closes, emptied', [await order(), await page.isHidden('#soAddForm'), await page.inputValue('#soUrl'), (await note())[1]],
+      [['vidAAAAAAA1', 'vidAAAAAAA5', 'NEWVIDEO001', 'vidAAAAAAA2', 'vidAAAAAAA3', 'vidAAAAAAA4'], true, '', '✓ Added to Latest streams']);
+    eq('… its card: the title as text, the line under it', await page.$eval('[data-yt="NEWVIDEO001"]', (b) => { const c = b.closest('.stream-card'); return [c.querySelector('h3').textContent, [...c.querySelectorAll('.stream-meta p')].map((p) => p.textContent), !!c.querySelector('h3 b')]; }),
+      ['Grand <b>Final</b>', ['Final · 26 Oct'], false]);
+
+    await page.click('.stream-remove[data-stream-hide="vidAAAAAAA2"]');
+    await page.waitForFunction(() => !document.querySelector('[data-yt="vidAAAAAAA2"]'));
+    const hideCall = state.adminCalls[state.adminCalls.length - 1];
+    eq('✕ on a match\'s video: removed, with its title and where it came from', [hideCall.path, hideCall.auth, hideCall.body],
+      ['/api/admin/streams/vidAAAAAAA2/hide', 'Bearer test-owner-token', { title: 'BAB vs MAM', label: 'Match 28', tournament: 'Western Suburbs Premier League' }]);
+    eq('… gone from the cards; "Removed videos (1)" appears', [await order(), await page.textContent('#soHiddenToggle')], [['vidAAAAAAA1', 'vidAAAAAAA5', 'NEWVIDEO001', 'vidAAAAAAA3', 'vidAAAAAAA4'], 'Removed videos (1)']);
+    await page.click('#soHiddenToggle');
+    eq('the removed list: its thumbnail, title and where it came from, with Restore', await page.$$eval('#soHiddenList .so-row', (r) => r.map((x) => [x.querySelector('img').getAttribute('src'), x.querySelector('b').textContent, x.querySelector('span').textContent, x.querySelector('button').textContent])),
+      [['https://i.ytimg.com/vi/vidAAAAAAA2/mqdefault.jpg', 'BAB vs MAM', 'Western Suburbs Premier League · Match 28', 'Restore']]);
+    await page.click('[data-stream-restore="vidAAAAAAA2"]');
+    await page.waitForFunction(() => !!document.querySelector('[data-yt="vidAAAAAAA2"]'));
+    eq('Restore: the card is back, nothing left under removed', [state.adminCalls[state.adminCalls.length - 1].path, await order(), await page.isHidden('#soHiddenToggle')],
+      ['/api/admin/streams/vidAAAAAAA2/restore', ['vidAAAAAAA1', 'vidAAAAAAA5', 'NEWVIDEO001', 'vidAAAAAAA2', 'vidAAAAAAA3', 'vidAAAAAAA4'], true]);
+    await page.click('.stream-remove[data-stream-hide="NEWVIDEO001"]');
+    await page.waitForFunction(() => !document.querySelector('[data-yt="NEWVIDEO001"]'));
+    await page.click('#soHiddenToggle');
+    await page.click('[data-stream-restore="NEWVIDEO001"]');
+    await page.waitForFunction(() => !!document.querySelector('[data-yt="NEWVIDEO001"]'));
+    eq('an added video: removed and put back the same way', (await order()).includes('NEWVIDEO001'), true);
+    failNext = true;
+    await page.click('.stream-remove[data-stream-hide="vidAAAAAAA3"]');
+    await page.waitForFunction(() => /^✕/.test(document.getElementById('soNote').textContent));
+    eq('the server says no: the card stays and is usable, the reason is shown', [(await order()).includes('vidAAAAAAA3'), await page.$eval('[data-yt="vidAAAAAAA3"]', (b) => b.closest('.stream-card').classList.contains('is-busy')), (await note())[1]],
+      [true, false, '✕ Could not remove the video']);
+    eq('no page errors', errors, []);
+    if (SHOTS) { await page.evaluate(() => document.getElementById('streams').scrollIntoView()); await page.screenshot({ path: path.join(SHOTS, 'home-streams-owner.png') }); }
+    await ctx.close();
+  }
+
   console.log('\n=== WhatsApp ===');
   {
     const { ctx, page, errors } = await openHome(browser, { width: 390, height: 844 });
@@ -268,12 +392,117 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await ctx.close();
   }
 
+  console.log('\n=== players: the 3-taps phone ===');
+  {
+    // where each tap lands, as a fraction of the screen picture it taps (the
+    // shots are 430px pages): Watch Live, the video icon on Aarav Patil's
+    // row, the six's play button in the clips, Download in the player
+    const TAPS = [[3.06, '.ws-a img', 0.5, 0.91228, 'Watch Live'], [7.5, '.ws-b img', 0.89535, 0.69578, 'the video icon by the name'],
+      [9.41, '.ws-c img', 0.8186, 0.62077, 'the six\'s play button'], [13.36, '.ws-d > img', 0.84791, 904 / 932, 'Download']];
+    const at = (page, t) => page.evaluate((t) => document.getElementById('walk').getAnimations({ subtree: true }).forEach((a) => { a.pause(); a.currentTime = t * 1000; }), t);
+    const look = (page) => page.evaluate(() => {
+      const r = (sel) => { const b = document.querySelector('#walk ' + sel).getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height }; };
+      const op = (sel) => +getComputedStyle(document.querySelector('#walk ' + sel)).opacity;
+      return { view: r('.wp-view'), a: r('.ws-a img'), b: r('.ws-b'), c: r('.ws-c'), dot: r('.ws-dot'), row: r('.ws-row'), bImg: r('.ws-b img'),
+        dOp: op('.ws-d'), dimOp: op('.ws-dim'), rowOp: op('.ws-row'), fingerOp: op('.ws-finger'), step: document.getElementById('walk').dataset.step };
+    });
+    const onTarget = (page, sel, fx, fy) => page.evaluate(({ sel, fx, fy }) => {
+      const im = document.querySelector('#walk ' + sel).getBoundingClientRect(), d = document.querySelector('#walk .ws-dot').getBoundingClientRect();
+      return Math.hypot(d.left + d.width / 2 - (im.left + fx * im.width), d.top + d.height / 2 - (im.top + fy * im.height));
+    }, { sel, fx, fy });
+    const near = (a, b) => Math.abs(a - b) < 1;
+
+    const { ctx, page, errors } = await openHome(browser);
+    eq('three steps: open the match, find your name, watch & download', await page.$$eval('.walk-step h3 button', (b) => b.map((x) => x.textContent)), ['Open your match', 'Find your name', 'Watch & download']);
+    eq('step 2 says where the video icon is', await page.textContent('.walk-step:nth-child(2) p'), 'On the scorecard, tap the video icon next to your name.');
+    eq('the phone is one described picture', await page.$eval('.walk-phone', (f) => [f.getAttribute('role'), /Watch Live/.test(f.getAttribute('aria-label')) && /video icon/.test(f.getAttribute('aria-label')) && /Download/.test(f.getAttribute('aria-label'))]), ['img', true]);
+    const frames = await page.$$eval('#walk img', (l) => l.map((i) => ({ src: i.getAttribute('src'), lazy: i.getAttribute('loading'), dec: i.getAttribute('decoding'), w: +i.getAttribute('width'), h: +i.getAttribute('height'), alt: i.getAttribute('alt') })));
+    eq('its five screens: local WebP, lazy, async, sized, silent (the phone carries the words)', frames.map((f) => [f.src, f.lazy === 'lazy' && f.dec === 'async' && f.w > 0 && f.h > 0 && f.alt === '']),
+      [['/assets/home/walk-tournament.webp', true], ['/assets/home/walk-scorecard.webp', true], ['/assets/home/walk-clips.webp', true], ['/assets/home/walk-player.webp', true], ['/assets/home/walk-six.webp', true]]);
+    const idle = await page.evaluate(() => { const a = document.getElementById('walk').getAnimations({ subtree: true }).filter((x) => !(x instanceof CSSTransition)); return [a.length >= 20, [...new Set(a.map((x) => x.playState))], Math.max(...a.map((x) => x.currentTime))]; });
+    eq('off screen: built, paused at the start', idle, [true, ['paused'], 0]);
+    await page.evaluate(() => window.scrollTo(0, document.querySelector('.walk-phone').getBoundingClientRect().top + scrollY - 60));
+    await page.waitForFunction(() => [...document.querySelectorAll('#walk img')].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 15000 });
+    await page.waitForTimeout(700);
+    const run = await page.evaluate(() => { const a = document.getElementById('walk').getAnimations({ subtree: true }).filter((x) => !(x instanceof CSSTransition)); return [[...new Set(a.map((x) => x.playState))], a[0].currentTime > 300]; });
+    eq('on screen: it plays', run, [['running'], true]);
+    eq('… every screen\'s file is the size the page says', await page.$$eval('#walk img', (l) => l.every((i) => i.naturalWidth === +i.getAttribute('width') && i.naturalHeight === +i.getAttribute('height'))), true);
+
+    for (const [t, sel, fx, fy, what] of TAPS) {
+      await at(page, t);
+      eq(`${t}s: the finger is on ${what}`, [(await onTarget(page, sel, fx, fy)) < 1.5, (await look(page)).fingerOp], [true, 1]);
+    }
+    await at(page, 3.06);
+    let v = await look(page);
+    eq('tap 1: the tournament page, scrolled to the live match; the scorecard still off to the side', [v.a.b > v.view.b, v.b.l >= v.view.r - 1, v.dOp], [true, true, 0]);
+    await at(page, 7.5);
+    v = await look(page);
+    eq('tap 2: the scorecard in front, the name\'s row lit, the clips not up yet', [near(v.b.l, v.view.l), v.rowOp, v.c.t >= v.view.b - 1, v.dimOp], [true, 1, true, 0]);
+    eq('… the lit row is Aarav Patil\'s, the tapped icon inside it', [near(v.row.t, v.bImg.t + 0.6468 * v.bImg.h), near(v.row.b, v.bImg.t + 0.7145 * v.bImg.h), v.dot.t + v.dot.h / 2 > v.row.t && v.dot.t + v.dot.h / 2 < v.row.b && v.dot.l + v.dot.w / 2 < v.row.r], [true, true, true]);
+    await at(page, 9.41);
+    v = await look(page);
+    eq('tap 3: the clips up over the dimmed scorecard, the player not yet', [near(v.c.b, v.view.b), v.dimOp, v.dOp], [true, 1, 0]);
+    await at(page, 13.36);
+    v = await look(page);
+    eq('tap 4: the player in front', [v.dOp], [1]);
+    await at(page, 0);
+    const start = await look(page);
+    await at(page, 15.995);
+    const end = await look(page);
+    eq('the loop\'s end is its start: the tournament page at the top, nothing over it', [near(start.a.t, start.view.t), near(end.a.t, end.view.t), start.dOp, end.dOp < 0.02, start.b.l >= start.view.r - 1, end.b.l >= end.view.r - 1, start.fingerOp, end.fingerOp < 0.02],
+      [true, true, 0, true, true, true, 0, true]);
+    // the steps follow the phone, and a step jumps there
+    await page.evaluate(() => document.getElementById('walk').getAnimations({ subtree: true }).forEach((a) => { a.currentTime = 0; a.play(); }));
+    await page.waitForTimeout(400);
+    const lit = () => page.evaluate(() => [document.getElementById('walk').dataset.step, [...document.querySelectorAll('.walk-step')].map((s) => s.classList.contains('is-on') ? 1 : 0).join(''), [...document.querySelectorAll('.walk-step button')].map((b) => b.getAttribute('aria-current') || '-').join(',')]);
+    eq('playing step 1: step 1 lit', await lit(), ['1', '100', 'step,-,-']);
+    await page.click('.walk-step:nth-child(3) button');
+    await page.waitForTimeout(200);
+    eq('tap step 3: the phone jumps to the clip, step 3 lit', [await lit(), Math.round((await page.evaluate(() => document.querySelector('#walk .ws-d').getAnimations()[0].currentTime)) / 1000)], [['3', '001', '-,-,step'], 9]);
+    await page.click('.walk-step:nth-child(2) button');
+    await page.waitForTimeout(200);
+    eq('tap step 2: back to the scorecard', (await lit())[0], '2');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(300);
+    eq('scrolled away: it waits', await page.evaluate(() => [...new Set(document.getElementById('walk').getAnimations({ subtree: true }).filter((x) => !(x instanceof CSSTransition)).map((x) => x.playState))]), ['paused']);
+    eq('no page errors', errors, []);
+    await ctx.close();
+
+    // reduced motion: nothing moves; each step shows its own still
+    const rm = await openHome(browser, { reduced: true });
+    await rm.page.evaluate(() => document.querySelector('.walk-phone').scrollIntoView({ block: 'center' }));
+    await rm.page.waitForFunction(() => [...document.querySelectorAll('#walk img')].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 15000 });
+    eq('reduced motion: still, nothing animated', await rm.page.evaluate(() => [document.getElementById('walk').classList.contains('is-static'), document.getElementById('walk').getAnimations({ subtree: true }).filter((x) => !(x instanceof CSSTransition)).length]), [true, 0]);
+    v = await look(rm.page);
+    eq('… it opens on step 2: the scorecard at the name, the row lit, the finger on the video icon', [v.step, near(v.b.l, v.view.l), v.rowOp, (await onTarget(rm.page, '.ws-b img', 0.89535, 0.69578)) < 1.5], ['2', true, 1, true]);
+    await rm.page.click('.walk-step:nth-child(1) button');
+    eq('… step 1: the tournament page at the live match, the finger on Watch Live', [(await look(rm.page)).step, (await onTarget(rm.page, '.ws-a img', 0.5, 0.91228)) < 1.5], ['1', true]);
+    await rm.page.click('.walk-step:nth-child(3) button');
+    v = await look(rm.page);
+    eq('… step 3: the player, no finger', [v.step, v.dOp, v.fingerOp], ['3', 1, 0]);
+    await rm.ctx.close();
+
+    // a phone: the step tabs in one row right under it, the step's sentence as a caption
+    const ph = await openHome(browser, { width: 390, height: 844 });
+    await ph.page.evaluate(() => window.scrollTo(0, document.querySelector('.walk-phone').getBoundingClientRect().top + scrollY - 20));
+    await ph.page.waitForTimeout(500);
+    const g = await ph.page.evaluate(() => { const b = (e) => e.getBoundingClientRect(); const s = [...document.querySelectorAll('.walk-step')].map(b), p = b(document.querySelector('.walk-phone')), c = document.querySelector('.walk-cap');
+      return { row: new Set(s.map((x) => Math.round(x.top))).size, under: s[0].top > p.bottom, fits: b(c).bottom - p.top <= innerHeight, cap: c.textContent, para: getComputedStyle(document.querySelector('.walk-step p')).position }; });
+    eq('390px: three tabs in one row under the phone; phone, tabs and caption fit one screen', [g.row, g.under, g.fits], [1, true, true]);
+    eq('… the caption is the lit step\'s sentence; the steps\' own sentences stay for screen readers', [g.cap, g.para], ['Tap your tournament, then the match you played.', 'absolute']);
+    await ph.page.click('.walk-step:nth-child(3) button');
+    eq('… tap a tab: its sentence', await ph.page.textContent('.walk-cap'), 'Your 4s, 6s and wickets play right there — save any of them in HD in one tap.');
+    if (SHOTS) await ph.page.screenshot({ path: path.join(SHOTS, 'home-walk-390.png') });
+    eq('390px: no page errors', ph.errors, []);
+    await ph.ctx.close();
+  }
+
   console.log('\n=== no sideways scrolling, every width ===');
   for (const [w, h] of [[320, 640], [390, 844], [768, 1024], [1024, 768], [1440, 900]]) {
     const { ctx, page, errors } = await openHome(browser, { width: w, height: h });
     const r = await page.evaluate(() => {
       const out = [];
-      document.querySelectorAll('.hero-ctas, .hero-usps, .flow-step, .feat-copy, .feat-media, .feat-media img, .reel-chip, .shot-phone, .shot-card, .sport-tile, .tournament-tools, .stream-card, .channel-card').forEach((el) => {
+      document.querySelectorAll('.hero-ctas, .hero-usps, .flow-step, .feat-copy, .feat-media, .feat-media img, .reel-chip, .shot-phone, .shot-card, .walk-phone, .walk-step, .walk-cap, .sport-tile, .tournament-tools, .stream-card, .channel-card').forEach((el) => {
         const b = el.getBoundingClientRect();
         if (b.width && getComputedStyle(el).display !== 'none' && (b.left < -0.5 || b.right > innerWidth + 0.5)) out.push(el.className.split(' ')[0] + ' ' + Math.round(b.left) + '..' + Math.round(b.right));
       });
