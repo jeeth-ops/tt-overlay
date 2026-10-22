@@ -49,6 +49,9 @@ node test/cricket/run-out-crossing-server-test.js # the REAL server.js keeps the
                                                   # once), Edit Delivery keeps it while it is still a Run Out, the scorecard is unchanged by it
 node test/scorecard-viewers.test.js              # 👁 "watching now" beside Visit Website: the REAL server's count (one per browser, check-out, 50 s
                                                   # timeout, per match, made-up ids refused) and the real page in Chromium — both themes, phone
+NODE_PATH=$(npm root -g) node test/homepage.test.js   # 🏠 the homepage in Chromium (after npm install): product sections + local WebP pictures,
+                                                  # canonical / og:image / JSON-LD, tournaments live first + search / city / dates, latest
+                                                  # streams (server: youTubeVideoId / tournamentStreams), the WhatsApp card, 320–1440px
 node test/cricket/points-table-teams-test.js     # 🏆 Points Table lists each team ONCE when its name was typed differently on different matches
                                                   # ("United Cricketers" / "UNITED CRICKETERS "): rows, P/W/L/PTS/NRR, form, overlay card, Team History
                                                   # list, the name shown; both panels

@@ -330,7 +330,7 @@ async function websiteSuite(){
   eq('INDEX: quiet auto-refresh every 20s + on tab return', [/setInterval\(\(\) => \{ if \(!document\.hidden\) loadTournaments\(true\); \}, 20000\)/.test(idx), /visibilitychange', \(\) => \{ if \(!document\.hidden\) loadTournaments\(true\)/.test(idx)], [true, true]);
   // loadTournaments(quiet) only re-draws on a change
   const lt = new Function('fetch', 'auth', 'counter', 'let allTournaments = []; let tournamentFilter = "all";' + idx.slice(idx.indexOf('let tournamentsSig = null;'), idx.indexOf('// ===== Stats bar')) +
-    '; function renderTournaments(){ counter.n++; } function renderTicker(){} function renderStatsBar(){} return { loadTournaments, get list(){ return allTournaments; } };');
+    '; function renderTournaments(){ counter.n++; } function renderTicker(){} function renderStatsBar(){} function renderStreams(){} return { loadTournaments, get list(){ return allTournaments; } };');
   let payload = { tournaments: [{ name: 'A', matchCount: 1 }] };
   const counter = { n: 0 };
   let down = false;

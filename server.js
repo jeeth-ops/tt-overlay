@@ -3598,6 +3598,39 @@ app.get('/api/public/match/:id/balls', async (req, res) => {
 const PUBLIC_TOURNAMENTS_CACHE_TTL_MS = 8000;
 let publicTournamentsListCache = null; // { expiresAt, payload }
 
+// ▶️ The latest YouTube streams of a tournament, for the homepage's "Latest
+// streams": the "YouTube live link" the operator put on each match (the same
+// link the public scorecard already plays). A match being scored right now
+// first, then the newest; a fixture not started yet is left out. Only the
+// 11-character video id leaves the server, never the pasted text.
+function youTubeVideoId(url) {
+    const m = String(url || '').trim().match(/(?:youtube\.com\/watch\?(?:.*&)?v=|youtube\.com\/live\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : '';
+}
+function tournamentStreams(matches, liveMatches, max = 3) {
+    const live = new Set((liveMatches || []).map(m => m && m.matchId).filter(Boolean));
+    const seen = new Set();
+    const streams = [];
+    (matches || []).forEach(m => {
+        const videoId = youTubeVideoId(m && m.streamUrl);
+        if (!videoId || seen.has(videoId)) return;
+        const isLive = !!(m.matchId && live.has(m.matchId));
+        if (isUpcomingRecord(m) && !isLive) return;
+        seen.add(videoId);
+        const side = (t) => (t && (t.short || t.name)) || '';
+        streams.push({
+            videoId,
+            title: [side(m.teamA), side(m.teamB)].filter(Boolean).join(' vs '),
+            label: m.matchTitle || (m.matchNo != null && m.matchNo !== '' ? `Match ${m.matchNo}` : ''),
+            at: m.savedAt || null,
+            live: isLive
+        });
+    });
+    return streams
+        .sort((a, b) => (b.live - a.live) || String(b.at || '').localeCompare(String(a.at || '')))
+        .slice(0, max);
+}
+
 app.get('/api/public/tournaments', async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.json({ success: true, tournaments: [] });
     try {
@@ -3642,6 +3675,7 @@ app.get('/api/public/tournaments', async (req, res) => {
                     matchCount: playedMatches(matches).length,
                     upcomingCount: matches.filter(m => m && m.upcoming === true).length,
                     info: tournamentInfoSummary(doc.info),
+                    streams: tournamentStreams(matches, doc.liveMatches),
                     updatedAt: doc.updatedAt || 0,
                     sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
                     // Owner-only fields — never present in the normal (cached,
@@ -3702,6 +3736,7 @@ app.get('/api/public/tournaments', async (req, res) => {
                 matchCount: playedMatches(matches).length,
                 upcomingCount: matches.filter(m => m && m.upcoming === true).length,
                 info: tournamentInfoSummary(doc.info),
+                streams: tournamentStreams(matches, doc.liveMatches),
                 updatedAt: doc.updatedAt || 0,
                 // Legacy docs saved before `sport` existed on the league doc
                 // don't have it stored — fall back to the same name-based
