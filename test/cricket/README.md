@@ -53,7 +53,14 @@ NODE_PATH=$(npm root -g) node test/homepage.test.js   # 🏠 the homepage in Chr
                                                   # canonical / og:image / JSON-LD, tournaments live first + search / city / dates, latest
                                                   # streams (server: youTubeVideoId / tournamentStreams) + the owner's add / remove / restore,
                                                   # the players' 3-taps phone (finger on every tap target, loop seam, plays only on screen,
-                                                  # step jumps, reduced-motion stills, phone tabs), the WhatsApp card, 320–1440px
+                                                  # step jumps, reduced-motion stills, phone tabs), the broadcast TV, the phone background,
+                                                  # Cricket / Football / Table Tennis tabs (URL, Back / Forward, keys) + the 16:9 carousel
+                                                  # (thumbnail / designed fallback / broken picture, arrows, loading, Try again), the owner's
+                                                  # thumbnail editor (pick, drag, keys, save, remove, stale edit), the WhatsApp card, 320–1920px
+node test/tournament-thumbnails-server.test.js    # 🖼️ tournament thumbnails + the sport list on the REAL server (in-memory MongoDB + R2): three
+                                                  # sports ('tt' → Table Tennis, no "TT::"), only chhayajeeth@gmail.com may set / move / remove
+                                                  # (403 for all else, spoofed claims too), checked by its bytes, too big / small refused,
+                                                  # replace + remove clean storage, failed upload / save keep the old one, stale edits refused, audit
 node test/homepage-streams-server.test.js         # ▶️ homepage Latest streams on the REAL server (in-memory MongoDB): a match's link is "live"
                                                   # only while the panel pings; only chhayajeeth@gmail.com may add / remove / restore (403 for
                                                   # all else); bad links refused; YouTube's title when none typed; restore; the audit log

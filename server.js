@@ -1815,6 +1815,104 @@ function detectSportFromName(name) {
     if (/^(fb|foot)[\s:_-]|football/.test(n)) return 'football';
     return 'cricket';
 }
+// 🏟️ The sports the homepage lists, one tab each. The cricket panel's
+// tournaments say 'cricket'; the TT panel's records say 'tt' (and their
+// tournaments are named "TT::<name>"). A doc saved before `sport` existed is
+// placed by its name, the same guess used when it was saved; a sport the
+// homepage has no tab for keeps its own value, so it lands in no tab rather
+// than the wrong one.
+const HOMEPAGE_SPORTS = new Set(['cricket', 'football', 'tabletennis']);
+function normalizeSport(sport, name) {
+    const s = String(sport || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+    if (!s) return detectSportFromName(name);
+    if (s === 'tt' || s === 'tabletennis' || s === 'pingpong') return 'tabletennis';
+    if (s === 'soccer') return 'football';
+    return s;
+}
+// The name a visitor reads: without the panel's own "TT::" / "FB::" prefix.
+function publicTournamentName(doc) {
+    const raw = String((doc && (doc.displayName || doc.leagueKey)) || '').trim();
+    return raw.replace(/^(tt|fb|foot(ball)?)\s*::\s*/i, '') || raw;
+}
+
+// ================================================================
+// 🖼️ TOURNAMENT THUMBNAILS — the 16:9 picture on a tournament's card on
+// the homepage. Only chhayajeeth@gmail.com sets, moves or removes one: the
+// routes sit on adminRouter, whose requireOwner checks a verified Firebase
+// ID token for exactly that account — nothing the client says about who it
+// is counts. The picture lives in R2 next to the clips, under a random key
+// that names nothing; the league doc keeps only a small reference
+// { key, url, type, w, h, bytes, focus: { x, y }, at, by } plus thumbV,
+// which counts every change: each edit names the thumbV it started from and
+// loses (409) if another one landed first, so a stale tab never overwrites a
+// newer picture. A picture is only ever listed with its tournament, under
+// the tournament's own visibility rules.
+// ================================================================
+const TOURNAMENT_THUMB_MAX_BYTES = Math.max(256 * 1024, Number(process.env.TOURNAMENT_THUMB_MAX_BYTES) || 8 * 1024 * 1024);
+const TOURNAMENT_THUMB_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const TOURNAMENT_THUMB_MIN_WIDTH = 480; // of the 16:9 frame it fills — sharp on a phone
+// A picture's real format and pixel size, read from its own bytes — never
+// from the file name or the Content-Type it came with. null: not a JPEG,
+// PNG or WebP (or a broken one).
+function imageInfo(buf) {
+    if (!Buffer.isBuffer(buf) || buf.length < 32) return null;
+    if (buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a && buf.toString('ascii', 12, 16) === 'IHDR') {
+        return { type: 'image/png', w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+    }
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+        // walk the segments to the frame header (SOF0..SOF15, not DHT/JPG/DAC)
+        let i = 2;
+        while (i + 9 < buf.length) {
+            if (buf[i] !== 0xff) return null;
+            const marker = buf[i + 1];
+            if (marker === 0xff) { i++; continue; }
+            if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { i += 2; continue; }
+            if (marker === 0xd9 || marker === 0xda) return null;
+            if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+                return { type: 'image/jpeg', w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+            }
+            i += 2 + buf.readUInt16BE(i + 2);
+        }
+        return null;
+    }
+    if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+        const chunk = buf.toString('ascii', 12, 16);
+        if (chunk === 'VP8 ' && buf[23] === 0x9d && buf[24] === 0x01 && buf[25] === 0x2a) {
+            return { type: 'image/webp', w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
+        }
+        if (chunk === 'VP8L' && buf[20] === 0x2f) {
+            const bits = buf.readUInt32LE(21);
+            return { type: 'image/webp', w: (bits & 0x3fff) + 1, h: ((bits >>> 14) & 0x3fff) + 1 };
+        }
+        if (chunk === 'VP8X') return { type: 'image/webp', w: buf.readUIntLE(24, 3) + 1, h: buf.readUIntLE(27, 3) + 1 };
+    }
+    return null;
+}
+// What the 16:9 frame centres on, in % of the picture (the CSS
+// object-position of the card's image): 50/50 unless the owner moved it.
+function cleanThumbFocus(v) {
+    const n = Number(v);
+    return v === '' || v == null || !Number.isFinite(n) ? 50 : Math.round(Math.min(100, Math.max(0, n)) * 10) / 10;
+}
+// The picture as a card shows it — no storage key, no uploader.
+function publicThumb(t) {
+    if (!t || !t.key || !t.url) return null;
+    return { url: t.url, x: cleanThumbFocus(t.focus && t.focus.x), y: cleanThumbFocus(t.focus && t.focus.y), w: Number(t.w) || null, h: Number(t.h) || null };
+}
+// An old picture's object, once no tournament points at it any more — best
+// effort: a failure only leaves an unused object behind, never a broken card.
+async function deleteThumbObject(key) {
+    if (!key || !r2Client || !R2_BUCKET_NAME) return false;
+    try {
+        if (leaguesCollection && await leaguesCollection.countDocuments({ 'thumb.key': key })) return false;
+        await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+        return true;
+    } catch (err) {
+        console.log(`Tournament thumbnail cleanup error (${key}):`, err.message || err);
+        return false;
+    }
+}
+
 const SINGLE_MATCHES_LEAGUE_KEY = '__single_matches__'; // must match SINGLE_MATCHES_NAME in cricket-panel.html
 function ownerUidFrom(req) {
     const uid = (req.query.uid || (req.body && req.body.uid) || '').toString().trim();
@@ -2689,9 +2787,11 @@ app.delete('/api/league/:name', requireAuthorizedCreator, async (req, res) => {
     if (!leaguesCollection || !matchRecordsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     if (mergeLockResponse(res, ownerUid, leagueKey)) return;
     try {
+        const gone = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { thumb: 1 } });
         await matchRecordsCollection.deleteMany({ ownerUid, leagueKey });
         await leaguesCollection.deleteOne({ ownerUid, leagueKey });
         publicTournamentsListCache = null; // don't serve the stale list for up to 8s
+        if (gone && gone.thumb && gone.thumb.key) deleteThumbObject(gone.thumb.key); // its card picture, best effort
         res.json({ success: true });
     } catch (err) {
         console.log('League (tournament) delete error:', err);
@@ -3706,9 +3806,10 @@ app.get('/api/public/tournaments', async (req, res) => {
                 ownerUid: { $in: validUids },
                 leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
                 publicToken: { $exists: true, $ne: null }
-            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1 }).toArray();
+            }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1, thumb: 1, thumbV: 1 }).toArray();
 
             const allTournaments = await Promise.all(leagues.map(async doc => {
+                const sport = normalizeSport(doc.sport, doc.displayName || doc.leagueKey);
                 const matches = await getLeagueMatches(doc.ownerUid, doc.leagueKey);
                 const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
                 const creatorEmail = doc.createdBy || uidToEmail.get(doc.ownerUid) || null;
@@ -3720,15 +3821,18 @@ app.get('/api/public/tournaments', async (req, res) => {
                     ownerUid: doc.ownerUid,
                     leagueKey: doc.leagueKey,
                     token: doc.publicToken,
-                    name: doc.displayName || doc.leagueKey,
+                    name: publicTournamentName(doc),
                     status: doc.statusOverride || (isLive ? 'live' : (doc.completed ? 'completed' : (playedMatches(matches).length > 0 ? 'ongoing' : 'upcoming'))),
                     statusOverride: doc.statusOverride || null,
                     matchCount: playedMatches(matches).length,
                     upcomingCount: matches.filter(m => m && m.upcoming === true).length,
                     info: tournamentInfoSummary(doc.info),
-                    streams: tournamentStreams(matches, doc.liveMatches, 3, hiddenStreams),
+                    streams: sport === 'cricket' ? tournamentStreams(matches, doc.liveMatches, 3, hiddenStreams) : [],
                     updatedAt: doc.updatedAt || 0,
-                    sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey),
+                    sport,
+                    thumb: publicThumb(doc.thumb),
+                    // the version an edit of the thumbnail starts from (owner view only)
+                    thumbV: Number(doc.thumbV) || 0,
                     // Owner-only fields — never present in the normal (cached,
                     // anonymous) response below.
                     createdBy: creatorEmail || 'Unknown',
@@ -3738,7 +3842,9 @@ app.get('/api/public/tournaments', async (req, res) => {
                 };
             }));
 
-            const tournaments = allTournaments.filter(t => t.sport === 'cricket');
+            // Every sport the homepage has a tab for (its Cricket / Football /
+            // Table Tennis navigation picks between them).
+            const tournaments = allTournaments.filter(t => HOMEPAGE_SPORTS.has(t.sport));
             tournaments.sort((a, b) => {
                 if ((a.status === 'live') !== (b.status === 'live')) return a.status === 'live' ? -1 : 1;
                 return (b.updatedAt || 0) - (a.updatedAt || 0);
@@ -3767,10 +3873,12 @@ app.get('/api/public/tournaments', async (req, res) => {
             ownerUid: { $in: validUids },
             leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY },
             publicToken: { $exists: true, $ne: null }
-        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1 }).toArray();
+        }).project({ ownerUid: 1, leagueKey: 1, displayName: 1, publicToken: 1, updatedAt: 1, liveMatches: 1, sport: 1, completed: 1, statusOverride: 1, visibilityOverride: 1, createdBy: 1, info: 1, thumb: 1 }).toArray();
 
         const allTournaments = (await Promise.all(leagues.map(async doc => {
             const creatorEmail = doc.createdBy || await getVerifiedEmailForUid(doc.ownerUid);
+            const sport = normalizeSport(doc.sport, doc.displayName || doc.leagueKey);
+            if (!HOMEPAGE_SPORTS.has(sport)) return null;
             // 🔒 Never let a private tournament (creator default OR explicit
             // owner override) reach an anonymous/non-owner visitor — not in
             // this list, not in its match count, nothing.
@@ -3779,7 +3887,7 @@ app.get('/api/public/tournaments', async (req, res) => {
             const isLive = !!(doc.liveMatches && doc.liveMatches.length > 0);
             return {
                 token: doc.publicToken,
-                name: doc.displayName || doc.leagueKey,
+                name: publicTournamentName(doc),
                 // Manual override (set only via the owner-only admin route
                 // POST /api/admin/tournaments/:ownerUid/:leagueKey/manage)
                 // always wins. Otherwise: 'live' while a match is actually
@@ -3791,19 +3899,23 @@ app.get('/api/public/tournaments', async (req, res) => {
                 matchCount: playedMatches(matches).length,
                 upcomingCount: matches.filter(m => m && m.upcoming === true).length,
                 info: tournamentInfoSummary(doc.info),
-                streams: tournamentStreams(matches, doc.liveMatches, 3, hiddenStreams),
+                // Latest streams on the homepage are the cricket matches' links
+                streams: sport === 'cricket' ? tournamentStreams(matches, doc.liveMatches, 3, hiddenStreams) : [],
                 updatedAt: doc.updatedAt || 0,
                 // Legacy docs saved before `sport` existed on the league doc
-                // don't have it stored — fall back to the same name-based
-                // guess used at save time (see detectSportFromName above).
-                sport: doc.sport || detectSportFromName(doc.displayName || doc.leagueKey)
+                // don't have it stored — normalizeSport falls back to the
+                // same name-based guess used at save time.
+                sport,
+                // the card picture (owner-set, 16:9 on the card) — or null
+                thumb: publicThumb(doc.thumb)
             };
         }))).filter(Boolean);
 
-        // Public Tournaments section on index.html is cricket-only — Football
-        // and Table Tennis tournaments (e.g. "TT::Amitabh") must never appear
-        // here even though they live in the same leaguesCollection.
-        const tournaments = allTournaments.filter(t => t.sport === 'cricket');
+        // Cricket, Football and Table Tennis — the homepage's sport tabs pick
+        // between them (a TT tournament shows under Table Tennis by its own
+        // name, never among the cricket ones). The same visibility rules as
+        // always: a private tournament never got this far.
+        const tournaments = allTournaments;
 
         tournaments.sort((a, b) => {
             if ((a.status === 'live') !== (b.status === 'live')) return a.status === 'live' ? -1 : 1;
@@ -5888,6 +6000,147 @@ adminRouter.post('/tournaments/:ownerUid/:leagueKey/manage', async (req, res) =>
     } catch (err) {
         console.log('Tournament manage error:', err);
         res.status(500).json({ success: false, error: 'Could not update tournament' });
+    }
+});
+
+// ---- Tournaments: the card thumbnail (owner-only, ANY creator's tournament) ----
+// Same addressing and gate as /manage above (adminRouter → requireOwner).
+//   PUT    …/thumbnail?x=&y=&expect=   the picture itself (image/jpeg | png | webp)
+//   POST   …/thumbnail/focus           { x, y, expect } — what the 16:9 frame shows
+//   DELETE …/thumbnail?expect=         back to the designed fallback
+// `expect` is the thumbV the edit started from (0: never had one). The new
+// picture is stored first and the doc pointed at it only after that worked,
+// so a failed upload or a failed save leaves the old picture exactly as it
+// was (and a new object that never got pointed at is removed again).
+const readThumbBody = (() => {
+    const parse = express.raw({ type: Object.keys(TOURNAMENT_THUMB_TYPES), limit: TOURNAMENT_THUMB_MAX_BYTES });
+    return (req, res, next) => parse(req, res, (err) => {
+        if (!err) return next();
+        if (err.type === 'entity.too.large') {
+            const mb = TOURNAMENT_THUMB_MAX_BYTES / 1048576;
+            return res.status(413).json({ success: false, error: `That picture is too big — up to ${mb >= 1 ? `${Math.round(mb * 10) / 10} MB` : `${Math.round(TOURNAMENT_THUMB_MAX_BYTES / 1024)} KB`}` });
+        }
+        return res.status(400).json({ success: false, error: 'Could not read that picture' });
+    });
+})();
+async function thumbTarget(req, res) {
+    if (!leaguesCollection) { res.status(503).json({ success: false, error: 'Database not configured' }); return null; }
+    const ownerUid = String(req.params.ownerUid || '').trim();
+    const leagueKey = leagueKeyFor(req.params.leagueKey);
+    if (!ownerUid || !leagueKey || leagueKey === SINGLE_MATCHES_LEAGUE_KEY) { res.status(400).json({ success: false, error: 'Tournament identifier required' }); return null; }
+    if (mergeLockResponse(res, ownerUid, leagueKey)) return null;
+    // a real tournament at that address — editing the ids reaches nothing else
+    const doc = await leaguesCollection.findOne({ ownerUid, leagueKey }, { projection: { thumb: 1, thumbV: 1, displayName: 1, publicToken: 1 } });
+    if (!doc) { res.status(404).json({ success: false, error: 'Tournament not found' }); return null; }
+    return { ownerUid, leagueKey, doc, v: Number(doc.thumbV) || 0 };
+}
+function expectedThumbV(raw) {
+    if (raw === undefined || raw === null || raw === '') return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+}
+function thumbConflict(res, doc) {
+    return res.status(409).json({ success: false, code: 'THUMB_CHANGED', error: 'This thumbnail was just changed somewhere else — showing the newest one now',
+        thumb: publicThumb(doc && doc.thumb), thumbV: Number(doc && doc.thumbV) || 0 });
+}
+const atThumbV = (t, v) => ({ ownerUid: t.ownerUid, leagueKey: t.leagueKey, thumbV: v ? v : { $in: [null, 0] } });
+async function currentThumbDoc(t) {
+    return leaguesCollection.findOne({ ownerUid: t.ownerUid, leagueKey: t.leagueKey }, { projection: { thumb: 1, thumbV: 1 } });
+}
+
+adminRouter.put('/tournaments/:ownerUid/:leagueKey/thumbnail', readThumbBody, async (req, res) => {
+    try {
+        const t = await thumbTarget(req, res);
+        if (!t) return;
+        const expect = expectedThumbV(req.query.expect);
+        if (expect === null) return res.status(400).json({ success: false, error: 'expect (the thumbnail version this edit started from) is required' });
+        if (expect !== t.v) return thumbConflict(res, t.doc);
+        const buf = Buffer.isBuffer(req.body) ? req.body : null;
+        if (!buf || !buf.length) return res.status(415).json({ success: false, error: 'Send a JPG, PNG or WebP picture' });
+        const info = imageInfo(buf);
+        if (!info) return res.status(415).json({ success: false, error: 'That file is not a JPG, PNG or WebP picture' });
+        if (!(info.w > 0 && info.h > 0) || info.w > 12000 || info.h > 12000) return res.status(422).json({ success: false, error: 'That picture\'s size could not be read' });
+        if (Math.min(info.w, info.h * 16 / 9) < TOURNAMENT_THUMB_MIN_WIDTH) {
+            return res.status(422).json({ success: false, error: `That picture is too small for a sharp card — it needs at least ${TOURNAMENT_THUMB_MIN_WIDTH} × ${Math.round(TOURNAMENT_THUMB_MIN_WIDTH * 9 / 16)}` });
+        }
+        if (!r2Client || !R2_BUCKET_NAME || !R2_PUBLIC_URL) return res.status(503).json({ success: false, error: 'Picture storage (R2) is not set up on this server — nothing was changed' });
+
+        const key = `tournament-thumbs/${crypto.randomBytes(12).toString('hex')}.${TOURNAMENT_THUMB_TYPES[info.type]}`;
+        try {
+            await r2Client.send(new PutObjectCommand({
+                Bucket: R2_BUCKET_NAME, Key: key, Body: buf, ContentLength: buf.length, ContentType: info.type,
+                CacheControl: 'public, max-age=31536000, immutable' // a new picture always gets a new key
+            }));
+        } catch (err) {
+            console.log(`Tournament thumbnail upload error (${key}):`, err.message || err);
+            return res.status(502).json({ success: false, error: 'Could not store the picture — the old one is unchanged, try again' });
+        }
+        const thumb = {
+            key, url: `${R2_PUBLIC_URL}/${key}`, type: info.type, w: info.w, h: info.h, bytes: buf.length,
+            focus: { x: cleanThumbFocus(req.query.x), y: cleanThumbFocus(req.query.y) }, at: Date.now(), by: req.ownerEmail
+        };
+        let saved;
+        try {
+            saved = await leaguesCollection.updateOne(atThumbV(t, expect), { $set: { thumb, thumbV: expect + 1 } });
+        } catch (err) {
+            await deleteThumbObject(key);
+            throw err;
+        }
+        if (!saved || !saved.matchedCount) {
+            await deleteThumbObject(key);
+            const now = await currentThumbDoc(t);
+            return now ? thumbConflict(res, now) : res.status(404).json({ success: false, error: 'Tournament not found' });
+        }
+        const old = t.doc.thumb && t.doc.thumb.key;
+        if (old && old !== key) await deleteThumbObject(old);
+        invalidateTournamentCaches(t.doc.publicToken);
+        await logAuditAction(req.ownerEmail, 'Tournament thumbnail set', t.doc.displayName || t.leagueKey,
+            old ? { url: t.doc.thumb.url } : null, { url: thumb.url, w: thumb.w, h: thumb.h, bytes: thumb.bytes, focus: thumb.focus });
+        res.json({ success: true, thumb: publicThumb(thumb), thumbV: expect + 1 });
+    } catch (err) {
+        console.log('Tournament thumbnail save error:', err);
+        res.status(500).json({ success: false, error: 'Could not save the thumbnail — the old one is unchanged' });
+    }
+});
+
+adminRouter.post('/tournaments/:ownerUid/:leagueKey/thumbnail/focus', async (req, res) => {
+    try {
+        const t = await thumbTarget(req, res);
+        if (!t) return;
+        const body = req.body || {};
+        const expect = expectedThumbV(body.expect);
+        if (expect === null) return res.status(400).json({ success: false, error: 'expect (the thumbnail version this edit started from) is required' });
+        if (expect !== t.v) return thumbConflict(res, t.doc);
+        if (!t.doc.thumb || !t.doc.thumb.key) return res.status(404).json({ success: false, error: 'This tournament has no thumbnail yet' });
+        const focus = { x: cleanThumbFocus(body.x), y: cleanThumbFocus(body.y) };
+        const saved = await leaguesCollection.updateOne(atThumbV(t, expect), { $set: { 'thumb.focus': focus, thumbV: expect + 1 } });
+        if (!saved.matchedCount) return thumbConflict(res, (await currentThumbDoc(t)) || t.doc);
+        invalidateTournamentCaches(t.doc.publicToken);
+        await logAuditAction(req.ownerEmail, 'Tournament thumbnail position', t.doc.displayName || t.leagueKey, t.doc.thumb.focus || null, focus);
+        res.json({ success: true, thumb: publicThumb(Object.assign({}, t.doc.thumb, { focus })), thumbV: expect + 1 });
+    } catch (err) {
+        console.log('Tournament thumbnail focus error:', err);
+        res.status(500).json({ success: false, error: 'Could not move the thumbnail' });
+    }
+});
+
+adminRouter.delete('/tournaments/:ownerUid/:leagueKey/thumbnail', async (req, res) => {
+    try {
+        const t = await thumbTarget(req, res);
+        if (!t) return;
+        const expect = expectedThumbV(req.query.expect);
+        if (expect === null) return res.status(400).json({ success: false, error: 'expect (the thumbnail version this edit started from) is required' });
+        if (expect !== t.v) return thumbConflict(res, t.doc);
+        if (!t.doc.thumb) return res.json({ success: true, thumb: null, thumbV: t.v });
+        const saved = await leaguesCollection.updateOne(atThumbV(t, expect), { $unset: { thumb: '' }, $set: { thumbV: expect + 1 } });
+        if (!saved.matchedCount) return thumbConflict(res, (await currentThumbDoc(t)) || t.doc);
+        await deleteThumbObject(t.doc.thumb.key);
+        invalidateTournamentCaches(t.doc.publicToken);
+        await logAuditAction(req.ownerEmail, 'Tournament thumbnail removed', t.doc.displayName || t.leagueKey, { url: t.doc.thumb.url || null }, null);
+        res.json({ success: true, thumb: null, thumbV: expect + 1 });
+    } catch (err) {
+        console.log('Tournament thumbnail remove error:', err);
+        res.status(500).json({ success: false, error: 'Could not remove the thumbnail' });
     }
 });
 
