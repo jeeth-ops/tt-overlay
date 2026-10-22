@@ -26,7 +26,12 @@
 //   • phones: no match setup in Try it yourself (a Reset in the panel
 //     instead); a living background — floodlight beams, dust, glows — that
 //     moves only by transform/opacity, and stays still under reduced motion
-//   • no sideways scrolling from 320px to 1440px, the flow chain at rest
+//   • the tournament row at 60 fps: scrolled on its own GPU layer, nothing in
+//     it moving but by transform/opacity, a LIVE card pulsing only in view,
+//     the hero's loops resting off screen; arrows land on a card's start, the
+//     position bar, ← → / Home / End; the poster (name, year, monogram); a
+//     refresh redraws only the card that changed and waits while the row moves
+//   • no sideways scrolling from 320px to 1920px, the flow chain at rest
 //     under reduced motion
 // Plus the server half: youTubeVideoId / tournamentStreams, taken out of
 // server.js by name.
@@ -581,17 +586,17 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
       const cs = (sel) => getComputedStyle(document.querySelector(sel));
       const moving = [...document.querySelectorAll('.bg-m *, .ambient-blob')].flatMap((e) => e.getAnimations()).filter((a) => a.playState === 'running');
       const props = [...new Set(moving.flatMap((a) => a.effect.getKeyframes().flatMap((k) => Object.keys(k).filter((p) => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)))))].sort();
-      return { setup: cs('#hiSetup').display, panelReset: cs('#hiResetPanelBtn').display, bgM: cs('.bg-m').display, grain: cs('.grain-overlay').display,
+      return { setup: cs('#hiSetup').display, panelReset: cs('#hiResetPanelBtn').display, bgM: cs('.bg-m').display, grain: !!document.querySelector('.grain-overlay'),
         blobFilter: cs('.ambient-blob.b1').filter, moving: moving.length, props, beams: document.querySelectorAll('.bg-m-beam').length, dust: document.querySelectorAll('.bg-m-p').length };
     });
     const desk = await openHome(browser);
     let v = await look(desk.page);
-    eq('desktop: Match setup as before, no extra Reset; the video background, blurred blobs, no phone graphics', [v.setup, v.panelReset, v.bgM, v.grain, v.blobFilter], ['block', 'none', 'none', 'block', 'blur(90px)']);
+    eq('desktop: Match setup as before, no extra Reset; the video background, glows drawn soft (no blur filter, no full-screen blend), no phone graphics', [v.setup, v.panelReset, v.bgM, v.grain, v.blobFilter], ['block', 'none', 'none', false, 'none']);
     await desk.ctx.close();
     const ph = await openHome(browser, { width: 390, height: 844 });
     v = await look(ph.page);
     eq('390px: no Match setup; Reset sits in the panel', [v.setup, v.panelReset], ['none', 'block']);
-    eq('390px: the living background — two beams, ten specks of dust, glows without a blur filter, no grain', [v.bgM, v.beams, v.dust, v.blobFilter, v.grain], ['block', 2, 10, 'none', 'none']);
+    eq('390px: the living background — two beams, ten specks of dust, glows without a blur filter, no grain', [v.bgM, v.beams, v.dust, v.blobFilter, v.grain], ['block', 2, 10, 'none', false]);
     eq('… all of it moving, by transform and opacity only', [v.moving, v.props], [15, ['opacity', 'transform']]);
     // the panel's Reset brings a finished innings back
     await ph.page.evaluate(() => document.getElementById('hiEditor').scrollIntoView({ block: 'center' }));
@@ -683,7 +688,7 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await page.click('#tcPrev');
     await page.waitForFunction(() => document.getElementById('tournaments-grid').scrollLeft < 2, null, { timeout: 5000 });
     eq('Previous goes back to the start', (await nav()).left < 2, true);
-    eq('the cards snap to their start', await page.$eval('#tournaments-grid', (g) => [getComputedStyle(g).scrollSnapType, getComputedStyle(g.querySelector('.tournament-card')).scrollSnapAlign]), ['x mandatory', 'start']);
+    eq('a mouse or trackpad scrolls the row freely and settles on a card\'s start only when it stops near one', await page.$eval('#tournaments-grid', (g) => [getComputedStyle(g).scrollSnapType, getComputedStyle(g.querySelector('.tournament-card')).scrollSnapAlign]), ['x', 'start']);
     eq('no page errors', errors, []);
     await ctx.close();
 
@@ -750,6 +755,8 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     const manage = async (page, token) => { await page.evaluate((tok) => document.querySelector(`#tournaments-grid a[data-token="${tok}"] [data-manage-btn]`).click(), token); await page.waitForTimeout(150); };
     const { ctx, page, errors, state } = await openHome(browser, { owner: true, list, admin });
     await page.waitForFunction(() => document.querySelectorAll('[data-manage-btn]').length === 2, null, { timeout: 8000 });
+    eq('the owner sees on each card who made it and whether it is public, beside Manage', await page.$$eval('#tournaments-grid .tc-owner', (rows) => rows.map((r) => [r.querySelector('.tc-who').textContent.trim(), r.querySelector('.tc-vis').textContent.trim(), r.querySelector('[data-manage-btn]').textContent.trim()])),
+      [['Wworkallsportslive@gmail.com', 'Public', 'Manage'], ['Wworkallsportslive@gmail.com', 'Public', 'Manage']]);
     await manage(page, 'o1');
     let e = await ed(page);
     eq('Manage → the thumbnail panel: the designed picture in the 16:9 frame, one button', [e.ratio, e.art, e.img, e.pick, e.remove, e.cancel, e.save], [1.778, true, null, 'Choose image', null, null, null]);
@@ -827,6 +834,109 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     await visitor.ctx.close();
   }
 
+  console.log('\n=== the row: what moves in it, and how (60 fps) ===');
+  {
+    const many = TOURNAMENTS.filter((t) => t.sport === 'cricket').concat([TT({ token: 'dyp', name: '20th D Y Patil T20 Cup 2026', status: 'ongoing', matchCount: 4 })],
+      Array.from({ length: 8 }, (_, i) => TT({ token: 'x' + i, name: `Extra Cup ${i + 1}`, status: i % 2 ? 'live' : 'ongoing', matchCount: 3 })));
+    const { ctx, page, errors, state } = await openHome(browser, { list: many });
+    await page.evaluate(() => document.getElementById('tournamentsPanel').scrollIntoView({ block: 'center' }));
+    await page.waitForTimeout(500);
+    const motion = await page.evaluate(() => {
+      const g = document.getElementById('tournaments-grid'), card = g.querySelector('.tournament-card');
+      const anims = g.getAnimations({ subtree: true }).filter((a) => !(a instanceof CSSTransition));
+      return { layer: getComputedStyle(g).willChange, props: [...new Set(anims.flatMap((a) => a.effect.getKeyframes().flatMap((k) => Object.keys(k).filter((p) => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)))))].sort(),
+        card: getComputedStyle(card).transitionProperty, glow: getComputedStyle(card, '::after').transitionProperty, art: getComputedStyle(card.querySelector('.tc-art')).transitionProperty };
+    });
+    eq('the row scrolls on its own GPU layer (at any pixel density — a 1x screen used to repaint every card each frame)', motion.layer, 'scroll-position');
+    eq('everything that moves in it moves by transform/opacity only: the LIVE pulse, a card\'s lift, glow and zoom', [motion.props, motion.card, motion.glow, motion.art], [['opacity', 'transform'], 'transform', 'opacity', 'transform']);
+    // the pulse runs only where it is seen
+    const pulses = () => page.evaluate(() => {
+      const g = document.getElementById('tournaments-grid').getBoundingClientRect();
+      return [...document.querySelectorAll('#tournaments-grid .tournament-status-badge.live')].map((b) => {
+        const c = b.closest('.tournament-card').getBoundingClientRect(), seen = c.right > g.left - 32 && c.left < g.right + 32;
+        return (seen ? 'seen:' : 'unseen:') + getComputedStyle(b, '::after').animationPlayState;
+      });
+    });
+    let p = await pulses();
+    eq('a LIVE card pulses only while it is in view in the row', [p.every((x) => x === 'seen:running' || x === 'unseen:paused'), p.includes('seen:running'), p.includes('unseen:paused')], [true, true, true]);
+    // live ones come first: bring the sixth to the row's start, the first ones out of view
+    await page.evaluate(() => { const g = document.getElementById('tournaments-grid'); g.scrollLeft = g.querySelectorAll('.tournament-card')[5].offsetLeft - 2; });
+    await page.waitForTimeout(400);
+    p = await pulses();
+    eq('… scrolled along, the ones now in view pulse and the rest rest', [p.every((x) => x === 'seen:running' || x === 'unseen:paused'), p[5], p[0]], [true, 'seen:running', 'unseen:paused']);
+    const away = () => page.evaluate(() => ({ panel: document.getElementById('tournamentsPanel').classList.contains('is-away'), hero: document.getElementById('hero-section').classList.contains('is-away'),
+      rings: [...new Set([...document.querySelectorAll('#tournaments-grid .tournament-status-badge.live')].map((b) => getComputedStyle(b, '::after').animationPlayState))],
+      heroText: getComputedStyle(document.querySelector('.hero h1 span')).animationPlayState, shine: getComputedStyle(document.querySelector('.hero .cta-btn'), '::before').animationPlayState }));
+    eq('at the row: the hero\'s moving gradient and shine rest (they repaint the whole page every frame they run)', [(await away()).hero, (await away()).heroText, (await away()).shine], [true, 'paused', 'paused']);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(400);
+    let a = await away();
+    eq('back at the top: the hero moves again, and the row\'s pulses rest', [a.hero, a.heroText, a.shine, a.panel, a.rings], [false, 'running', 'running', true, ['paused']]);
+    await page.evaluate(() => document.getElementById('tournamentsPanel').scrollIntoView({ block: 'center' }));
+    await page.waitForTimeout(400);
+    // the arrows land on a card's start, from anywhere
+    await page.evaluate(() => { document.getElementById('tournaments-grid').scrollLeft = 137; });
+    await page.waitForTimeout(400);
+    const onStart = () => page.evaluate(() => { const g = document.getElementById('tournaments-grid'), cs = [...g.querySelectorAll('.tournament-card')]; return cs.some((c) => Math.abs(c.offsetLeft - cs[0].offsetLeft - g.scrollLeft) < 1.5); });
+    await page.click('#tcNext');
+    await page.waitForTimeout(900);
+    eq('Next from part-way along: a page on, landing on a card\'s start', [await onStart(), await page.evaluate(() => document.getElementById('tournaments-grid').scrollLeft > 600)], [true, true]);
+    await page.click('#tcPrev');
+    await page.waitForTimeout(900);
+    eq('Previous: back a page, on a card\'s start', [await onStart(), await page.evaluate(() => document.getElementById('tournaments-grid').scrollLeft < 600)], [true, true]);
+    // the position bar
+    const bar = () => page.evaluate(() => { const b = document.getElementById('tcProgress'), g = document.getElementById('tournaments-grid'), t = b.getBoundingClientRect(), i = b.querySelector('i').getBoundingClientRect();
+      return { hidden: b.hidden, width: +(i.width / t.width * 100).toFixed(1), seen: +(g.clientWidth / g.scrollWidth * 100).toFixed(1), from: Math.round(i.left - t.left), to: Math.round(t.right - i.right) }; });
+    await page.evaluate(() => { document.getElementById('tournaments-grid').scrollLeft = 0; });
+    await page.waitForTimeout(400);
+    let b = await bar();
+    eq('the position bar: as wide as the part in view, at the start', [b.hidden, Math.abs(b.width - b.seen) < 1, b.from, b.to > 10], [false, true, 0, true]);
+    await page.evaluate(() => { const g = document.getElementById('tournaments-grid'); g.scrollLeft = g.scrollWidth; });
+    await page.waitForTimeout(400);
+    b = await bar();
+    eq('… and at the end, with the row', [b.from > 10, b.to], [true, 0]);
+    // ← → between the cards, Home / End
+    await page.focus('#tournaments-grid .tournament-card');
+    const focused = () => page.evaluate(() => [...document.querySelectorAll('#tournaments-grid .tournament-card')].indexOf(document.activeElement));
+    await page.keyboard.press('ArrowRight');
+    const one = await focused();
+    await page.keyboard.press('End');
+    const last = await focused();
+    await page.keyboard.press('ArrowLeft');
+    const back = await focused();
+    await page.keyboard.press('Home');
+    eq('the arrow keys move between the cards; Home and End go to the first and the last', [one, last, back, await focused()], [1, 15, 14, 0]);
+    // the poster
+    const poster = (tok) => page.$eval(`#tournaments-grid a[data-token="${tok}"] .tc-art`, (x) => [x.querySelector('.tc-art-name').textContent, (x.querySelector('.tc-art-year') || {}).textContent || '', x.querySelector('.tc-art-mono').textContent, x.getAttribute('aria-hidden')]);
+    eq('the poster: the name, its year apart; no numbers, years or formats in the monogram; read once (the heading), not twice',
+      [await poster('t4'), await poster('t7'), await poster('dyp'), await poster('t6')],
+      [['Kanga League', '2026', 'KL', 'true'], ['MCA President Cup', '2026–27', 'MPC', 'true'], ['20th D Y Patil T20 Cup', '2026', 'DYPC', 'true'], ['Weekend Box Cricket Smash', '', 'WBCS', 'true']]);
+    // a refresh draws again only what changed, and never moves the row
+    await page.evaluate(() => { const g = document.getElementById('tournaments-grid'); g.scrollLeft = g.querySelectorAll('.tournament-card')[5].offsetLeft - 2; });
+    await page.waitForTimeout(500);
+    const left = await page.evaluate(() => { const g = document.getElementById('tournaments-grid'); window.__cards = [...g.children]; return g.scrollLeft; });
+    state.list = state.list.map((t) => Object.assign({}, t, t.token === 'x3' ? { matchCount: 9 } : {}, { updatedAt: 77, streams: [] }));
+    await page.evaluate(() => loadTournaments(true));
+    await page.waitForFunction(() => /^9 matches/.test(document.querySelector('#tournaments-grid a[data-token="x3"] .tc-sub').textContent), null, { timeout: 5000 });
+    const after = await page.evaluate(() => { const g = document.getElementById('tournaments-grid'), now = [...g.children];
+      return { kept: now.filter((c, i) => c === window.__cards[i]).length, total: now.length, x3: now.find((c) => c.dataset.token === 'x3') === window.__cards.find((c) => c.dataset.token === 'x3'), left: g.scrollLeft }; });
+    eq('a refresh: only the card that changed is drawn again (new updatedAt / stream links alone change nothing); the row stays put', [after.kept, after.total, after.x3, after.left === left], [15, 16, false, true]);
+    state.list = state.list.map((t) => t.token === 'x3' ? Object.assign({}, t, { matchCount: 10 }) : t);
+    const waited = await page.evaluate(async () => {
+      const g = document.getElementById('tournaments-grid'), sub = () => document.querySelector('#tournaments-grid a[data-token="x3"] .tc-sub').textContent;
+      const moving = setInterval(() => g.dispatchEvent(new Event('scroll')), 100);
+      g.dispatchEvent(new Event('scroll'));
+      await loadTournaments(true);
+      const during = sub();
+      clearInterval(moving);
+      await new Promise((r) => setTimeout(r, 1000));
+      return [during, sub()];
+    });
+    eq('… and while the row is moving, it waits until it stops', [waited[0].startsWith('9 matches'), waited[1].startsWith('10 matches')], [true, true]);
+    eq('no page errors', errors, []);
+    await ctx.close();
+  }
+
   console.log('\n=== no sideways scrolling, every width ===');
   for (const [w, h] of [[320, 640], [360, 740], [390, 844], [430, 932], [768, 1024], [1024, 768], [1440, 900], [1920, 1080]]) {
     const { ctx, page, errors } = await openHome(browser, { width: w, height: h });
@@ -841,8 +951,9 @@ async function search(page, text) { await page.fill('#tournamentSearch', text); 
     eq(`${w}px: the page is no wider than the screen, nothing of the new sections off it`, [r.html <= r.iw, r.out], [true, []]);
     const tc = await page.evaluate(() => { const g = document.getElementById('tournaments-grid'), first = g.querySelector('.tournament-card').getBoundingClientRect();
       return { ratios: [...new Set([...g.querySelectorAll('.tc-media')].map((m) => (m.getBoundingClientRect().width / m.getBoundingClientRect().height).toFixed(3)))],
-        inView: +(g.clientWidth / first.width).toFixed(1), label: [...document.querySelectorAll('.sport-tab span:not(.sport-tab-count)')].every((s) => s.scrollWidth <= s.clientWidth + 1) }; });
-    eq(`${w}px: every card picture 16:9; ${w < 600 ? 'one card and a part of the next' : 'several cards'} in view; the tab names fit`, [tc.ratios, w < 600 ? tc.inView > 1 && tc.inView < 1.5 : tc.inView > 2, tc.label], [['1.778'], true, true]);
+        inView: +(g.clientWidth / first.width).toFixed(1), label: [...document.querySelectorAll('.sport-tab span:not(.sport-tab-count)')].every((s) => s.scrollWidth <= s.clientWidth + 1), snap: getComputedStyle(g).scrollSnapType }; });
+    eq(`${w}px: every card picture 16:9; ${w < 600 ? 'one card and a part of the next' : 'several cards'} in view; the tab names fit; ${w < 800 ? 'a swipe goes card by card' : 'the mouse scrolls freely'}`,
+      [tc.ratios, w < 600 ? tc.inView > 1 && tc.inView < 1.5 : tc.inView > 2, tc.label, tc.snap], [['1.778'], true, true, w < 800 ? 'x mandatory' : 'x']);
     eq(`${w}px: no page errors`, errors, []);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `home-${w}.png`), fullPage: true, clip: { x: 0, y: 0, width: w, height: Math.min(16000, await page.evaluate(() => document.documentElement.scrollHeight)) } });
     await ctx.close();

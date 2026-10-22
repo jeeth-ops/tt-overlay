@@ -55,8 +55,11 @@ NODE_PATH=$(npm root -g) node test/homepage.test.js   # 🏠 the homepage in Chr
                                                   # the players' 3-taps phone (finger on every tap target, loop seam, plays only on screen,
                                                   # step jumps, reduced-motion stills, phone tabs), the broadcast TV, the phone background,
                                                   # Cricket / Football / Table Tennis tabs (URL, Back / Forward, keys) + the 16:9 carousel
-                                                  # (thumbnail / designed fallback / broken picture, arrows, loading, Try again), the owner's
-                                                  # thumbnail editor (pick, drag, keys, save, remove, stale edit), the WhatsApp card, 320–1920px
+                                                  # (thumbnail / poster fallback / broken picture, arrows, loading, Try again), the owner's
+                                                  # thumbnail editor (pick, drag, keys, save, remove, stale edit), the WhatsApp card, 320–1920px,
+                                                  # and the row at 60 fps: its own GPU layer, only transform/opacity moving, LIVE pulses only
+                                                  # in view, hero loops resting off screen, arrows on a card's start, the position bar, ← →,
+                                                  # a refresh redrawing only what changed (and waiting while the row moves)
 node test/tournament-thumbnails-server.test.js    # 🖼️ tournament thumbnails + the sport list on the REAL server (in-memory MongoDB + R2): three
                                                   # sports ('tt' → Table Tennis, no "TT::"), only chhayajeeth@gmail.com may set / move / remove
                                                   # (403 for all else, spoofed claims too), checked by its bytes, too big / small refused,

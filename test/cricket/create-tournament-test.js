@@ -328,7 +328,7 @@ async function websiteSuite(){
     card.sub({ status: 'ongoing', matchCount: 3, info: { startDate: '2026-11-10', endDate: '2026-11-20' } })], ['Cricket · 2026 · Mumbai<script>', '3 matches · 10 Nov – 20 Nov']);
   eq('INDEX: upcoming → when it starts and its fixtures; no info → just the sport / the matches', [card.sub({ status: 'upcoming', matchCount: 0, upcomingCount: 2, info: { startDate: '2026-11-10' } }),
     card.meta({ sport: 'tabletennis', info: null }), card.sub({ matchCount: 1 })], ['Starts 10 Nov · 2 fixtures', 'Table Tennis', '1 match']);
-  eq('INDEX: the card escapes both lines', [/<p class="tc-meta">\$\{tkEscape\(tournamentCardMeta\(t\)\)\}<\/p>/.test(idx), /<p class="tc-sub">\$\{tkEscape\(sub\)\}<\/p>/.test(idx)], [true, true]);
+  eq('INDEX: the card escapes both lines', [/<p class="tc-meta">\$\{TOURNAMENT_SPORT_ICONS\[sportKey\]\}<span>\$\{tkEscape\(tournamentCardMeta\(t\)\)\}<\/span><\/p>/.test(idx), /<p class="tc-sub">\$\{subIcon\}<span>\$\{tkEscape\(sub\)\}<\/span><\/p>/.test(idx)], [true, true]);
   eq('INDEX: card name is escaped now', /<h3>\$\{tkEscape\(t\.name\)\}<\/h3>/.test(idx), true);
   eq('INDEX: quiet auto-refresh every 20s + on tab return', [/setInterval\(\(\) => \{ if \(!document\.hidden\) loadTournaments\(true\); \}, 20000\)/.test(idx), /visibilitychange', \(\) => \{ if \(!document\.hidden\) loadTournaments\(true\)/.test(idx)], [true, true]);
   // loadTournaments(quiet) only re-draws on a change
