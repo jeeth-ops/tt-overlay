@@ -26,6 +26,13 @@ node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Sco
 node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date only) + saved teams, both panels, server registry, tournament page
 node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
+NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the overlay's score bar in Chromium at 1920x1080 / 1920x1280 / 1536x864 /
+                                                  # 1366x768 / 1280x720 / 854x480: nothing off screen, cut or overlapping in any state (measured from the
+                                                  # rendered page), frame by frame through updates, events and innings changes; the chase panel in
+                                                  # every chase state (TARGET for 8 s as the chase begins / after each over / when the bar returns,
+                                                  # else NEED x RUNS FROM y BALLS; RRR beside CRR), never two faces at once; TOSS + team record on 480p
+                                                  # (gsap + webfonts from node_modules when installed: npm install --no-save gsap@3.12.5
+                                                  #  @fontsource/inter @fontsource/manrope @fontsource/anton; else their CDNs. SHOTS=<dir> saves pictures)
 node test/cricket/wicket-bowler-test.js          # Wicket Details + optional / late / corrected bowler (tests 1-45): both panels, scorecard, overlay, database
 node test/cricket/out-types-test.js              # all 16 out types under the Laws, the strike question, bowling 0s/NB/WD: both panels, scorecard, server
 node test/cricket/clipper-launcher-test.js       # ▶ Start / ⏹ Stop Clipper from the Clipper panel (asl-clipper:// launcher, hidden), launcher files + zip
