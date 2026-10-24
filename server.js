@@ -2418,7 +2418,7 @@ async function matchLockForRecord(roomId, matchId) {
 }
 // Which room a scoring socket event writes to — the same rule each handler
 // uses for itself.
-const MATCH_LOCKED_EVENTS = new Set(['updateCricketScore', 'liveCricketScore', 'cricketEvent', 'cricketToss', 'cricketHideToss',
+const MATCH_LOCKED_EVENTS = new Set(['updateCricketScore', 'liveCricketScore', 'cricketEvent', 'cricketToss', 'cricketHideToss', 'cricketGraphic',
     'cricketInningsSummary', 'cricketMatchSummary', 'cricketHideInningsSummary', 'cricketHideMatchSummary',
     'cricketPlayerStat', 'cricketHidePlayerStat', 'cricketBowlerStat', 'cricketHideBowlerStat', 'cricketTeamStat', 'cricketHideTeamStat',
     'cricketPointsTable', 'cricketHidePointsTable', 'cricketPlayerHistory', 'cricketHidePlayerHistory', 'cricketTeamHistory', 'cricketHideTeamHistory',
@@ -10778,6 +10778,183 @@ let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
 
 // ================================================================
+// 🎬 BROADCAST GRAPHICS — PLAYING XI · TOSS · MATCH INTRO
+// One full-screen graphic per match room at a time, held HERE rather than
+// in either panel, so Cricket Panel, Cricket Panel 3 and the overlay all see
+// the same thing. A panel sends a command (cricketGraphic); the result is
+// kept as roomStates[room].cricketGraphic and sent to the whole room
+// (cricketGraphicState) — and again to every socket that connects, so an
+// overlay reloaded mid-graphic picks it up where it is, not from the start,
+// and a panel opened later shows the right button lit.
+// Times are this server's clock (ms); every message carries serverNow so a
+// client can place them on its own clock. Every start gets a new seq / gid:
+// a stop, skip or duration change names the gid it is meant for, and one
+// aimed at an earlier graphic is refused — never applied to a newer one.
+// The timer that ends a graphic checks it still belongs to the graphic on
+// air. Like the other overlay cards this is a moment of the broadcast, not
+// match data: nothing here is written to Firestore or touches cricketState.
+// ================================================================
+const BCG_TIMING = Object.freeze({
+    xiEnterMs: 1500,    // a team's logo, name and lineup settle in…
+    xiHoldMs: 10000,    // …then stay fully readable this long, per team
+    xiSwapMs: 900,      // team one hands the screen over to team two
+    tossEnterMs: 2200,  // the announcement builds; a finite duration counts from here
+    introEnterMs: 6400  // the match intro's sequence — it then holds until stopped
+});
+const BCG_MODES = ['playingXI', 'toss', 'matchIntro'];
+const BCG_TOSS_MAX_SEC = 3600;
+let bcgSeq = Date.now();   // only ever goes up — across restarts too
+const bcgTimers = {};      // room -> the timer that ends the graphic on air
+function bcgStr(v, max) { return String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max || 120); }
+function bcgColor(v) { const s = String(v || '').trim(); return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s) ? s : ''; }
+// a picture the overlay may put in url(): an image data URL, http(s) or a path on this site — nothing that could end the url()
+function bcgLogo(v) {
+    const s = String(v || '').trim();
+    if (!s || s.length > 400000) return '';
+    return /^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(s) || /^https?:\/\/[^\s"'()<>\\]+$/i.test(s) || /^\/[^\s"'()<>\\]+$/.test(s) ? s : '';
+}
+function bcgTeam(t) {
+    t = t && typeof t === 'object' ? t : {};
+    return { name: bcgStr(t.name, 80), short: bcgStr(t.short, 8), color: bcgColor(t.color), logoUrl: bcgLogo(t.logoUrl) };
+}
+// a lineup as saved: its order kept, each player once, nothing added
+function bcgPlayers(list) {
+    const seen = new Set(), out = [];
+    (Array.isArray(list) ? list : []).forEach(p => {
+        if (!p || typeof p !== 'object' || out.length >= 30) return;
+        const name = bcgStr(p.name, 60);
+        if (!name) return;
+        const id = p.id == null ? null : (bcgStr(p.id, 64) || null);
+        const key = id ? 'i:' + id : 'n:' + name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ id, name, captain: !!p.captain, keeper: !!p.keeper, impact: !!p.impact, photoUrl: bcgLogo(p.photoUrl) });
+    });
+    return out;
+}
+function bcgInfo(m) {
+    m = m && typeof m === 'object' ? m : {};
+    return {
+        tournament: bcgStr(m.tournament, 90), tournamentLogo: bcgLogo(m.tournamentLogo), tournamentColor: bcgColor(m.tournamentColor), matchTitle: bcgStr(m.matchTitle, 90),
+        stage: bcgStr(m.stage, 60), format: bcgStr(m.format, 40), venue: bcgStr(m.venue, 90),
+        date: /^\d{4}-\d{2}-\d{2}$/.test(String(m.date || '')) ? String(m.date) : ''
+    };
+}
+// What a panel sends for a graphic, cut down to what the overlay draws —
+// or { error } when the match has nothing true to show yet.
+function bcgCleanData(mode, d) {
+    d = d && typeof d === 'object' ? d : {};
+    const info = bcgInfo(d.info);
+    if (mode === 'playingXI') {
+        const teams = (Array.isArray(d.teams) ? d.teams : []).slice(0, 2).map(t => ({ ...bcgTeam(t), players: bcgPlayers(t && t.players) }));
+        if (teams.length !== 2 || teams.some(t => !t.name)) return { error: 'Both teams need a name' };
+        const empty = teams.find(t => !t.players.length);
+        if (empty) return { error: `${empty.name} has no Playing XI` };
+        return { teams, info };
+    }
+    const teamA = bcgTeam(d.teamA), teamB = d.teamB ? bcgTeam(d.teamB) : null;
+    if (mode === 'toss') {
+        const winner = d.winner === 'B' && teamB ? 'B' : d.winner === 'A' ? 'A' : '';
+        if (!winner || !(winner === 'A' ? teamA : teamB).name) return { error: 'No toss result recorded' };
+        if (d.decision !== 'BAT' && d.decision !== 'BOWL') return { error: 'No toss decision recorded' };
+        return { teamA, teamB: teamB && teamB.name ? teamB : null, winner, decision: d.decision, info };
+    }
+    if (mode === 'matchIntro') {
+        if (!teamA.name || !teamB || !teamB.name) return { error: 'Both teams need a name' };
+        return { teamA, teamB, info };
+    }
+    return { error: 'Unknown graphic' };
+}
+// seconds a toss stays up: 1…3600, or null = until it is hidden; undefined = not a valid answer
+function bcgDuration(v) {
+    if (v === null || v === 'hold') return null;
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) && n >= 1 && n <= BCG_TOSS_MAX_SEC ? n : undefined;
+}
+// a finite toss counts down only once its entrance is over — from "now" when the time is changed while it is up
+function bcgTossTimes(now, readyAt, durationSec) {
+    return { durationSec, readyAt, expiresAt: durationSec == null ? null : Math.max(now, readyAt) + durationSec * 1000 };
+}
+function bcgIdle() { return { seq: bcgSeq, gid: null, mode: 'none', reason: 'idle' }; }
+function bcgNone(prev, reason) {
+    return { seq: ++bcgSeq, gid: null, mode: 'none', reason, endedGid: (prev && prev.gid) || null, endedMode: (prev && prev.mode !== 'none' && prev.mode) || null };
+}
+// when the server itself takes the graphic off air (null: it stays until stopped)
+function bcgEndsAt(g) {
+    if (!g || g.mode === 'none') return null;
+    if (g.mode === 'playingXI') return g.xi.endAt;
+    if (g.mode === 'toss') return g.toss.expiresAt;
+    return null;
+}
+// One command against the graphic on air (pure: `cur` is never changed).
+// → { ok, next (the new graphic, or null when nothing changes), error, stale }
+function bcgApplyCommand(cur, cmd, now) {
+    cmd = cmd && typeof cmd === 'object' ? cmd : {};
+    const T = BCG_TIMING;
+    const on = cur && cur.mode !== 'none' ? cur : null;
+    const action = cmd.action;
+    // aimed at the graphic on air? (a gid, when given, must be the one on air; a mode likewise)
+    const aimed = () => on && (!cmd.gid || cmd.gid === on.gid) && (!cmd.mode || cmd.mode === on.mode);
+    if (action === 'start') {
+        if (!BCG_MODES.includes(cmd.mode)) return { ok: false, next: null, error: 'Unknown graphic' };
+        // the same press arriving twice (a retry) starts nothing new
+        if (on && cmd.reqId && on.reqId === String(cmd.reqId).slice(0, 64)) return { ok: true, next: null };
+        const data = bcgCleanData(cmd.mode, cmd.data);
+        if (data.error) return { ok: false, next: null, error: data.error };
+        let durationSec = null;
+        if (cmd.mode === 'toss') {
+            durationSec = bcgDuration(cmd.durationSec === undefined ? 10 : cmd.durationSec);
+            if (durationSec === undefined) return { ok: false, next: null, error: `Toss time must be 1–${BCG_TOSS_MAX_SEC} seconds, or Hold` };
+        }
+        const seq = ++bcgSeq;
+        const g = { seq, gid: 'g' + seq.toString(36), rev: 1, mode: cmd.mode, startedAt: now,
+            reqId: bcgStr(cmd.reqId, 64) || null, from: bcgStr(cmd.from, 24) || null, matchKey: bcgStr(cmd.matchKey, 100) || null, data };
+        if (cmd.mode === 'playingXI') {
+            const swapAt = now + T.xiEnterMs + T.xiHoldMs;
+            g.xi = { swapAt, endAt: swapAt + T.xiSwapMs + T.xiEnterMs + T.xiHoldMs };
+        } else if (cmd.mode === 'toss') {
+            g.toss = bcgTossTimes(now, now + T.tossEnterMs, durationSec);
+        } else {
+            g.intro = { readyAt: now + T.introEnterMs };
+        }
+        return { ok: true, next: g };
+    }
+    if (action === 'stop') {
+        if (!on) return { ok: true, next: null };               // already off air
+        if (!aimed()) return { ok: false, next: null, stale: true, error: 'Another graphic is on air now' };
+        return { ok: true, next: bcgNone(on, 'stopped') };
+    }
+    if (action === 'skip') {
+        if (!aimed() || on.mode !== 'playingXI') return { ok: false, next: null, stale: true, error: 'Playing XI is not on air' };
+        if (now >= on.xi.swapAt) return { ok: true, next: null }; // the second team is already up
+        return { ok: true, next: { ...on, rev: on.rev + 1, xi: { swapAt: now, endAt: now + T.xiSwapMs + T.xiEnterMs + T.xiHoldMs } } };
+    }
+    if (action === 'duration') {
+        if (!aimed() || on.mode !== 'toss') return { ok: false, next: null, stale: true, error: 'The toss is not on air' };
+        const durationSec = bcgDuration(cmd.durationSec);
+        if (durationSec === undefined) return { ok: false, next: null, error: `Toss time must be 1–${BCG_TOSS_MAX_SEC} seconds, or Hold` };
+        return { ok: true, next: { ...on, rev: on.rev + 1, toss: bcgTossTimes(now, on.toss.readyAt, durationSec) } };
+    }
+    return { ok: false, next: null, error: 'Unknown command' };
+}
+function bcgPublic(g) { return { ...g, serverNow: Date.now(), timing: BCG_TIMING }; }
+// Puts a graphic (or none) on air for the room, arms its end, tells the room.
+function bcgSet(room, state, g) {
+    state.cricketGraphic = g;
+    clearTimeout(bcgTimers[room]);
+    delete bcgTimers[room];
+    const end = bcgEndsAt(g);
+    if (end != null) {
+        bcgTimers[room] = setTimeout(() => {
+            delete bcgTimers[room];
+            if (state.cricketGraphic !== g) return;            // stopped, replaced or changed since
+            bcgSet(room, state, bcgNone(g, g.mode === 'toss' ? 'expired' : 'completed'));
+        }, Math.max(0, end - Date.now()));
+    }
+    io.to(room).emit('cricketGraphicState', bcgPublic(g));
+}
+
+// ================================================================
 // 🩹 FIX: MATCH SCORECARD ↔ TOURNAMENT SYNC
 //
 // ROOT CAUSE: matchRecordsCollection (the ONLY thing tournament pages read
@@ -12172,6 +12349,8 @@ io.on('connection', async (socket) => {
     if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
     if (roomState.cricketState) socket.emit('liveCricketScore', roomState.cricketState);
     if (roomState.footballMatchIntroState) socket.emit('liveFootballMatchIntro', { config: roomState.footballMatchIntroState, triggerReplay: false });
+    // 🎬 the broadcast graphic on air in this room (or none) — see BROADCAST GRAPHICS
+    socket.emit('cricketGraphicState', bcgPublic(roomState.cricketGraphic || bcgIdle()));
     if (connectSyncResult && currentRoom.startsWith('room-')) {
         const uid = currentRoom.replace('room-', '');
         const patch = connectSyncResult === 'matchIntro' ? { matchIntroState: roomState.matchIntroState } : { ttState: roomState.ttState };
@@ -12387,24 +12566,39 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketHideMatchSummary');
     });
 
-    // 🏏🪙 Toss announcement card — same pure-broadcast treatment as the
-    // summary cards above (not persisted, one-off overlay graphic). This
-    // pair was missing entirely, which is why the panel's "Show Toss on
-    // Overlay" button emitted cricketToss/cricketHideToss but the overlay
-    // never received them (nothing was listening server-side to relay it
-    // to the room).
-    socket.on('cricketToss', (data) => {
-        let room = socket.activeRoom;
-        const targetId = data.room ? data.room.replace('room-', '') : (data.id || data.uid || matchIdForClient);
-        if (targetId && targetId !== 'default') room = `room-${targetId}`;
-        io.to(room).emit('cricketToss', data.data || data);
+    // 🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro, from either
+    // panel: { action: start|stop|skip|duration, mode, gid, data,
+    // durationSec, reqId }. The answer (ack) carries the graphic now on air.
+    const runGraphicCommand = async (data, ack) => {
+        const reply = typeof ack === 'function' ? ack : () => {};
+        try {
+            data = data && typeof data === 'object' ? data : {};
+            let room = socket.activeRoom;
+            const targetId = data.room ? String(data.room).replace('room-', '') : (data.id || data.uid || matchIdForClient);
+            if (targetId && targetId !== 'default') room = `room-${targetId}`;
+            const state = await getRoomState(room);
+            const r = bcgApplyCommand(state.cricketGraphic || null, data, Date.now());
+            if (r.next) bcgSet(room, state, r.next);
+            reply({ ok: r.ok, error: r.error || null, stale: !!r.stale, state: bcgPublic(state.cricketGraphic || bcgIdle()) });
+        } catch (e) {
+            console.log('Broadcast graphic error:', e && e.message);
+            reply({ ok: false, error: 'Could not update the graphic' });
+        }
+    };
+    socket.on('cricketGraphic', runGraphicCommand);
+
+    // 🏏🪙 The toss's original pair of events, kept for any older panel: the
+    // toss now goes through the same broadcast-graphics state as above (the
+    // full-screen toss, its usual 8 seconds), so it can never stand on the
+    // overlay beside — or under — another graphic.
+    socket.on('cricketToss', (data, ack) => {
+        const d = (data && (data.data || data)) || {};
+        runGraphicCommand({ room: data && data.room, id: data && data.id, uid: data && data.uid, action: 'start', mode: 'toss', durationSec: 8,
+            data: { teamA: d.team, winner: 'A', decision: d.decision === 'BOWL' ? 'BOWL' : 'BAT' } }, ack);
     });
 
-    socket.on('cricketHideToss', (data) => {
-        let room = socket.activeRoom;
-        const targetId = data && data.room ? data.room.replace('room-', '') : (data && (data.id || data.uid)) || matchIdForClient;
-        if (targetId && targetId !== 'default') room = `room-${targetId}`;
-        io.to(room).emit('cricketHideToss');
+    socket.on('cricketHideToss', (data, ack) => {
+        runGraphicCommand({ room: data && data.room, id: data && data.id, uid: data && data.uid, action: 'stop', mode: 'toss' }, ack);
     });
 
     // 🏏🎚️ Left-slide player/bowler stat cards (batting-team / bowling-team
