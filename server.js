@@ -10778,7 +10778,7 @@ let roomStates = {};
 const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
 
 // ================================================================
-// 🎬 BROADCAST GRAPHICS — PLAYING XI · TOSS · MATCH INTRO
+// 🎬 BROADCAST GRAPHICS — PLAYING XI · TOSS · MATCH INTRO · MANUAL SCORECARDS
 // One full-screen graphic per match room at a time, held HERE rather than
 // in either panel, so Cricket Panel, Cricket Panel 3 and the overlay all see
 // the same thing. A panel sends a command (cricketGraphic); the result is
@@ -10792,21 +10792,32 @@ const firestoreWriteTimers = {}; // debounce map: targetId -> timeout handle
 // aimed at an earlier graphic is refused — never applied to a newer one.
 // The timer that ends a graphic checks it still belongs to the graphic on
 // air. Like the other overlay cards this is a moment of the broadcast, not
-// match data: nothing here is written to Firestore or touches cricketState.
+// match data: nothing here is written to Firestore or touches cricketState —
+// choosing the innings a scorecard shows never moves the scoring innings.
+// While any of them is up the overlay keeps the automatic between-overs
+// cards back (they wait for the screen, see overFlow.start); they carry on
+// at the next over once it is hidden.
 // ================================================================
 const BCG_TIMING = Object.freeze({
     xiEnterMs: 1500,    // a team's logo, name and lineup settle in…
-    xiHoldMs: 10000,    // …then stay fully readable this long, per team
+    xiHoldMs: 10000,    // …then stay fully readable this long, per team (AUTO)
     xiSwapMs: 900,      // team one hands the screen over to team two
     tossEnterMs: 2200,  // the announcement builds; a finite duration counts from here
-    introEnterMs: 6400  // the match intro's sequence — it then holds until stopped
+    introEnterMs: 7200, // the match intro's opening sequence
+    cardEnterMs: 1400   // a manual batting / bowling scorecard settles in
 });
-const BCG_MODES = ['playingXI', 'toss', 'matchIntro'];
+const BCG_MODES = ['playingXI', 'toss', 'matchIntro', 'scorecard'];
+// the graphics with a time on screen (null = Hold until hidden), and the default when none is sent
+const BCG_TIMED = { toss: { key: 'toss', enter: 'tossEnterMs', def: 10 }, matchIntro: { key: 'intro', enter: 'introEnterMs', def: null }, scorecard: { key: 'card', enter: 'cardEnterMs', def: null } };
 const BCG_TOSS_MAX_SEC = 3600;
+// the operator's choices, shared by every panel of the match: which innings
+// a manual scorecard shows (null = the live one) and how long each graphic stays
+const BCG_PREF_DEFAULTS = Object.freeze({ innings: null, xiMode: 'auto', tossDur: 10, introDur: null, cardDur: null });
 let bcgSeq = Date.now();   // only ever goes up — across restarts too
 const bcgTimers = {};      // room -> the timer that ends the graphic on air
 function bcgStr(v, max) { return String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max || 120); }
 function bcgColor(v) { const s = String(v || '').trim(); return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s) ? s : ''; }
+function bcgNum(v) { return v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v); }
 // a picture the overlay may put in url(): an image data URL, http(s) or a path on this site — nothing that could end the url()
 function bcgLogo(v) {
     const s = String(v || '').trim();
@@ -10817,20 +10828,24 @@ function bcgTeam(t) {
     t = t && typeof t === 'object' ? t : {};
     return { name: bcgStr(t.name, 80), short: bcgStr(t.short, 8), color: bcgColor(t.color), logoUrl: bcgLogo(t.logoUrl) };
 }
-// a lineup as saved: its order kept, each player once, nothing added
-function bcgPlayers(list) {
+// rows of players as sent, each player once (by id, else by name), their order kept, nothing added
+function bcgUnique(list, max, map) {
     const seen = new Set(), out = [];
     (Array.isArray(list) ? list : []).forEach(p => {
-        if (!p || typeof p !== 'object' || out.length >= 30) return;
+        if (!p || typeof p !== 'object' || out.length >= max) return;
         const name = bcgStr(p.name, 60);
         if (!name) return;
         const id = p.id == null ? null : (bcgStr(p.id, 64) || null);
         const key = id ? 'i:' + id : 'n:' + name.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
-        out.push({ id, name, captain: !!p.captain, keeper: !!p.keeper, impact: !!p.impact, photoUrl: bcgLogo(p.photoUrl) });
+        out.push({ id, name, ...map(p) });
     });
     return out;
+}
+// a lineup as saved: its order kept, each player once, nothing added
+function bcgPlayers(list) {
+    return bcgUnique(list, 30, p => ({ captain: !!p.captain, keeper: !!p.keeper, impact: !!p.impact, photoUrl: bcgLogo(p.photoUrl) }));
 }
 function bcgInfo(m) {
     m = m && typeof m === 'object' ? m : {};
@@ -10839,6 +10854,39 @@ function bcgInfo(m) {
         stage: bcgStr(m.stage, 60), format: bcgStr(m.format, 40), venue: bcgStr(m.venue, 90),
         date: /^\d{4}-\d{2}-\d{2}$/.test(String(m.date || '')) ? String(m.date) : ''
     };
+}
+const BCG_BAT_STATUS = ['out', 'notout', 'striker', 'nonStriker', 'retired'];
+// A manual batting / bowling scorecard: one innings of this match, its real
+// figures, and the rest of each side's squad by name only (yet to bat / did
+// not bat / did not bowl / not in the XI) — never a made-up figure.
+function bcgCleanScorecard(d, info) {
+    const kind = d.kind === 'bat' || d.kind === 'bowl' ? d.kind : '';
+    if (!kind) return { error: 'Unknown scorecard' };
+    const inningsNo = Math.round(Number(d.inningsNo));
+    if (!(inningsNo >= 1 && inningsNo <= 4)) return { error: 'Pick an innings first' };
+    const batting = bcgTeam(d.batting), bowling = bcgTeam(d.bowling);
+    if (!batting.name || !bowling.name) return { error: 'Both teams need a name' };
+    const batters = bcgUnique(d.batters, 30, r => ({
+        runs: bcgNum(r.runs), balls: bcgNum(r.balls), fours: bcgNum(r.fours), sixes: bcgNum(r.sixes), sr: bcgStr(r.sr, 8),
+        howOut: bcgStr(r.howOut, 90), status: BCG_BAT_STATUS.includes(r.status) ? r.status : 'notout'
+    }));
+    const bowlers = bcgUnique(d.bowlers, 30, r => ({
+        overs: bcgStr(r.overs, 8), maidens: bcgNum(r.maidens), runs: bcgNum(r.runs), wickets: bcgNum(r.wickets), econ: bcgStr(r.econ, 8),
+        dots: bcgNum(r.dots), wides: bcgNum(r.wides), noBalls: bcgNum(r.noBalls), current: !!r.current
+    }));
+    if (kind === 'bat' && !batters.length) return { error: 'No batting in this innings yet' };
+    if (kind === 'bowl' && !bowlers.length) return { error: 'No bowling figures in this innings yet' };
+    const groups = (Array.isArray(d.groups) ? d.groups : []).slice(0, 4).map(g => ({
+        label: bcgStr(g && g.label, 30), names: bcgUnique((g && Array.isArray(g.names) ? g.names : []).map(n => (n && typeof n === 'object' ? n : { name: n })), 40, () => ({})).map(p => p.name)
+    })).filter(g => g.label && g.names.length);
+    const t = d.total && typeof d.total === 'object' ? d.total : {};
+    const ex = t.extras && typeof t.extras === 'object' ? t.extras : {};
+    const total = {
+        runs: bcgNum(t.runs), wickets: bcgNum(t.wickets), overs: bcgStr(t.overs, 10), declared: !!t.declared, target: bcgNum(t.target),
+        extrasTotal: bcgNum(t.extrasTotal), extras: { wd: bcgNum(ex.wd), nb: bcgNum(ex.nb), b: bcgNum(ex.b), lb: bcgNum(ex.lb), pen: bcgNum(ex.pen) }
+    };
+    const fow = (Array.isArray(d.fow) ? d.fow : []).slice(0, 12).filter(f => f && typeof f === 'object').map(f => ({ wkt: bcgNum(f.wkt), runs: bcgNum(f.runs), over: bcgStr(f.over, 8) }));
+    return { kind, inningsNo, label: bcgStr(d.label, 30), live: !!d.live, batting, bowling, batters, bowlers, groups, total, fow, note: bcgStr(d.note, 140), info };
 }
 // What a panel sends for a graphic, cut down to what the overlay draws —
 // or { error } when the match has nothing true to show yet.
@@ -10852,6 +10900,7 @@ function bcgCleanData(mode, d) {
         if (empty) return { error: `${empty.name} has no Playing XI` };
         return { teams, info };
     }
+    if (mode === 'scorecard') return bcgCleanScorecard(d, info);
     const teamA = bcgTeam(d.teamA), teamB = d.teamB ? bcgTeam(d.teamB) : null;
     if (mode === 'toss') {
         const winner = d.winner === 'B' && teamB ? 'B' : d.winner === 'A' ? 'A' : '';
@@ -10865,15 +10914,31 @@ function bcgCleanData(mode, d) {
     }
     return { error: 'Unknown graphic' };
 }
-// seconds a toss stays up: 1…3600, or null = until it is hidden; undefined = not a valid answer
+// seconds on screen: 1…3600, or null = until it is hidden; undefined = not a valid answer
 function bcgDuration(v) {
     if (v === null || v === 'hold') return null;
     const n = Math.round(Number(v));
     return Number.isFinite(n) && n >= 1 && n <= BCG_TOSS_MAX_SEC ? n : undefined;
 }
-// a finite toss counts down only once its entrance is over — from "now" when the time is changed while it is up
-function bcgTossTimes(now, readyAt, durationSec) {
+const BCG_BAD_TIME = `Time on screen must be 1–${BCG_TOSS_MAX_SEC} seconds, or Hold`;
+// a finite time counts only once the entrance is over — from "now" when it is changed while up
+function bcgTimes(now, readyAt, durationSec) {
     return { durationSec, readyAt, expiresAt: durationSec == null ? null : Math.max(now, readyAt) + durationSec * 1000 };
+}
+// The Playing XI's two teams. AUTO: each 10 s once it has come in, then off
+// air. HOLD: no time at all — team two only on NEXT TEAM, off air only when
+// hidden (swapAt / endAt null). Switching on air: to HOLD stops every clock
+// where it is; to AUTO gives the team on screen its full 10 s from now
+// (from the end of its entrance, if it is still coming in), then carries on.
+function bcgXiTimes(g, hold, now) {
+    const T = BCG_TIMING, x = g.xi || {};
+    const team2 = x.swapAt != null && now >= x.swapAt;
+    if (hold) return { hold: true, swapAt: team2 ? x.swapAt : null, endAt: null };
+    if (!team2) {
+        const swapAt = Math.max(now, g.startedAt + T.xiEnterMs) + T.xiHoldMs;
+        return { hold: false, swapAt, endAt: swapAt + T.xiSwapMs + T.xiEnterMs + T.xiHoldMs };
+    }
+    return { hold: false, swapAt: x.swapAt, endAt: Math.max(now, x.swapAt + T.xiSwapMs + T.xiEnterMs) + T.xiHoldMs };
 }
 function bcgIdle() { return { seq: bcgSeq, gid: null, mode: 'none', reason: 'idle' }; }
 function bcgNone(prev, reason) {
@@ -10883,8 +10948,8 @@ function bcgNone(prev, reason) {
 function bcgEndsAt(g) {
     if (!g || g.mode === 'none') return null;
     if (g.mode === 'playingXI') return g.xi.endAt;
-    if (g.mode === 'toss') return g.toss.expiresAt;
-    return null;
+    const t = BCG_TIMED[g.mode];
+    return t && g[t.key] ? g[t.key].expiresAt : null;
 }
 // One command against the graphic on air (pure: `cur` is never changed).
 // → { ok, next (the new graphic, or null when nothing changes), error, stale }
@@ -10901,22 +10966,17 @@ function bcgApplyCommand(cur, cmd, now) {
         if (on && cmd.reqId && on.reqId === String(cmd.reqId).slice(0, 64)) return { ok: true, next: null };
         const data = bcgCleanData(cmd.mode, cmd.data);
         if (data.error) return { ok: false, next: null, error: data.error };
+        const timed = BCG_TIMED[cmd.mode];
         let durationSec = null;
-        if (cmd.mode === 'toss') {
-            durationSec = bcgDuration(cmd.durationSec === undefined ? 10 : cmd.durationSec);
-            if (durationSec === undefined) return { ok: false, next: null, error: `Toss time must be 1–${BCG_TOSS_MAX_SEC} seconds, or Hold` };
+        if (timed) {
+            durationSec = bcgDuration(cmd.durationSec === undefined ? timed.def : cmd.durationSec);
+            if (durationSec === undefined) return { ok: false, next: null, error: BCG_BAD_TIME };
         }
         const seq = ++bcgSeq;
         const g = { seq, gid: 'g' + seq.toString(36), rev: 1, mode: cmd.mode, startedAt: now,
             reqId: bcgStr(cmd.reqId, 64) || null, from: bcgStr(cmd.from, 24) || null, matchKey: bcgStr(cmd.matchKey, 100) || null, data };
-        if (cmd.mode === 'playingXI') {
-            const swapAt = now + T.xiEnterMs + T.xiHoldMs;
-            g.xi = { swapAt, endAt: swapAt + T.xiSwapMs + T.xiEnterMs + T.xiHoldMs };
-        } else if (cmd.mode === 'toss') {
-            g.toss = bcgTossTimes(now, now + T.tossEnterMs, durationSec);
-        } else {
-            g.intro = { readyAt: now + T.introEnterMs };
-        }
+        if (cmd.mode === 'playingXI') g.xi = bcgXiTimes(g, cmd.xiMode === 'hold', now);
+        else g[timed.key] = bcgTimes(now, now + T[timed.enter], durationSec);
         return { ok: true, next: g };
     }
     if (action === 'stop') {
@@ -10924,19 +10984,57 @@ function bcgApplyCommand(cur, cmd, now) {
         if (!aimed()) return { ok: false, next: null, stale: true, error: 'Another graphic is on air now' };
         return { ok: true, next: bcgNone(on, 'stopped') };
     }
-    if (action === 'skip') {
+    if (action === 'skip') {                                     // NEXT TEAM
         if (!aimed() || on.mode !== 'playingXI') return { ok: false, next: null, stale: true, error: 'Playing XI is not on air' };
-        if (now >= on.xi.swapAt) return { ok: true, next: null }; // the second team is already up
-        return { ok: true, next: { ...on, rev: on.rev + 1, xi: { swapAt: now, endAt: now + T.xiSwapMs + T.xiEnterMs + T.xiHoldMs } } };
+        if (on.xi.swapAt != null && now >= on.xi.swapAt) return { ok: true, next: null }; // the second team is already up
+        return { ok: true, next: { ...on, rev: on.rev + 1, xi: on.xi.hold ? { hold: true, swapAt: now, endAt: null }
+            : { hold: false, swapAt: now, endAt: now + T.xiSwapMs + T.xiEnterMs + T.xiHoldMs } } };
+    }
+    if (action === 'xiMode') {
+        if (!aimed() || on.mode !== 'playingXI') return { ok: false, next: null, stale: true, error: 'Playing XI is not on air' };
+        const hold = cmd.xiMode === 'hold';
+        if (hold === !!on.xi.hold) return { ok: true, next: null };
+        return { ok: true, next: { ...on, rev: on.rev + 1, xi: bcgXiTimes(on, hold, now) } };
     }
     if (action === 'duration') {
-        if (!aimed() || on.mode !== 'toss') return { ok: false, next: null, stale: true, error: 'The toss is not on air' };
+        const timed = on && BCG_TIMED[on.mode];
+        if (!aimed() || !timed) return { ok: false, next: null, stale: true, error: 'That graphic is not on air' };
         const durationSec = bcgDuration(cmd.durationSec);
-        if (durationSec === undefined) return { ok: false, next: null, error: `Toss time must be 1–${BCG_TOSS_MAX_SEC} seconds, or Hold` };
-        return { ok: true, next: { ...on, rev: on.rev + 1, toss: bcgTossTimes(now, on.toss.readyAt, durationSec) } };
+        if (durationSec === undefined) return { ok: false, next: null, error: BCG_BAD_TIME };
+        return { ok: true, next: { ...on, rev: on.rev + 1, [timed.key]: bcgTimes(now, on[timed.key].readyAt, durationSec) } };
     }
     return { ok: false, next: null, error: 'Unknown command' };
 }
+// The shared choices: a change is checked, kept for the room, and — when the
+// graphic it is about is on air — applied to it at once (a new time from now,
+// AUTO / HOLD for the Playing XI). → { prefs, next, error }
+function bcgApplyPrefs(prefs, cur, p, now) {
+    p = p && typeof p === 'object' ? p : {};
+    const out = { ...BCG_PREF_DEFAULTS, ...(prefs || {}) };
+    if ('innings' in p) {
+        const n = p.innings === null ? null : Math.round(Number(p.innings));
+        if (n !== null && !(n >= 1 && n <= 4)) return { error: 'Unknown innings' };
+        out.innings = n;
+    }
+    if ('xiMode' in p) {
+        if (p.xiMode !== 'auto' && p.xiMode !== 'hold') return { error: 'Playing XI is AUTO or HOLD' };
+        out.xiMode = p.xiMode;
+    }
+    for (const k of ['tossDur', 'introDur', 'cardDur']) {
+        if (!(k in p)) continue;
+        const d = bcgDuration(p[k]);
+        if (d === undefined) return { error: BCG_BAD_TIME };
+        out[k] = d;
+    }
+    out.seq = ++bcgSeq;
+    const on = cur && cur.mode !== 'none' ? cur : null;
+    let next = null;
+    if (on && on.mode === 'playingXI' && 'xiMode' in p) next = bcgApplyCommand(on, { action: 'xiMode', xiMode: out.xiMode }, now).next;
+    const durKey = on && { toss: 'tossDur', matchIntro: 'introDur', scorecard: 'cardDur' }[on.mode];
+    if (durKey && durKey in p) next = bcgApplyCommand(on, { action: 'duration', durationSec: out[durKey] }, now).next;
+    return { prefs: out, next };
+}
+function bcgPrefsOf(state) { return state.cricketGraphicPrefs || (state.cricketGraphicPrefs = { ...BCG_PREF_DEFAULTS, seq: bcgSeq }); }
 function bcgPublic(g) { return { ...g, serverNow: Date.now(), timing: BCG_TIMING }; }
 // Puts a graphic (or none) on air for the room, arms its end, tells the room.
 function bcgSet(room, state, g) {
@@ -10948,7 +11046,7 @@ function bcgSet(room, state, g) {
         bcgTimers[room] = setTimeout(() => {
             delete bcgTimers[room];
             if (state.cricketGraphic !== g) return;            // stopped, replaced or changed since
-            bcgSet(room, state, bcgNone(g, g.mode === 'toss' ? 'expired' : 'completed'));
+            bcgSet(room, state, bcgNone(g, g.mode === 'playingXI' ? 'completed' : 'expired'));
         }, Math.max(0, end - Date.now()));
     }
     io.to(room).emit('cricketGraphicState', bcgPublic(g));
@@ -12351,6 +12449,7 @@ io.on('connection', async (socket) => {
     if (roomState.footballMatchIntroState) socket.emit('liveFootballMatchIntro', { config: roomState.footballMatchIntroState, triggerReplay: false });
     // 🎬 the broadcast graphic on air in this room (or none) — see BROADCAST GRAPHICS
     socket.emit('cricketGraphicState', bcgPublic(roomState.cricketGraphic || bcgIdle()));
+    socket.emit('cricketGraphicPrefs', bcgPrefsOf(roomState));
     if (connectSyncResult && currentRoom.startsWith('room-')) {
         const uid = currentRoom.replace('room-', '');
         const patch = connectSyncResult === 'matchIntro' ? { matchIntroState: roomState.matchIntroState } : { ttState: roomState.ttState };
@@ -12566,9 +12665,10 @@ io.on('connection', async (socket) => {
         io.to(room).emit('cricketHideMatchSummary');
     });
 
-    // 🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro, from either
-    // panel: { action: start|stop|skip|duration, mode, gid, data,
-    // durationSec, reqId }. The answer (ack) carries the graphic now on air.
+    // 🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro / manual
+    // scorecards, from either panel: { action: start|stop|skip|xiMode|
+    // duration|prefs, mode, gid, data, durationSec, xiMode, prefs, reqId }.
+    // The answer (ack) carries the graphic now on air and the shared choices.
     const runGraphicCommand = async (data, ack) => {
         const reply = typeof ack === 'function' ? ack : () => {};
         try {
@@ -12577,9 +12677,14 @@ io.on('connection', async (socket) => {
             const targetId = data.room ? String(data.room).replace('room-', '') : (data.id || data.uid || matchIdForClient);
             if (targetId && targetId !== 'default') room = `room-${targetId}`;
             const state = await getRoomState(room);
-            const r = bcgApplyCommand(state.cricketGraphic || null, data, Date.now());
+            let r;
+            if (data.action === 'prefs') {
+                const p = bcgApplyPrefs(bcgPrefsOf(state), state.cricketGraphic || null, data.prefs, Date.now());
+                r = { ok: !p.error, error: p.error, next: p.next };
+                if (p.prefs) { state.cricketGraphicPrefs = p.prefs; io.to(room).emit('cricketGraphicPrefs', p.prefs); }
+            } else r = bcgApplyCommand(state.cricketGraphic || null, data, Date.now());
             if (r.next) bcgSet(room, state, r.next);
-            reply({ ok: r.ok, error: r.error || null, stale: !!r.stale, state: bcgPublic(state.cricketGraphic || bcgIdle()) });
+            reply({ ok: r.ok, error: r.error || null, stale: !!r.stale, state: bcgPublic(state.cricketGraphic || bcgIdle()), prefs: bcgPrefsOf(state) });
         } catch (e) {
             console.log('Broadcast graphic error:', e && e.message);
             reply({ ok: false, error: 'Could not update the graphic' });

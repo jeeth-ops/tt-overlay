@@ -31,7 +31,7 @@ NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the ov
                                                   # rendered page), frame by frame through updates, events and innings changes; the chase panel in
                                                   # every chase state (TARGET for 8 s as the chase begins / after each over / when the bar returns,
                                                   # else NEED x RUNS FROM y BALLS; RRR beside CRR), never two faces at once; the team record on 480p;
-                                                  # the full-screen TOSS / PLAYING XI (both teams) / MATCH INTRO with the longest names at 854x480 /
+                                                  # the full-screen TOSS / PLAYING XI (both teams) / MATCH INTRO / BAT + BOWL SCORECARDS with the longest names at 854x480 /
                                                   # 1280x720 / 1920x1080 / 1920x1280: on air, bar off air, nothing off the 5% margin, cut or overlapping
                                                   # (ONLY=gfx runs just those)
                                                   # (gsap + webfonts from node_modules when installed: npm install --no-save gsap@3.12.5
@@ -41,13 +41,18 @@ node test/cricket/out-types-test.js              # all 16 out types under the La
 node test/cricket/clipper-launcher-test.js       # ▶ Start / ⏹ Stop Clipper from the Clipper panel (asl-clipper:// launcher, hidden), launcher files + zip
 node test/cricket/clip-position-test.js          # 4 / 6 / every wicket on the first, middle, last ball: the clip names that ball's batter + bowler (both panels)
 node test/cricket/toss-stream-test.js            # toss lists teams by name; YouTube link tick (both panels)
-NODE_PATH=$(npm root -g) node test/cricket/broadcast-graphics-test.js  # 🎬 PLAYING XI / TOSS / MATCH INTRO: the server's rules (timings, Hold,
+NODE_PATH=$(npm root -g) node test/cricket/broadcast-graphics-test.js  # 🎬 PLAYING XI / TOSS / MATCH INTRO / SCORECARDS: the server's rules (timings, Hold,
                                                   # a new toss time from now, stale stop / skip refused, retries, the end timer never ending a newer
                                                   # graphic, only pictures in url()), then the REAL server + overlay + BOTH panels in Chromium:
                                                   # start in one panel → overlay + the other panel lit; team 1 / team 2 each 10 s readable; stop
                                                   # from the other panel in every phase; skip; overlay reloaded mid-graphic carries on; toss Hold,
                                                   # duration changed while up, ends by itself; replace + old timer; double clicks; missing XI / toss
-                                                  # result; reduced motion; the controls one block in both panels (ONLY=rules: no browser)
+                                                  # result; reduced motion; the controls one block in both panels (ONLY=rules: no browser);
+                                                  # Playing XI AUTO / HOLD (no timer behind HOLD, NEXT TEAM, AUTO from where it is); the Match
+                                                  # Arena intro held, reloaded without replaying; INNINGS picked in one panel → the other; BAT /
+                                                  # BOWL SCORECARD of each innings with its real figures, every player once, the rest of the
+                                                  # squad by name (did not bat / yet to bat / did not bowl / not in XI), the scoring untouched;
+                                                  # over-end cards wait while a card is pinned and run again after HIDE SCORECARD
 node test/cricket/match-report-test.js           # 📑 scorecard Excel + PDF report with wagon wheels, auto-download at match end: both panels
                                                   # (MR_LIBS=<dir with node_modules/exceljs + jspdf> also builds and checks the real files;
                                                   #  --sync re-inlines match-report.js into both panels)

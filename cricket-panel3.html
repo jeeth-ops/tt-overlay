@@ -2187,8 +2187,8 @@
   html[data-theme="light"] [style*="border-top:1px solid rgba(255,255,255,.08)"]{ border-top-color:rgba(15,23,42,.12) !important; }
   html[data-theme="light"] [style*="background:rgba(255,255,255,.04)"]{ background:rgba(15,23,42,.045) !important; }
   /* ===== end of LIGHT THEME ===== */
-  /* 🎬 BROADCAST GRAPHICS — the three full-screen graphics (Playing XI,
-     Toss, Match Intro), above the team squads. Red is "on air", the way a
+  /* 🎬 BROADCAST GRAPHICS — the full-screen graphics (Playing XI, Toss,
+     Match Intro, the manual scorecards), above the team squads. Red is "on air", the way a
      studio tally light is; the same state shows in both panels. */
   .bcg-card{ border-left:3px solid #ef4444; }
   .bcg-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
@@ -2241,6 +2241,26 @@
   .bcg-msg{ margin-top:8px; font-size:12px; line-height:1.45; padding:7px 10px; border-radius:8px; background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.35); color:#fbbf24; }
   .bcg-msg[hidden]{ display:none; }
   .bcg-msg.bad{ background:rgba(239,68,68,.1); border-color:rgba(239,68,68,.4); color:#fca5a5; }
+  .bcg-col{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .bcg-col > .bcg-btn{ width:100%; }
+  .bcg-col-note{ font-size:11px; font-weight:700; color:var(--text-dim); padding:4px 2px; }
+  .bcg-seg{ display:inline-flex; flex-wrap:wrap; gap:4px; align-items:center; }
+  .bcg-seg button{ padding:4px 10px; font-size:11px; font-weight:800; letter-spacing:.04em; border-radius:99px; background:transparent; }
+  .bcg-seg button[aria-checked="true"]{ background:var(--accent); border-color:var(--accent); color:#12100c; }
+  .bcg-seg button[aria-disabled="true"]{ opacity:.38; cursor:not-allowed; }
+  .bcg-seg button .tag{ margin-left:4px; font-size:9px; padding:1px 5px; border-radius:99px; background:rgba(239,68,68,.85); color:#fff; letter-spacing:.06em; }
+  .bcg-sc{ margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); display:flex; flex-direction:column; gap:8px; }
+  .bcg-sc-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .bcg-sc-head .bcg-lbl, .bcg-sc-row .bcg-lbl{ margin:0; }
+  .bcg-sc-row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .bcg-btn.sm{ padding:7px 10px; gap:8px; flex:1 1 200px; }
+  .bcg-btn.sm .bcg-ico{ width:26px; height:26px; font-size:14px; }
+  .bcg-auto{ flex:none; padding:3px 9px; border-radius:99px; font-size:10.5px; font-weight:800; letter-spacing:.04em; background:rgba(34,197,94,.13); color:#86efac; border:1px solid rgba(34,197,94,.35); }
+  .bcg-auto.wait{ background:rgba(245,158,11,.12); color:#fbbf24; border-color:rgba(245,158,11,.4); }
+  .bcg-auto.manual{ background:rgba(239,68,68,.14); color:#fca5a5; border-color:rgba(239,68,68,.5); }
+  html[data-theme="light"] .bcg-auto{ color:#15803d; }
+  html[data-theme="light"] .bcg-auto.wait{ color:#92400e; }
+  html[data-theme="light"] .bcg-auto.manual{ color:#b91c1c; }
   @media (max-width: 760px){ .bcg-actions{ grid-template-columns:1fr; } }
   html[data-theme="light"] .bcg-btn:hover{ border-color:#b6c2d6; }
   html[data-theme="light"] .bcg-ico{ background:rgba(15,23,42,.06); }
@@ -2349,30 +2369,47 @@
 
 <div style="padding:14px 14px 0;">
 <!-- 🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro, full screen on
-     the live overlay. The same controls are in Cricket Panel and Cricket
-     Panel 3 and show the same graphic on air (see BROADCAST GRAPHICS in
-     the script). -->
+     the live overlay, and the batting / bowling scorecard of any innings on
+     demand. The same controls are in Cricket Panel and Cricket Panel 3 and
+     show the same graphic on air (see BROADCAST GRAPHICS in the script). -->
 <div class="card bcg-card" id="card-broadcast-graphics">
   <div class="bcg-head">
     <h2 id="bcg-title">🎬 Broadcast Graphics <span class="note">— full screen on the live overlay</span></h2>
     <span class="bcg-air" id="bcg-air" role="status" aria-live="polite">Off air</span>
   </div>
   <div class="bcg-actions" role="group" aria-labelledby="bcg-title">
-    <button type="button" class="bcg-btn" id="bcg-xi-btn" aria-pressed="false" aria-describedby="bcg-xi-sub">
-      <span class="bcg-ico" aria-hidden="true">👥</span><span class="bcg-txt"><b>PLAYING XI</b><small id="bcg-xi-sub">Both teams · 10 s each</small></span>
-    </button>
-    <button type="button" class="bcg-btn" id="bcg-toss-btn" aria-expanded="false" aria-controls="bcg-toss-ctx" aria-describedby="bcg-toss-sub">
-      <span class="bcg-ico" aria-hidden="true">🪙</span><span class="bcg-txt"><b>TOSS</b><small id="bcg-toss-sub">Choose the time, then show</small></span>
-    </button>
-    <button type="button" class="bcg-btn" id="bcg-intro-btn" aria-pressed="false" aria-describedby="bcg-intro-sub">
-      <span class="bcg-ico" aria-hidden="true">🎬</span><span class="bcg-txt"><b>MATCH INTRO</b><small id="bcg-intro-sub">Holds until you stop it</small></span>
-    </button>
+    <div class="bcg-col">
+      <button type="button" class="bcg-btn" id="bcg-xi-btn" aria-pressed="false" aria-describedby="bcg-xi-sub">
+        <span class="bcg-ico" aria-hidden="true">👥</span><span class="bcg-txt"><b>PLAYING XI</b><small id="bcg-xi-sub">Both teams · 10 s each</small></span>
+      </button>
+      <div class="bcg-seg" id="bcg-xi-mode" role="radiogroup" aria-label="Playing XI timing">
+        <button type="button" role="radio" aria-checked="true" data-v="auto" title="Team 1 for 10 s, then team 2 for 10 s, then off air">AUTO 10s</button>
+        <button type="button" role="radio" aria-checked="false" data-v="hold" title="Each team stays on air — team 2 on NEXT TEAM, off air on HIDE">HOLD</button>
+      </div>
+    </div>
+    <div class="bcg-col">
+      <button type="button" class="bcg-btn" id="bcg-toss-btn" aria-expanded="false" aria-controls="bcg-toss-ctx" aria-describedby="bcg-toss-sub">
+        <span class="bcg-ico" aria-hidden="true">🪙</span><span class="bcg-txt"><b>TOSS</b><small id="bcg-toss-sub">Choose the time, then show</small></span>
+      </button>
+      <div class="bcg-col-note" id="bcg-toss-note">On screen: 10 s</div>
+    </div>
+    <div class="bcg-col">
+      <button type="button" class="bcg-btn" id="bcg-intro-btn" aria-pressed="false" aria-describedby="bcg-intro-sub">
+        <span class="bcg-ico" aria-hidden="true">🎬</span><span class="bcg-txt"><b>MATCH INTRO</b><small id="bcg-intro-sub">Holds until you hide it</small></span>
+      </button>
+      <div class="bcg-seg" id="bcg-intro-dur" role="radiogroup" aria-label="Match intro time on screen">
+        <button type="button" role="radio" aria-checked="true" data-v="hold" title="The final picture stays until you press HIDE INTRO">HOLD</button>
+        <button type="button" role="radio" aria-checked="false" data-v="15">15s</button>
+        <button type="button" role="radio" aria-checked="false" data-v="30">30s</button>
+        <button type="button" role="radio" aria-checked="false" data-v="60">60s</button>
+      </div>
+    </div>
   </div>
   <div class="bcg-ctx" id="bcg-xi-ctx" hidden>
     <div class="bcg-live"><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-xi-status">On air</span></div>
     <div class="bcg-row">
-      <button type="button" class="small" id="bcg-xi-skip">⏭ Next team now</button>
-      <button type="button" class="small bcg-stop" id="bcg-xi-stop">■ Stop Playing XI</button>
+      <button type="button" class="small" id="bcg-xi-skip">⏭ NEXT TEAM</button>
+      <button type="button" class="small bcg-stop" id="bcg-xi-stop">■ HIDE PLAYING XI</button>
     </div>
   </div>
   <div class="bcg-ctx" id="bcg-toss-ctx" hidden>
@@ -2395,7 +2432,33 @@
   </div>
   <div class="bcg-ctx" id="bcg-intro-ctx" hidden>
     <div class="bcg-live"><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-intro-status">On air</span></div>
-    <div class="bcg-row"><button type="button" class="small bcg-stop" id="bcg-intro-stop">■ Stop Intro</button></div>
+    <div class="bcg-row"><button type="button" class="small bcg-stop" id="bcg-intro-stop">■ HIDE INTRO</button></div>
+  </div>
+  <div class="bcg-sc" role="group" aria-labelledby="bcg-sc-title">
+    <div class="bcg-sc-head">
+      <span class="bcg-lbl" id="bcg-sc-title">📋 Innings &amp; scorecards</span>
+      <span class="bcg-auto" id="bcg-auto" title="The batting / bowling cards that come up by themselves after each over">Over-end cards: AUTO</span>
+    </div>
+    <div class="bcg-sc-row">
+      <span class="bcg-lbl" id="bcg-inn-lbl">Innings</span>
+      <div class="bcg-seg" id="bcg-inn" role="radiogroup" aria-labelledby="bcg-inn-lbl"></div>
+    </div>
+    <div class="bcg-sc-row">
+      <button type="button" class="bcg-btn sm" id="bcg-bat-btn" aria-pressed="false" aria-describedby="bcg-bat-sub">
+        <span class="bcg-ico" aria-hidden="true">🏏</span><span class="bcg-txt"><b>BAT SCORECARD</b><small id="bcg-bat-sub">—</small></span>
+      </button>
+      <button type="button" class="bcg-btn sm" id="bcg-bowl-btn" aria-pressed="false" aria-describedby="bcg-bowl-sub">
+        <span class="bcg-ico" aria-hidden="true">🎯</span><span class="bcg-txt"><b>BOWL SCORECARD</b><small id="bcg-bowl-sub">—</small></span>
+      </button>
+      <div class="bcg-seg" id="bcg-card-dur" role="radiogroup" aria-label="Scorecard time on screen">
+        <button type="button" role="radio" aria-checked="true" data-v="hold" title="Pinned until you press HIDE SCORECARD">HOLD</button>
+        <button type="button" role="radio" aria-checked="false" data-v="15">15s</button>
+        <button type="button" role="radio" aria-checked="false" data-v="30">30s</button>
+        <button type="button" role="radio" aria-checked="false" data-v="60">60s</button>
+      </div>
+      <button type="button" class="small bcg-stop" id="bcg-card-hide" hidden>■ HIDE SCORECARD</button>
+    </div>
+    <div class="bcg-live" id="bcg-card-live" hidden><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-card-status">On air</span></div>
   </div>
   <div class="bcg-msg" id="bcg-msg" role="alert" hidden></div>
 </div>
@@ -10425,39 +10488,41 @@ document.getElementById('hide-toss-btn').addEventListener('click', () => bcgStop
 document.getElementById('show-toss-btn').title = 'Full-screen toss, for the time chosen under 🎬 Broadcast Graphics';
 
 /* ============================================================
-   🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro
-   The three full-screen overlay graphics, run from the card above the
-   team squads (and the Toss card's Show / Hide). This panel never decides
-   what is on air: every press is a command to the server
-   (cricketGraphic), which keeps the one graphic of this match and tells
-   every panel and the overlay (cricketGraphicState) — so Cricket Panel
-   and Cricket Panel 3 always light the same button, whichever one was
-   pressed, and an overlay reloaded mid-graphic picks it up where it is.
+   🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro / scorecards
+   The full-screen overlay graphics, run from the card above the team
+   squads (and the Toss card's Show / Hide). This panel never decides what
+   is on air: every press is a command to the server (cricketGraphic),
+   which keeps the one graphic of this match and tells every panel and the
+   overlay (cricketGraphicState) — so Cricket Panel and Cricket Panel 3
+   always light the same button, whichever one was pressed, and an overlay
+   reloaded mid-graphic picks it up where it is. The choices made here —
+   Playing XI AUTO / HOLD, how long the toss, the intro and a scorecard stay
+   up, and which innings a scorecard shows — are kept by the server too
+   (cricketGraphicPrefs), so both panels always show the same ones.
    A graphic only ever shows this match's saved data: with no Playing XI
-   ticked or no toss result recorded, the card says what is missing
-   instead of putting up an empty or made-up graphic.
+   ticked, no toss result, or an innings not played yet, the card says what
+   is missing instead of putting up an empty or made-up graphic. Choosing
+   an innings for a scorecard only chooses what is shown — the scoring
+   innings, the strike and every figure stay exactly as they are.
    (The same block is in cricket-panel.html and cricket-panel3.html.)
    ============================================================ */
 // (all var: renderPanel may draw the card before this block has run)
 var bcgCtl = null;
+var BCG_PREF_DEFAULTS = { innings: null, xiMode: 'auto', tossDur: 10, introDur: null, cardDur: null };
 function bcgInit(){
-  if(bcgCtl) return bcgCtl;
-  bcgCtl = { g: null, seq: -Infinity, offset: 0, pending: null, tossOpen: false, tick: null, dur: 10, msg: '', msgBad: false };
-  try {
-    const d = localStorage.getItem('bcgTossDur');
-    if(d === 'hold') bcgCtl.dur = 'hold';
-    else if(+d >= 1 && +d <= 3600) bcgCtl.dur = Math.round(+d);
-  } catch(e) {}
+  if(!bcgCtl) bcgCtl = { g: null, seq: -Infinity, prefs: { ...BCG_PREF_DEFAULTS }, pseq: -Infinity, offset: 0, pending: null, tossOpen: false, tick: null, msg: '', msgBad: false };
   return bcgCtl;
 }
 var BCG_FROM = /panel3/i.test(location.pathname) ? 'Cricket Panel 3' : 'Cricket Panel';
-var BCG_NAMES = { playingXI: 'Playing XI', toss: 'Toss', matchIntro: 'Match Intro' };
+var BCG_NAMES = { playingXI: 'Playing XI', toss: 'Toss', matchIntro: 'Match Intro', scorecard: 'Scorecard' };
 var BCG_DURS = [5, 10, 15, 30, 60];
 function bcgEl(id){ return document.getElementById(id); }
 function bcgSocket(){ try { return socket; } catch(e) { return null; } }
 function bcgNow(){ return Date.now() + bcgInit().offset; }
 function bcgOn(mode){ const g = bcgInit().g; return !!(g && g.mode === mode); }
 function bcgSay(text, bad){ const c = bcgInit(); c.msg = text || ''; c.msgBad = !!bad; }
+function bcgOrd(n){ return n + ({ 1: 'st', 2: 'nd', 3: 'rd' }[n] || 'th'); }
+function bcgDurText(d){ return d == null ? 'Hold' : `${d} s`; }
 
 // ---------- what each graphic shows: this match's own saved data ----------
 function bcgTeamOut(key){
@@ -10467,10 +10532,17 @@ function bcgTeamOut(key){
     logoUrl: logo.length <= 400000 && (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(logo) || /^https?:\/\//i.test(logo) || /^\/[^/]/.test(logo)) ? logo : ''
   };
 }
-// the Playing XI as ticked in Team Squads, in its saved order
+// the same player? by id when both rows have one, else by name
+function bcgSame(a, b){
+  if(!a || !b) return false;
+  if(a.id && b.id) return String(a.id) === String(b.id);
+  return String(a.name || '').trim().toLowerCase() === String(b.name || '').trim().toLowerCase();
+}
+function bcgUniq(rows){ return rows.filter((r, i) => rows.findIndex(x => bcgSame(x, r)) === i); }
+// the Playing XI as ticked in Team Squads, in its saved order — never the bench
 function bcgLineup(key){
   const t = teamObj(key);
-  return rosterPlayers(key).filter(p => p && String(p.name || '').trim() && p.isXI !== false).map(p => ({
+  return bcgUniq(rosterPlayers(key).filter(p => p && String(p.name || '').trim() && p.isXI !== false)).map(p => ({
     id: p.id || null, name: String(p.name).trim(),
     captain: !!(p.id && t.captainId && t.captainId === p.id),
     keeper: !!(p.id && t.wkId && t.wkId === p.id),
@@ -10490,8 +10562,70 @@ function bcgInfo(){
     venue: String(state.venue || '').trim(), date: state.matchDate || ''
   };
 }
+// The innings a match of this format can have, and which have been played.
+function bcgInningsList(){
+  const played = matchInningsList();
+  const count = Math.max((FORMAT_RULES[state.format] || FORMAT_RULES.T20).inningsCount || 2, ...played.map(e => e.no));
+  return Array.from({ length: Math.min(4, count) }, (_, i) => ({ no: i + 1, entry: played.find(e => e.no === i + 1) || null }));
+}
+// the innings a scorecard shows: the one picked, else the live one
+function bcgShownInnings(){ const p = bcgInit().prefs.innings; return p == null ? state.inningsNumber : p; }
+// One innings' batting or bowling card, from the scorecard this panel keeps:
+// the players with figures in their real order (the two at the crease / the
+// bowler on, for the live innings), then the rest of that side's squad by
+// name only — yet to bat or did not bat, did not bowl, not in the XI.
+function bcgScorecard(kind){
+  const no = bcgShownInnings();
+  const entry = matchInningsList().find(e => e.no === no);
+  if(!entry) return { error: `The ${bcgOrd(no)} innings has not been played yet — pick another innings.` };
+  const batKey = entry.team === 'B' ? 'B' : 'A', bowlKey = batKey === 'A' ? 'B' : 'A';
+  const live = !entry.archived && no === state.inningsNumber && regulationIsLive();
+  let bat = rowsForInnings(state.battingCard[batKey], no).map(r => ({ ...r }));
+  if(live) [state.striker, state.nonStriker].forEach(p => {
+    if(p && p.name && !bat.some(b => b.name === p.name)) bat.push({ name: p.name, id: p.id || null, runs: p.runs, balls: p.balls, fours: p.fours, sixes: p.sixes, out: false, howOut: 'not out' });
+  });
+  bat = bcgUniq(orderRowsCanonical(bat, no, 'bat'));
+  let bowl = rowsForInnings(state.bowlingCard[bowlKey], no).map(r => ({ ...r }));
+  if(live && state.bowler.name && (state.bowler.overs > 0 || state.bowler.balls > 0) && !bowl.some(b => b.name === state.bowler.name)) bowl.push({ ...state.bowler });
+  bowl = bcgUniq(orderRowsCanonical(bowl, no, 'bowl'));
+  const batTeam = bcgTeamOut(batKey), bowlTeam = bcgTeamOut(bowlKey);
+  if(!batTeam.name || !bowlTeam.name) return { error: 'Name both teams first (Match Setup).' };
+  const label = `${bcgOrd(no).toUpperCase()} INNINGS`;
+  if(kind === 'bat' && !bat.length) return { error: `Nobody has batted in the ${bcgOrd(no)} innings yet.` };
+  if(kind === 'bowl' && !bowl.length) return { error: `No bowling figures in the ${bcgOrd(no)} innings yet.` };
+  // the side's whole squad: each player once, by their permanent id
+  const sideKey = kind === 'bat' ? batKey : bowlKey;
+  const squad = bcgUniq(rosterPlayers(sideKey).filter(p => p && String(p.name || '').trim()));
+  const rest = squad.filter(p => !(kind === 'bat' ? bat : bowl).some(r => bcgSame(r, p)));
+  const names = (list) => list.map(p => String(p.name).trim());
+  const groups = [
+    { label: kind === 'bat' ? (live ? 'YET TO BAT' : 'DID NOT BAT') : (live ? 'NOT BOWLED YET' : 'DID NOT BOWL'), names: names(rest.filter(p => p.isXI !== false)) },
+    { label: 'REPLACED (IMPACT)', names: names(rest.filter(p => p.isXI === false && p.impactOut)) },
+    { label: 'NOT IN XI', names: names(rest.filter(p => p.isXI === false && !p.impactOut)) }
+  ].filter(g => g.names.length);
+  const sc = inningsEntryScore(entry);
+  const ex = (entry.archived ? entry.archived.extras : state.extras[batKey]) || {};
+  const data = {
+    kind, inningsNo: no, label, live, batting: batTeam, bowling: bowlTeam, info: bcgInfo(),
+    batters: bat.map(b => {
+      const striker = live && !b.out && b.name === state.striker.name, nonStriker = live && !b.out && b.name === state.nonStriker.name;
+      return { id: b.id || null, name: b.name, runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
+        sr: b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0',
+        howOut: b.out ? (b.howOut || 'out') : (b.retiredHurt ? (b.howOut || 'retired hurt') : 'not out'),
+        status: b.out ? 'out' : striker ? 'striker' : nonStriker ? 'nonStriker' : b.retiredHurt ? 'retired' : 'notout' };
+    }),
+    bowlers: bowl.map(b => ({ id: b.id || null, name: b.name, overs: fmtBowlerOvers(b.overs, b.balls), maidens: b.maidens, runs: b.runs, wickets: b.wickets,
+      econ: bowlerEcon(b), ...bowlerDeliveryCounts(b.name, no), current: live && b.name === state.bowler.name })),
+    groups,
+    total: { runs: sc.runs, wickets: sc.wickets, overs: sc.overs, declared: !!sc.declared, target: no === chaseInningsNumber() && state.target ? state.target : null,
+      extrasTotal: extrasTotalOf(ex), extras: { wd: ex.wd || 0, nb: ex.nb || 0, b: ex.b || 0, lb: ex.lb || 0, pen: ex.pen || 0 } },
+    fow: rowsForInnings(state.fallOfWickets[batKey], no).map(f => ({ wkt: f.wkt, runs: f.runs, over: f.over }))
+  };
+  return { data, note: squad.length ? '' : `No squad saved for ${teamObj(sideKey).name || 'this side'} — the card lists only the players with figures.` };
+}
 // → { data } ready to go on air, or { error } saying what is missing
-function bcgPrepare(mode){
+function bcgPrepare(mode, kind){
+  if(mode === 'scorecard') return bcgScorecard(kind);
   const A = bcgTeamOut('A'), B = bcgTeamOut('B');
   if(!A.name || !B.name) return { error: 'Name both teams first (Match Setup).' };
   const info = bcgInfo();
@@ -10509,7 +10643,7 @@ function bcgPrepare(mode){
 }
 
 // ---------- commands: one at a time, answered by the server ----------
-function bcgSend(cmd, viaToast){
+function bcgSend(cmd, viaToast, after){
   const c = bcgInit();
   const socket = bcgSocket();
   if(!socket || !socket.connected){
@@ -10523,6 +10657,7 @@ function bcgSend(cmd, viaToast){
   bcgSay('');
   bcgRender();
   const done = (r) => {
+    if(r && r.prefs) bcgApplyPrefs(r.prefs);
     if(r && r.state) bcgApply(r.state);
     if(c.pending !== token) return;     // (an answer after its time-out: the state above is all it brings)
     clearTimeout(token.timer);
@@ -10534,18 +10669,22 @@ function bcgSend(cmd, viaToast){
     if(err){ bcgSay(err, true); if(viaToast) toast(err, 4000); }
     else if(viaToast && cmd.action === 'start') toast(`${BCG_NAMES[cmd.mode]} on air`);
     bcgRender();
+    if(!err && after) after();
   };
   token.timer = setTimeout(() => done(null), 8000);
   socket.emit('cricketGraphic', { ...cmd, reqId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
     from: BCG_FROM, matchKey: String(state.tournamentMatchId || currentMatchId() || '') }, done);
   return true;
 }
-function bcgStart(mode, viaToast){
-  const p = bcgPrepare(mode);
+function bcgStart(mode, viaToast, kind){
+  const p = bcgPrepare(mode, kind);
   if(p.error){ bcgSay(p.error, false); bcgRender(); if(viaToast) toast(p.error, 4000); return; }
   const c = bcgInit(), cmd = { action: 'start', mode, data: p.data };
-  if(mode === 'toss'){ cmd.durationSec = c.dur === 'hold' ? null : c.dur; c.tossOpen = true; }
-  bcgSend(cmd, viaToast);
+  if(mode === 'playingXI') cmd.xiMode = c.prefs.xiMode;
+  if(mode === 'toss'){ cmd.durationSec = c.prefs.tossDur; c.tossOpen = true; }
+  if(mode === 'matchIntro') cmd.durationSec = c.prefs.introDur;
+  if(mode === 'scorecard') cmd.durationSec = c.prefs.cardDur;
+  if(bcgSend(cmd, viaToast) && p.note) bcgSay(p.note, false);
 }
 // only ever the graphic this panel shows on air — never a newer one it has not seen
 function bcgStop(mode, viaToast){
@@ -10553,16 +10692,11 @@ function bcgStop(mode, viaToast){
   if(!g || (mode && g.mode !== mode)){ if(viaToast) toast(`${BCG_NAMES[mode] || 'Graphic'} is not on air`); return; }
   bcgSend({ action: 'stop', mode: g.mode, gid: g.gid }, viaToast);
 }
-function bcgSetDur(d){
-  const c = bcgInit();
-  c.dur = d;
-  try { localStorage.setItem('bcgTossDur', String(d)); } catch(e) {}
-  // a new time while the toss is up counts from now (Hold: it stays until hidden)
-  if(bcgOn('toss')) bcgSend({ action: 'duration', mode: 'toss', gid: c.g.gid, durationSec: d === 'hold' ? null : d });
-  bcgRender();
-}
+// a shared choice (AUTO / HOLD, a time on screen, the innings): the server
+// keeps it and applies it at once to the graphic it is about, if that is up
+function bcgSetPref(patch, after){ bcgSend({ action: 'prefs', prefs: patch }, false, after); }
 
-// ---------- what the server says is on air ----------
+// ---------- what the server says ----------
 function bcgApply(st){
   const c = bcgInit();
   if(!st || typeof st !== 'object') return;
@@ -10575,27 +10709,47 @@ function bcgApply(st){
   if(c.g && c.g.mode === 'toss') c.tossOpen = true;
   bcgRender();
 }
+function bcgApplyPrefs(p){
+  const c = bcgInit();
+  if(!p || typeof p !== 'object') return;
+  if(typeof p.seq === 'number'){ if(p.seq < c.pseq) return; c.pseq = p.seq; }
+  c.prefs = { ...BCG_PREF_DEFAULTS, ...p };
+  bcgRender();
+}
 // every new connection (a match switched) starts from that match's own state
 function bcgWireSocket(s){
   const c = bcgInit();
-  c.seq = -Infinity; c.g = null;
+  c.seq = -Infinity; c.g = null; c.pseq = -Infinity; c.prefs = { ...BCG_PREF_DEFAULTS };
   if(c.pending){ clearTimeout(c.pending.timer); c.pending = null; }
   s.on('cricketGraphicState', bcgApply);
+  s.on('cricketGraphicPrefs', bcgApplyPrefs);
   s.on('connect', bcgRender);
   s.on('disconnect', bcgRender);
   bcgRender();
 }
 
 // ---------- the card ----------
+// a radio row: which value is picked (and, optionally, which are not available)
+function bcgSeg(id, picked, busy, off){
+  bcgEl(id).querySelectorAll('button[data-v]').forEach(b => {
+    const v = b.dataset.v === 'hold' ? null : b.dataset.v === 'live' ? 'live' : /^\d+$/.test(b.dataset.v) ? +b.dataset.v : b.dataset.v;
+    const on = v === picked;
+    b.setAttribute('aria-checked', String(on));
+    b.tabIndex = on ? 0 : -1;
+    b.disabled = busy;
+    if(off) b.setAttribute('aria-disabled', String(!!off(v))); else b.removeAttribute('aria-disabled');
+  });
+}
 function bcgRender(){
   const c = bcgInit(), card = bcgEl('card-broadcast-graphics');
   if(!card) return;
   const sock = bcgSocket(), g = c.g, now = bcgNow(), connected = !!(sock && sock.connected), busy = !!c.pending;
   const secs = (ms) => Math.max(0, Math.ceil(ms / 1000));
   const name = (k) => String(teamObj(k).name || '').trim() || `Team ${k}`;
+  const P = c.prefs;
   const air = bcgEl('bcg-air');
   air.classList.toggle('on', !!g);
-  air.textContent = g ? `On air · ${BCG_NAMES[g.mode]}` : 'Off air';
+  air.textContent = g ? `On air · ${g.mode === 'scorecard' ? (g.data && g.data.kind === 'bowl' ? 'Bowling card' : 'Batting card') : BCG_NAMES[g.mode]}` : 'Off air';
   const button = (id, on, sub) => {
     const b = bcgEl(id);
     b.classList.toggle('on', on);
@@ -10604,18 +10758,20 @@ function bcgRender(){
     if(b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed', String(on));
     b.querySelector('small').textContent = sub;
   };
-  // PLAYING XI
+  // PLAYING XI — AUTO 10 s each, or HOLD (NEXT TEAM / HIDE)
   const xa = bcgLineup('A').length, xb = bcgLineup('B').length;
-  const xiOn = bcgOn('playingXI');
-  button('bcg-xi-btn', xiOn, xiOn ? 'On air — press to stop'
-    : (xa && xb) ? `${teamObj('A').short || name('A')} ${xa} · ${teamObj('B').short || name('B')} ${xb} · 10 s each` : 'Tick the XI in Team Squads');
+  const xiOn = bcgOn('playingXI'), xiHold = xiOn ? !!(g.xi && g.xi.hold) : P.xiMode === 'hold';
+  button('bcg-xi-btn', xiOn, xiOn ? 'On air — press to hide'
+    : (xa && xb) ? `${teamObj('A').short || name('A')} ${xa} · ${teamObj('B').short || name('B')} ${xb} · ${xiHold ? 'held' : '10 s each'}` : 'Tick the XI in Team Squads');
+  bcgSeg('bcg-xi-mode', xiHold ? null : 'auto', busy);
   bcgEl('bcg-xi-ctx').hidden = !xiOn;
   if(xiOn){
     const x = g.xi, t = g.data && g.data.teams || [];
-    const first = now < x.swapAt;
+    const first = x.swapAt == null || now < x.swapAt;
+    const t1 = (t[0] && t[0].name) || 'Team 1', t2 = (t[1] && t[1].name) || 'Team 2';
     bcgEl('bcg-xi-status').textContent = first
-      ? `${(t[0] && t[0].name) || 'Team 1'} on screen — ${secs(x.swapAt - now)} s, then ${(t[1] && t[1].name) || 'team 2'}`
-      : `${(t[1] && t[1].name) || 'Team 2'} on screen — ${secs(x.endAt - now)} s left`;
+      ? (x.swapAt == null ? `${t1} on screen — held: NEXT TEAM brings ${t2}` : `${t1} on screen — ${secs(x.swapAt - now)} s, then ${t2}`)
+      : (x.endAt == null ? `${t2} on screen — held until you hide it` : `${t2} on screen — ${secs(x.endAt - now)} s left`);
     bcgEl('bcg-xi-skip').hidden = !first;
     bcgEl('bcg-xi-skip').disabled = busy;
     bcgEl('bcg-xi-stop').disabled = busy;
@@ -10623,7 +10779,9 @@ function bcgRender(){
   // TOSS
   const tossOn = bcgOn('toss');
   const tw = state.toss && (state.toss.winner === 'A' || state.toss.winner === 'B') ? state.toss.winner : '';
+  const tossDur = tossOn ? (g.toss.durationSec == null ? null : g.toss.durationSec) : P.tossDur;
   button('bcg-toss-btn', tossOn, tossOn ? 'On air' : tw ? `${name(tw)} won — choose the time` : 'No toss result yet');
+  bcgEl('bcg-toss-note').textContent = `On screen: ${tossDur == null ? 'Hold until hidden' : `${tossDur} s`}`;
   bcgEl('bcg-toss-btn').classList.toggle('open', !!c.tossOpen);
   bcgEl('bcg-toss-btn').setAttribute('aria-expanded', String(!!c.tossOpen));
   bcgEl('bcg-toss-ctx').hidden = !c.tossOpen;
@@ -10640,7 +10798,7 @@ function bcgRender(){
       res.className = 'bcg-result warn';
       res.innerHTML = '⚠ No toss result recorded yet. <button type="button" class="small ghost" id="bcg-toss-goto">Open the 🪙 Toss card</button>';
     }
-    const dur = tossOn ? (g.toss.durationSec == null ? 'hold' : g.toss.durationSec) : c.dur;
+    const dur = tossDur == null ? 'hold' : tossDur;
     bcgEl('bcg-dur-chips').querySelectorAll('button[data-dur]').forEach(b => {
       const v = b.dataset.dur === 'hold' ? 'hold' : +b.dataset.dur;
       b.setAttribute('aria-checked', String(v === dur));
@@ -10661,21 +10819,60 @@ function bcgRender(){
         : now < x.readyAt ? `On air — ${x.durationSec} s once it has come in` : `On air — ${secs(x.expiresAt - now)} s left`;
     }
   }
-  // MATCH INTRO
+  // MATCH INTRO — HOLD until hidden, or a time
   const inOn = bcgOn('matchIntro');
-  button('bcg-intro-btn', inOn, inOn ? 'On air — press to stop' : 'Holds until you stop it');
+  const introDur = inOn ? (g.intro && g.intro.durationSec != null ? g.intro.durationSec : null) : P.introDur;
+  button('bcg-intro-btn', inOn, inOn ? 'On air — press to hide' : introDur == null ? 'Holds until you hide it' : `On screen ${introDur} s`);
+  bcgSeg('bcg-intro-dur', introDur, busy);
   bcgEl('bcg-intro-ctx').hidden = !inOn;
   if(inOn){
-    bcgEl('bcg-intro-status').textContent = now < g.intro.readyAt ? 'On air — the intro is playing' : 'On air — holding the final picture until you stop it';
+    const x = g.intro || {};
+    bcgEl('bcg-intro-status').textContent = now < x.readyAt ? 'On air — the intro is playing'
+      : x.expiresAt == null ? 'On air — holding the final picture until you hide it' : `On air — ${secs(x.expiresAt - now)} s left`;
     bcgEl('bcg-intro-stop').disabled = busy;
   }
+  // INNINGS + SCORECARDS
+  const list = bcgInningsList(), shown = bcgShownInnings();
+  const seg = bcgEl('bcg-inn');
+  const want = ['live', ...list.map(i => String(i.no))].join(',');
+  if(seg.dataset.opts !== want){
+    seg.dataset.opts = want;
+    seg.innerHTML = `<button type="button" role="radio" data-v="live" title="The innings being scored now">LIVE</button>`
+      + list.map(i => `<button type="button" role="radio" data-v="${i.no}">${bcgOrd(i.no).toUpperCase()}</button>`).join('');
+  }
+  bcgSeg('bcg-inn', P.innings == null ? 'live' : P.innings, busy, v => v !== 'live' && !list.some(i => i.no === v && i.entry));
+  seg.querySelectorAll('button[data-v]').forEach(b => {
+    const no = b.dataset.v === 'live' ? state.inningsNumber : +b.dataset.v, e = list.find(i => i.no === no);
+    b.title = b.dataset.v === 'live' ? `The innings being scored now (${bcgOrd(state.inningsNumber)})`
+      : e && e.entry ? `${name(e.entry.team)} batting` : 'Not played yet';
+    b.innerHTML = b.dataset.v === 'live' ? `LIVE · ${bcgOrd(state.inningsNumber).toUpperCase()}` : bcgOrd(no).toUpperCase();
+  });
+  const entry = (list.find(i => i.no === shown) || {}).entry;
+  const cardOn = bcgOn('scorecard'), kindOn = cardOn && g.data ? g.data.kind : '';
+  const innText = `${bcgOrd(shown)} inn`;
+  button('bcg-bat-btn', kindOn === 'bat', kindOn === 'bat' ? 'On air — press to hide' : entry ? `${name(entry.team)} · ${innText}` : `${innText} — not played yet`);
+  button('bcg-bowl-btn', kindOn === 'bowl', kindOn === 'bowl' ? 'On air — press to hide' : entry ? `${name(entry.team === 'A' ? 'B' : 'A')} · ${innText}` : `${innText} — not played yet`);
+  const cardDur = cardOn ? (g.card && g.card.durationSec != null ? g.card.durationSec : null) : P.cardDur;
+  bcgSeg('bcg-card-dur', cardDur, busy);
+  bcgEl('bcg-card-hide').hidden = !cardOn;
+  bcgEl('bcg-card-hide').disabled = busy;
+  bcgEl('bcg-card-live').hidden = !cardOn;
+  if(cardOn){
+    const x = g.card || {}, d = g.data || {};
+    const what = `${d.kind === 'bowl' ? 'Bowling' : 'Batting'} card · ${bcgOrd(d.inningsNo)} innings · ${d.kind === 'bowl' ? d.bowling && d.bowling.name : d.batting && d.batting.name}`;
+    bcgEl('bcg-card-status').textContent = `${what} — ${x.expiresAt == null ? 'pinned until you hide it' : `${secs(x.expiresAt - now)} s left`}`;
+  }
+  // the automatic between-overs cards: running, or waiting for the screen
+  const auto = bcgEl('bcg-auto');
+  auto.className = 'bcg-auto' + (cardOn ? ' manual' : g ? ' wait' : '');
+  auto.textContent = cardOn ? 'MANUAL — over-end cards paused' : g ? 'Over-end cards wait for the screen' : 'Over-end cards: AUTO';
   // a line under it all: what went wrong, what is missing — or that this panel is offline
   const msg = bcgEl('bcg-msg');
   const text = c.msg || (!connected ? 'Not connected — Connect to the match to run the graphics.' : '');
   msg.hidden = !text;
   msg.textContent = text;
   msg.classList.toggle('bad', !!c.msgBad);
-  if(g && g.from && g.from !== BCG_FROM && !c.msg) air.title = `Started from ${g.from}`; else air.removeAttribute('title');
+  if(g && g.from && g.from !== BCG_FROM) air.title = `Started from ${g.from}`; else air.removeAttribute('title');
   // a clock only while something is on air
   if(g && !c.tick) c.tick = setInterval(bcgRender, 500);
   if(!g && c.tick){ clearInterval(c.tick); c.tick = null; }
@@ -10694,11 +10891,39 @@ bcgEl('bcg-intro-stop').addEventListener('click', () => bcgStop('matchIntro'));
 bcgEl('bcg-toss-show').addEventListener('click', () => bcgStart('toss'));
 bcgEl('bcg-toss-hide').addEventListener('click', () => bcgStop('toss'));
 bcgEl('bcg-toss-ctx').addEventListener('click', (e) => { if(e.target.closest('#bcg-toss-goto')) msGoto('card-toss'); });
+// a scorecard button: shows that card for the innings picked — pressed again it hides
+['bat', 'bowl'].forEach(kind => bcgEl(`bcg-${kind}-btn`).addEventListener('click', () => {
+  const g = bcgInit().g;
+  if(g && g.mode === 'scorecard' && g.data && g.data.kind === kind) bcgStop('scorecard'); else bcgStart('scorecard', false, kind);
+}));
+bcgEl('bcg-card-hide').addEventListener('click', () => bcgStop('scorecard'));
+// the radio rows: each one is a shared choice
+const BCG_SEG_PREF = { 'bcg-xi-mode': 'xiMode', 'bcg-intro-dur': 'introDur', 'bcg-card-dur': 'cardDur', 'bcg-inn': 'innings' };
+Object.keys(BCG_SEG_PREF).forEach(id => {
+  const row = bcgEl(id);
+  row.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]');
+    if(!b || b.getAttribute('aria-disabled') === 'true') return;
+    const key = BCG_SEG_PREF[id], raw = b.dataset.v;
+    // AUTO / HOLD as they are; a time or an innings as a number; Hold (no time) and LIVE as null
+    const v = key === 'xiMode' ? raw : raw === 'hold' || raw === 'live' ? null : +raw;
+    // a different innings while a scorecard is up: the same card follows it
+    const g = bcgInit().g, kind = key === 'innings' && g && g.mode === 'scorecard' && g.data ? g.data.kind : '';
+    bcgSetPref({ [key]: v }, kind ? () => bcgStart('scorecard', false, kind) : null);
+  });
+  // ← → between the options, as in any radio group
+  row.addEventListener('keydown', (e) => {
+    if(!/^Arrow(Left|Right|Up|Down)$/.test(e.key) || !e.target.matches('button[data-v]')) return;
+    const all = [...row.querySelectorAll('button[data-v]:not([aria-disabled="true"])')];
+    const next = all[(all.indexOf(e.target) + (/Left|Up/.test(e.key) ? all.length - 1 : 1)) % all.length];
+    e.preventDefault();
+    if(next){ next.focus(); next.click(); }
+  });
+});
 bcgEl('bcg-dur-chips').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-dur]');
-  if(b) bcgSetDur(b.dataset.dur === 'hold' ? 'hold' : +b.dataset.dur);
+  if(b) bcgSetPref({ tossDur: b.dataset.dur === 'hold' ? null : +b.dataset.dur });
 });
-// ← → between the time chips, as in any radio group
 bcgEl('bcg-dur-chips').addEventListener('keydown', (e) => {
   if(!/^Arrow(Left|Right|Up|Down)$/.test(e.key) || !e.target.matches('button[data-dur]')) return;
   const all = [...bcgEl('bcg-dur-chips').querySelectorAll('button[data-dur]')];
@@ -10712,7 +10937,7 @@ bcgEl('bcg-dur-chips').addEventListener('keydown', (e) => {
   const take = () => {
     if(input.value === '') return;
     const v = Math.round(+input.value);
-    if(v >= 1 && v <= 3600) bcgSetDur(v);
+    if(v >= 1 && v <= 3600) bcgSetPref({ tossDur: v });
     else { bcgSay('Type 1 to 3600 seconds — or pick Hold until hidden.', false); bcgRender(); }
   };
   input.addEventListener('change', take);
