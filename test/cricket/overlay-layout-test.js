@@ -23,7 +23,12 @@
 //     its box (the score's rolling digits are cut by their own column: that
 //     is the odometer, not a defect).
 //   • The innings-break strip keeps its full size when a webfont finishes
-//     loading during its reveal; TOSS and the team record fit a 480p output.
+//     loading during its reveal; the team record fits a 480p output.
+//   • The full-screen broadcast graphics — TOSS, PLAYING XI (both teams) and
+//     MATCH INTRO — at 854x480, 1280x720, 1920x1080 and 1920x1280, with the
+//     longest names and every detail: every text and logo on the screen and
+//     inside its 5% margin, none cut or on top of another, none on a logo it
+//     is not part of; the score bar off air while one is up.
 //
 // Run:  NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js
 //       (needs playwright + a chromium. gsap and the webfonts are served from
@@ -70,6 +75,8 @@ async function open(browser, w, h){
   page.on('pageerror', e => errors.push(e.message));
   await page.route('**/*', async (route) => {
     const u = new URL(route.request().url());
+    // (the font files: their url() resolves against fonts.googleapis.com, whose stylesheet this is)
+    if(u.pathname.startsWith('/__font/') && fontFiles[path.basename(u.pathname)]) return route.fulfill({ contentType: 'font/woff2', body: fs.readFileSync(fontFiles[path.basename(u.pathname)]) });
     if(u.hostname === 'cdnjs.cloudflare.com' && GSAP) return route.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(GSAP) });
     if(u.hostname === 'fonts.googleapis.com' && fontCss) return route.fulfill({ contentType: 'text/css', body: fontCss });
     if(u.hostname !== 'overlay.test') return route.continue();
@@ -433,7 +440,7 @@ async function frames(browser){
 }
 
 async function stripsAndCards(browser){
-  console.log('\n######## The innings-break strip; TOSS and the team record on a small output ########');
+  console.log('\n######## The innings-break strip; the team record on a small output ########');
   {
     const O = await open(browser, 1920, 1080);
     await O.emit('liveCricketScore', S['innings break']);
@@ -443,10 +450,9 @@ async function stripsAndCards(browser){
       ['1', false, '7.10', 'flex']);
     await O.ctx.close();
   }
-  const toss = { team: { name: LONG_A.name, short: 'DYP', color: '#0f766e', logoUrl: '' }, decision: 'BAT', decisionText: 'ELECTED TO BAT FIRST' };
   const teamStat = { teamName: LONG_B.name, teamShort: 'NHS', teamColor: '#fde047', teamLogo: '', matches: 7, won: 5, lost: 2, tied: 0, winPct: 71, highest: 211, avgScore: 168 };
   for(const [w, h] of [[854, 480], [1280, 720], [1920, 1080]]){
-    for(const [ev, d, id] of [['cricketToss', toss, 'toss-card'], ['cricketTeamStat', teamStat, 'team-stat-card']]){
+    for(const [ev, d, id] of [['cricketTeamStat', teamStat, 'team-stat-card']]){
       const O = await open(browser, w, h);
       await O.emit('liveCricketScore', S['first innings']);
       await O.page.waitForTimeout(1200);
@@ -463,15 +469,72 @@ async function stripsAndCards(browser){
   }
 }
 
+// ---------- the full-screen broadcast graphics (BROADCAST GRAPHICS) ----------
+const XI_LONG = (pre) => ['Mohammed Abdul Rahman Siddiqui', 'Venkatasubramanian Raghunathan', 'Christopher Fitzgerald-Montgomery', 'Rohit Sharma', 'Yashasvi Jaiswal',
+  'Suryakumar Ashok Yadav', 'Rishabh Rajendra Pant', 'Hardik Himanshu Pandya', 'Ravindrasinh Anirudhsinh Jadeja', 'Jasprit Jasbirsingh Bumrah', 'Kuldeep Yadav']
+  .map((name, i) => ({ id: pre + i, name, captain: i === 3, keeper: i === 6, impact: i === 10 }));
+const GFX_INFO = { tournament: 'Navi Mumbai Corporate Premier League Championship 2026', tournamentLogo: LOGO, matchTitle: 'Match 41 · Qualifier 2',
+  stage: 'Semi Final', format: 'T20', venue: 'Dr. D Y Patil Sports Academy Ground, Nerul, Navi Mumbai', date: '2026-10-24' };
+function gfx(mode, data, at, extra){
+  const n = Date.now() - (at || 0);
+  return Object.assign({ seq: Date.now() + Math.random(), gid: 'g-' + mode + Math.random().toString(36).slice(2, 6), rev: 1, mode, startedAt: n, serverNow: Date.now(), data }, extra(n));
+}
+const GFX = {
+  'TOSS': () => gfx('toss', { teamA: LONG_A, teamB: LONG_B, winner: 'B', decision: 'BOWL', info: GFX_INFO }, 0, n => ({ toss: { durationSec: null, readyAt: n + 2200, expiresAt: null } })),
+  'PLAYING XI, team 1': () => gfx('playingXI', { teams: [{ ...LONG_A, players: XI_LONG('a') }, { ...LONG_B, players: XI_LONG('b') }], info: GFX_INFO }, 0, n => ({ xi: { swapAt: n + 11500, endAt: n + 23900 } })),
+  // (opened in the middle of team 2's time — as an overlay reloaded then would be)
+  'PLAYING XI, team 2': () => gfx('playingXI', { teams: [{ ...LONG_A, players: XI_LONG('a') }, { ...LONG_B, players: XI_LONG('b') }], info: GFX_INFO }, 15000, n => ({ xi: { swapAt: n + 11500, endAt: n + 23900 } })),
+  'MATCH INTRO': () => gfx('matchIntro', { teamA: LONG_A, teamB: LONG_B, info: GFX_INFO }, 7000, n => ({ intro: { readyAt: n + 6400 } }))
+};
+async function broadcastGraphics(browser){
+  console.log('\n######## TOSS / PLAYING XI / MATCH INTRO — full screen, every output size ########');
+  for(const [w, h] of [[854, 480], [1280, 720], [1920, 1080], [1920, 1280]]){
+    for(const [label, make] of Object.entries(GFX)){
+      const O = await open(browser, w, h);
+      await O.emit('liveCricketScore', S['first innings']);
+      await O.page.waitForTimeout(1200);
+      await O.emit('cricketGraphicState', make());
+      await O.page.waitForTimeout(3200);
+      const r = await O.page.evaluate(() => {
+        const sc = document.querySelector('#bcg .bcg-scene:not([data-leaving])');
+        const canvas = sc && sc.querySelector('.bcg-canvas').getBoundingClientRect();
+        const u = Math.min(innerWidth / 1920, innerHeight / 1080), m = 54 * u - 1;
+        // every text and logo inside the picture's 5% margin (light, rays and
+        // panels may run to the edge: they carry nothing to read)
+        const outside = [...sc.querySelectorAll('.bcg-canvas *')].filter(e => {
+          const text = [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+          if(!text && !e.matches('.bcg-plate, .bcg-brand')) return false;
+          if(getComputedStyle(e).visibility === 'hidden' || !e.offsetWidth) return false;
+          if(e.closest('.xi-page') && e.closest('.xi-page').style.visibility !== 'visible') return false;
+          const b = e.getBoundingClientRect();
+          return b.left < canvas.left + m || b.right > canvas.right - m || b.top < canvas.top + m || b.bottom > canvas.bottom - m;
+        }).map(e => e.className || e.tagName);
+        return { mode: sc && sc.dataset.mode, phase: sc && sc.dataset.phase, barOff: +getComputedStyle(document.getElementById('scorecard')).opacity < 0.05, outside };
+      });
+      const issues = await O.page.evaluate(() => window.__audit({ roots: ['#bcg .bcg-scene:not([data-leaving])'], icons: '#bcg .bcg-plate', minOpacity: 0.15, clipPath: false }));
+      const want = label.startsWith('PLAYING XI') ? (label.endsWith('2') ? 'team2' : 'team1') : label === 'TOSS' ? 'toss' : 'intro';
+      eq(`${w}x${h}: ${label} — on air, the bar off air, every text / logo inside the margin, nothing cut or overlapping`,
+        [r.phase, r.barOff, r.outside, issues], [want, true, [], []]);
+      if(SHOTS) await O.page.screenshot({ path: path.join(SHOTS, `gfx-${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${w}x${h}.png`) });
+      eq(`${w}x${h}: ${label} — no script errors`, O.errors, []);
+      await O.ctx.close();
+    }
+  }
+}
+
 (async () => {
   console.log(`(gsap: ${GSAP ? 'node_modules' : 'CDN'}; fonts: ${fontCss ? 'node_modules' : 'Google Fonts'})`);
   const browser = await chromium.launch();
   try {
-    await barMatrix(browser);
-    await chasePanel(browser);
-    await rotation(browser);
-    await frames(browser);
-    await stripsAndCards(browser);
+    // (ONLY=gfx runs just the broadcast graphics)
+    if(process.env.ONLY !== 'gfx'){
+      await barMatrix(browser);
+      await chasePanel(browser);
+      await rotation(browser);
+      await frames(browser);
+      await stripsAndCards(browser);
+    }
+    await broadcastGraphics(browser);
   } finally {
     await browser.close();
   }
