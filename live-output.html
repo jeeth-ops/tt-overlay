@@ -34,6 +34,12 @@
     position:absolute; inset:0; width:100%; height:100%;
     border:0; background:transparent;
   }
+  /* 🎬 a full-screen graphic is up (Playing XI, Toss, Match Intro, a
+     scorecard — the overlay says so, see the message listener below): the
+     camera goes slightly soft behind it, and sharp again as it leaves.
+     The small scale-up keeps the blurred edges off the frame. */
+  #camera-video{ transition:filter .6s ease, transform .6s ease; }
+  #stage.gfx-blur #camera-video{ filter:blur(0.45vh); transform:scale(1.02); }
   #lo-status{
     position:absolute; top:10px; left:10px; z-index:50;
     font:600 12px/1.4 system-ui, sans-serif; color:#fff;
@@ -88,6 +94,16 @@
   document.title = `AllSportsLive-LiveOutput-${room.replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
   document.getElementById('overlay-frame').src = `${location.origin}/cricket-overlay?room=${encodeURIComponent(room)}`;
+
+  // 🎬 The overlay reports when one of its full-screen graphics goes on or
+  // off air ({ type: 'allsportslive-graphic', on }); the camera under it
+  // is blurred a touch for as long as one is up. Only our own overlay
+  // frame is listened to.
+  window.addEventListener('message', (e) => {
+    const frame = document.getElementById('overlay-frame');
+    if(e.origin !== location.origin || e.source !== frame.contentWindow || !e.data || e.data.type !== 'allsportslive-graphic') return;
+    document.getElementById('stage').classList.toggle('gfx-blur', e.data.on === true);
+  });
 
   // 🩹 CONFIRMED IN THE FIELD: Chrome/Edge salts getUserMedia deviceIds
   // PER BROWSER PROFILE (a deliberate privacy measure). videoDeviceId

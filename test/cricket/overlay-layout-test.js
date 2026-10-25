@@ -520,12 +520,21 @@ async function broadcastGraphics(browser){
           const b = e.getBoundingClientRect();
           return b.left < canvas.left + m || b.right > canvas.right - m || b.top < canvas.top + m || b.bottom > canvas.bottom - m;
         }).map(e => e.className || e.tagName);
-        return { mode: sc && sc.dataset.mode, phase: sc && sc.dataset.phase, barOff: +getComputedStyle(document.getElementById('scorecard')).opacity < 0.05, outside };
+        // the picture shows through: no layer covering the whole output is
+        // more than 60% opaque anywhere (the text sits on its own panels)
+        const alphas = (cs) => [cs.backgroundColor, ...(cs.backgroundImage.match(/rgba?\([^)]*\)/g) || [])].map(c => { const v = c.match(/[\d.]+/g).map(Number); return v.length > 3 ? v[3] : 1; });
+        const opaque = [...sc.querySelectorAll('*')].filter(e => {
+          const b = e.getBoundingClientRect();
+          if(b.width < innerWidth * 0.95 || b.height < innerHeight * 0.95) return false;
+          const cs = getComputedStyle(e);
+          return (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' || cs.backgroundImage !== 'none') && Math.max(...alphas(cs)) > 0.6;
+        }).map(e => e.className || e.tagName);
+        return { mode: sc && sc.dataset.mode, phase: sc && sc.dataset.phase, barOff: +getComputedStyle(document.getElementById('scorecard')).opacity < 0.05, outside, opaque };
       });
       const issues = await O.page.evaluate(() => window.__audit({ roots: ['#bcg .bcg-scene:not([data-leaving])'], icons: '#bcg .bcg-plate', minOpacity: 0.15, clipPath: false }));
       const want = label.startsWith('PLAYING XI') ? (label.endsWith('2') ? 'team2' : 'team1') : label === 'TOSS' ? 'toss' : label.includes('SCORECARD') ? 'card' : 'intro';
-      eq(`${w}x${h}: ${label} — on air, the bar off air, every text / logo inside the margin, nothing cut or overlapping`,
-        [r.phase, r.barOff, r.outside, issues], [want, true, [], []]);
+      eq(`${w}x${h}: ${label} — on air, the bar off air, every text / logo inside the margin, nothing cut or overlapping, the picture showing through`,
+        [r.phase, r.barOff, r.outside, issues, r.opaque], [want, true, [], [], []]);
       if(SHOTS) await O.page.screenshot({ path: path.join(SHOTS, `gfx-${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${w}x${h}.png`) });
       eq(`${w}x${h}: ${label} — no script errors`, O.errors, []);
       await O.ctx.close();

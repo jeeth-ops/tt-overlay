@@ -191,6 +191,24 @@ async function rules(){
   eq('what the server sends carries its clock and the timings', Object.keys(R.bcgPublic({ mode: 'none' })).sort(), ['mode', 'serverNow', 'timing']);
 }
 
+// The overlay's own reading of the knockout round (koRound in cricket-overlay.html)
+function knockoutRounds(){
+  console.log('\n######## 1b. The knockout round, read from the match\'s stage / title (cricket-overlay.html koRound) ########');
+  const src = fs.readFileSync(path.join(ROOT, 'cricket-overlay.html'), 'utf8');
+  const a = src.indexOf('  function koRound(info){'), b = src.indexOf('\n  }\n', a);
+  if(a < 0 || b < 0) throw new Error('koRound not found in cricket-overlay.html');
+  const koRound = new Function(src.slice(a, b + 4) + '\nreturn koRound;')();
+  const read = (stage, matchTitle) => { const r = koRound({ stage, matchTitle }); return r ? `${r.tier}:${r.label}:${r.key}` : null; };
+  eq('as organisers type it → the round, in one spelling', [
+    read('SEMI - FINAL MATCH', 'MATCH 10'), read('Semi Final 2', ''), read('semifinal', ''), read('Final', 'Match 15'), read('GRAND FINAL', ''),
+    read('Quarter-Final 3', ''), read('Pre Quarter Final', ''), read('Eliminator', ''), read('', 'Qualifier 2'), read('Play-offs', ''), read('3rd place match', '')
+  ], ['semi:SEMI-FINAL:stage', 'semi:SEMI-FINAL 2:stage', 'semi:SEMI-FINAL:stage', 'final:FINAL:stage', 'final:GRAND FINAL:stage',
+      'ko:QUARTER-FINAL 3:stage', 'ko:PRE-QUARTER-FINAL:stage', 'ko:ELIMINATOR:stage', 'ko:QUALIFIER 2:matchTitle', 'ko:PLAY-OFF:stage', 'ko:3RD PLACE PLAY-OFF:stage']);
+  eq('a league game, or nothing typed → no round (and "Finalists" / "Semifinalist" are not one)',
+    [read('League', 'Match 4'), read('', ''), read(null, undefined), read('Group A', 'Finalists Cup'), read('Semifinalist play', '')], [null, null, null, null, null]);
+  eq('…the tournament\'s own name is never read for it', koRound({ tournament: 'Premier League Finals 2026', stage: 'League' }), null);
+}
+
 /* ------------------------------------------------------------------ */
 /* 2. The whole chain in Chromium                                      */
 /* ------------------------------------------------------------------ */
@@ -416,9 +434,13 @@ async function chain(){
     o = await ov();
     eq('…past the toss\'s 5 s: the intro is still up (holds until stopped)', [o.mode, o.phase, await air(P1)], ['matchIntro', 'intro', 'On air · Match Intro']);
     eq('…the intro shows the real teams and this match\'s details', await OV.page.evaluate(() => [...document.querySelectorAll('#bcg .ar-name')].map(e => e.textContent).concat([...document.querySelectorAll('#bcg .ar-ii')].map(e => e.textContent))),
-      ['Mumbai Indians', 'Chennai Super Kings', 'T20', 'Final', 'Wankhede Stadium, Mumbai', '24 OCT 2026']);
-    eq('…in the Match Arena: no team-coloured halves — one stadium, the teams on plinths, VS between them',
-      await OV.page.evaluate(() => [!!document.querySelector('#bcg .ar-env svg .ar-stands'), document.querySelectorAll('#bcg .ar-frame').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [true, 2, true, false]);
+      ['Mumbai Indians', 'Chennai Super Kings', 'T20', 'Wankhede Stadium, Mumbai', '24 OCT 2026']);
+    eq('…a final says so in gold, big, with its trophies (and not again in the details)', await OV.page.evaluate(() => {
+      const k = document.querySelector('#bcg .ar-ko');
+      return k ? [k.className, k.querySelector('.ar-ko-t').textContent, k.querySelectorAll('.ar-ko-ico').length, +getComputedStyle(k.querySelector('.ar-ko-plate')).opacity] : null;
+    }), ['ar-ko final', 'FINAL', 2, 1]);
+    eq('…in the Match Arena over the picture: no team-coloured halves, no stadium drawn over the camera — floodlight beams, the teams on plinths, VS between them',
+      await OV.page.evaluate(() => [!!document.querySelector('#bcg .ar-env svg .ar-stands'), !!document.querySelector('#bcg .ar-env svg .ar-beams'), document.querySelectorAll('#bcg .ar-frame').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [false, true, 2, true, false]);
     // reloaded while it holds: it comes back as it is — not a second opening sequence
     await OV.page.reload();
     await OV.page.waitForFunction(() => window.gsap && document.querySelector('#bcg .bcg-scene[data-ready="1"]'), null, { timeout: 6000 });
@@ -551,6 +573,34 @@ async function chain(){
     await P1.page.click('#bcg-inn button[data-v="live"]');
     await until(() => inn(P3), v => v[0][1] === 'true', 3000);
 
+    // —— the score bar switched off in the panel: the graphics still go on
+    //    air, and once they are hidden the bar stays off. Live Output blurs
+    //    its camera a touch while one is up and clears it as it goes ——
+    const LO = await open('overlay', `/live-output.html?room=${ROOM}`, 1280, 720);
+    await LO.page.waitForFunction(() => { const f = document.getElementById('overlay-frame'); return f && f.contentWindow && f.contentWindow.document.getElementById('bcg'); }, null, { timeout: 15000 });
+    await sleep(1500);
+    const lo = () => LO.page.evaluate(() => [document.getElementById('stage').classList.contains('gfx-blur'), getComputedStyle(document.getElementById('camera-video')).filter]);
+    eq('Live Output with nothing on air: the camera sharp', await lo(), [false, 'none']);
+    await P1.page.evaluate(() => { const t = document.getElementById('visible-toggle'); t.checked = false; t.dispatchEvent(new Event('change', { bubbles: true })); });
+    o = await until(ov, v => v.bar < 0.05, 4000);
+    ok('the score bar switched off from Cricket Panel → off the overlay', o.bar < 0.05, o);
+    await P1.page.click('#bcg-intro-btn');
+    o = await until(ov, v => v.mode === 'matchIntro', 4000);
+    eq('…MATCH INTRO still goes on air with the bar off', [o.mode, o.live, await air(P3)], ['matchIntro', 1, 'On air · Match Intro']);
+    await sleep(1000);
+    const blur = await lo();
+    eq('…Live Output: the intro over its camera, and the camera blurred a touch behind it', [blur[0], /^blur\(/.test(blur[1]), await LO.page.evaluate(() => !!document.getElementById('overlay-frame').contentWindow.document.querySelector('#bcg .bcg-scene[data-mode="matchIntro"]'))], [true, true, true]);
+    await P3.page.click('#bcg-intro-btn');
+    o = await until(ov, v => !v.on, 4000);
+    await sleep(2000);
+    o = await ov();
+    eq('…hidden (Cricket Panel 3) → gone, and the bar stays off as the operator left it', [o.on, o.bar < 0.05], [false, true]);
+    eq('…Live Output: the camera sharp again', await lo(), [false, 'none']);
+    await P1.page.evaluate(() => { const t = document.getElementById('visible-toggle'); t.checked = true; t.dispatchEvent(new Event('change', { bubbles: true })); });
+    o = await until(ov, v => v.bar > 0.95, 4000);
+    ok('…switched back on → the bar is back', o.bar > 0.95, o);
+    await LO.ctx.close();
+
     // —— double presses ——
     await P1.page.dblclick('#bcg-xi-btn');
     await sleep(1500);
@@ -614,6 +664,7 @@ function sameInBothPanels(){
 (async () => {
   sameInBothPanels();
   await rules();
+  knockoutRounds();
   if(process.env.ONLY !== 'rules') await chain();
   console.log(`\n================  ${pass} passed, ${fail} failed  ================`);
   process.exit(fail ? 1 : 0);
