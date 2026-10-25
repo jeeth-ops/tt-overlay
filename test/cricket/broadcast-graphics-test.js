@@ -50,7 +50,7 @@ function serverRules(){
   const emitted = [];
   const io = { to: (room) => ({ emit: (ev, d) => emitted.push({ room, ev, d }) }) };
   const api = new Function('io', src.slice(a, src.lastIndexOf('// ====', b)) +
-    '\nreturn { BCG_TIMING, bcgApplyCommand, bcgSet, bcgIdle, bcgPublic, bcgCleanData, bcgLogo, bcgTimers };')(io);
+    '\nreturn { BCG_TIMING, BCG_PREF_DEFAULTS, bcgApplyCommand, bcgApplyPrefs, bcgEndsAt, bcgSet, bcgIdle, bcgPublic, bcgCleanData, bcgLogo, bcgTimers };')(io);
   return { ...api, emitted };
 }
 async function rules(){
@@ -131,6 +131,63 @@ async function rules(){
   eq('the toss\'s timer never takes down the intro that replaced it', [state.cricketGraphic.gid, state.cricketGraphic.mode], [replaced.gid, 'matchIntro']);
   R.bcgSet(room, state, R.bcgApplyCommand(replaced, { action: 'stop', gid: replaced.gid }, Date.now()).next);
   eq('nothing left armed', Object.keys(R.bcgTimers), []);
+
+  // PLAYING XI — AUTO 10 s / HOLD until hidden
+  const xh = R.bcgApplyCommand(null, { action: 'start', mode: 'playingXI', data: xiData, xiMode: 'hold' }, now).next;
+  eq('HOLD: no clock at all — team two only on NEXT TEAM, off air only when hidden', [xh.xi.hold, xh.xi.swapAt, xh.xi.endAt, R.bcgEndsAt(xh)], [true, null, null, null]);
+  const nx = R.bcgApplyCommand(xh, { action: 'skip', gid: xh.gid }, now + 30000).next;
+  eq('NEXT TEAM on HOLD → team two now, and still held', [nx.rev, nx.xi.hold, nx.xi.swapAt, nx.xi.endAt], [2, true, now + 30000, null]);
+  eq('…NEXT TEAM again once team two is up → nothing changes', R.bcgApplyCommand(nx, { action: 'skip', gid: xh.gid }, now + 31000), { ok: true, next: null });
+  let m = R.bcgApplyCommand(xh, { action: 'xiMode', gid: xh.gid, xiMode: 'auto' }, now + 500).next;
+  eq('AUTO while team one is held and still coming in → its 10 s from the end of its entrance, then team two\'s',
+    [m.xi.hold, m.xi.swapAt - now, m.xi.endAt - m.xi.swapAt], [false, T.xiEnterMs + 10000, T.xiSwapMs + T.xiEnterMs + 10000]);
+  m = R.bcgApplyCommand(xh, { action: 'xiMode', xiMode: 'auto' }, now + 60000).next;
+  eq('AUTO after a minute on team one → its 10 s from now', m.xi.swapAt - (now + 60000), 10000);
+  m = R.bcgApplyCommand(nx, { action: 'xiMode', xiMode: 'auto' }, now + 40000).next;
+  eq('AUTO while team two is held → its 10 s from now, then off air', [m.xi.swapAt, m.xi.endAt - (now + 40000)], [now + 30000, 10000]);
+  m = R.bcgApplyCommand(xi, { action: 'xiMode', gid: xi.gid, xiMode: 'hold' }, now + 4000).next;
+  eq('HOLD while AUTO team one is up → its clock stops where it is (no team two, no end)', [m.xi.hold, m.xi.swapAt, m.xi.endAt], [true, null, null]);
+  m = R.bcgApplyCommand(sk, { action: 'xiMode', xiMode: 'hold' }, now + 6000).next;
+  eq('HOLD while AUTO team two is up → team two stays, no end', [m.xi.swapAt, m.xi.endAt], [now + 4000, null]);
+  eq('the same mode again → nothing changes', R.bcgApplyCommand(xh, { action: 'xiMode', xiMode: 'hold' }, now), { ok: true, next: null });
+  eq('a mode change aimed at an older graphic → refused', R.bcgApplyCommand(xh, { action: 'xiMode', gid: 'g-old', xiMode: 'auto' }, now).stale, true);
+  const held = {};
+  R.bcgSet('room-T2', held, xh);
+  eq('a held Playing XI arms no timer that could take it down', Object.keys(R.bcgTimers), []);
+
+  // MATCH INTRO — HOLD until hidden, or a time
+  const ih = R.bcgApplyCommand(null, { action: 'start', mode: 'matchIntro', data: { teamA: { name: 'A' }, teamB: { name: 'B' } } }, now).next;
+  eq('the intro holds by default — its final picture has no end', [ih.intro.durationSec, ih.intro.readyAt - now, ih.intro.expiresAt, R.bcgEndsAt(ih)], [null, T.introEnterMs, null, null]);
+  const i30 = R.bcgApplyCommand(null, { action: 'start', mode: 'matchIntro', data: { teamA: { name: 'A' }, teamB: { name: 'B' } }, durationSec: 30 }, now).next;
+  eq('…or 30 s once its sequence has played', i30.intro.expiresAt - i30.intro.readyAt, 30000);
+  eq('…a new time while it is up counts from now', R.bcgApplyCommand(ih, { action: 'duration', gid: ih.gid, durationSec: 15 }, now + 20000).next.intro.expiresAt - (now + 20000), 15000);
+
+  // MANUAL SCORECARDS
+  const card = (o) => ({ kind: 'bat', inningsNo: 2, label: '2ND INNINGS', batting: { name: 'CSK' }, bowling: { name: 'MI' },
+    batters: [{ id: 'c1', name: 'Gaikwad', runs: 12, balls: 9, status: 'out', howOut: 'b Bumrah' }, { id: 'c1', name: 'Gaikwad again', runs: 99 }, { id: 'c2', name: 'Conway', runs: 'abc', status: 'striker' }],
+    bowlers: [{ id: 'm9', name: 'Bumrah', overs: '1.2', wickets: 1, current: true }],
+    groups: [{ label: 'YET TO BAT', names: ['Dube', 'Dube', 'Dhoni', ''] }, { label: 'NOT IN XI', names: [] }], total: { runs: 48, wickets: 1, overs: '6.2', extras: { wd: 2 } }, ...o });
+  const cd = R.bcgCleanData('scorecard', card({}));
+  eq('a scorecard keeps its real rows — each player once (by id), a non-number shown as nothing, its order kept',
+    [cd.batters.map(b => [b.name, b.runs, b.status]), cd.bowlers.map(b => [b.name, b.overs, b.current])], [[['Gaikwad', 12, 'out'], ['Conway', null, 'striker']], [['Bumrah', '1.2', true]]]);
+  eq('…the rest of the squad by name only, each once; an empty group left out', cd.groups, [{ label: 'YET TO BAT', names: ['Dube', 'Dhoni'] }]);
+  eq('a batting card with nobody batted / a bowling card with no bowling → refused, with why',
+    [R.bcgCleanData('scorecard', card({ batters: [] })).error, R.bcgCleanData('scorecard', card({ kind: 'bowl', bowlers: [] })).error, R.bcgCleanData('scorecard', card({ inningsNo: 7 })).error],
+    ['No batting in this innings yet', 'No bowling figures in this innings yet', 'Pick an innings first']);
+  const sc1 = R.bcgApplyCommand(null, { action: 'start', mode: 'scorecard', data: card({}) }, now).next;
+  eq('a manual scorecard is pinned by default (no end); 15 s once it has come in when asked', [sc1.card.expiresAt, R.bcgApplyCommand(null, { action: 'start', mode: 'scorecard', data: card({}), durationSec: 15 }, now).next.card.expiresAt - now],
+    [null, T.cardEnterMs + 15000]);
+
+  // THE SHARED CHOICES
+  const P0 = { ...R.BCG_PREF_DEFAULTS, seq: 1 };
+  let pr = R.bcgApplyPrefs(P0, null, { innings: 2, xiMode: 'hold', cardDur: 30 }, now);
+  eq('choices are kept (innings, AUTO / HOLD, times) with a newer seq', [pr.prefs.innings, pr.prefs.xiMode, pr.prefs.cardDur, pr.prefs.tossDur, pr.prefs.seq > 1, pr.next], [2, 'hold', 30, 10, true, null]);
+  eq('…"live" (null) innings and Hold (null) are choices too', [R.bcgApplyPrefs(pr.prefs, null, { innings: null, cardDur: null }, now).prefs.innings, R.bcgApplyPrefs(pr.prefs, null, { cardDur: null }, now).prefs.cardDur], [null, null]);
+  eq('…anything else is refused', [{ innings: 9 }, { innings: 'x' }, { xiMode: 'sometimes' }, { tossDur: 0 }, { introDur: 99999 }].map(p => R.bcgApplyPrefs(P0, null, p, now).error),
+    ['Unknown innings', 'Unknown innings', 'Playing XI is AUTO or HOLD', `Time on screen must be 1–3600 seconds, or Hold`, `Time on screen must be 1–3600 seconds, or Hold`]);
+  eq('HOLD picked while AUTO Playing XI is up → applied to it at once', R.bcgApplyPrefs(P0, xi, { xiMode: 'hold' }, now + 4000).next.xi, { hold: true, swapAt: null, endAt: null });
+  eq('a scorecard time picked while one is up → from now', R.bcgApplyPrefs(P0, sc1, { cardDur: 30 }, now + 5000).next.card.expiresAt - (now + 5000), 30000);
+  eq('…a time for another graphic leaves the one on air alone', R.bcgApplyPrefs(P0, sc1, { introDur: 30 }, now + 5000).next, null);
   eq('what the server sends carries its clock and the timings', Object.keys(R.bcgPublic({ mode: 'none' })).sort(), ['mode', 'serverNow', 'timing']);
 }
 
@@ -150,6 +207,38 @@ const MATCH = {
   teamB: { name: 'Chennai Super Kings', short: 'CSK', color: '#f5c518', logoUrl: '',
     players: [{ id: 'CSK99', name: 'Benched Bowler', isXI: false }, ...XI_B.map((n, i) => ({ id: 'CSK' + i, name: n, isXI: true }))], captainId: 'CSK5', wkId: 'CSK5' },
   toss: { winner: 'B', decision: 'BOWL' }, venue: 'Wankhede Stadium, Mumbai', matchDate: '2026-10-24', matchStage: 'Final'
+};
+
+// A match in its 2nd innings, as the panels keep it: innings 1 archived (Mumbai
+// Indians 160/7 in 20 overs), Chennai Super Kings chasing 161 at 48/1 after
+// 6.2 overs — with one batting row recorded twice (the same player id).
+const bat = (id, name, runs, balls, fours, sixes, out, howOut, inn) => ({ id, name, runs, balls, fours, sixes, out, howOut, inningsNo: inn });
+const bowl = (id, name, overs, balls, maidens, runs, wickets, inn) => ({ id, name, overs, balls, maidens, runs, wickets, inningsNo: inn });
+const INN = {
+  format: 'T20', inningsNumber: 2, battingTeam: 'B', target: 161, phase: 'REGULATION',
+  inningsArchive: [{ no: 1, team: 'A', runs: 160, wickets: 7, overs: '20.0', declared: false, extras: { wd: 4, nb: 1, b: 0, lb: 2, pen: 0 } }],
+  battingCard: {
+    A: [bat('MI0', 'Rohit Sharma', 34, 22, 4, 1, true, 'c Dhoni b Chahar', 1), bat('MI1', 'Yashasvi Jaiswal', 12, 10, 2, 0, true, 'b Pathirana', 1),
+      bat('MI2', 'Shubman Gill', 41, 30, 3, 2, true, 'c Dube b Jadeja', 1), bat('MI3', 'Virat Kohli', 22, 18, 1, 1, true, 'lbw b Theekshana', 1),
+      bat('MI4', 'Suryakumar Yadav', 9, 6, 1, 0, true, 'run out (Conway)', 1), bat('MI5', 'Rishabh Pant', 15, 11, 2, 0, true, 'st Dhoni b Jadeja', 1),
+      bat('MI6', 'Hardik Pandya', 6, 7, 0, 0, true, 'c Gaikwad b Pathirana', 1), bat('MI7', 'Ravindra Jadeja', 8, 9, 0, 0, false, 'not out', 1),
+      bat('MI8', 'Axar Patel', 6, 7, 0, 0, false, 'not out', 1), bat('MI0', 'Rohit Sharma', 34, 22, 4, 1, true, 'c Dhoni b Chahar', 1)],
+    B: [bat('CSK0', 'Ruturaj Gaikwad', 14, 12, 2, 0, true, 'b Siraj', 2)]
+  },
+  bowlingCard: {
+    A: [bowl('MI10', 'Mohammed Siraj', 3, 0, 0, 25, 1, 2), bowl('MI6', 'Hardik Pandya', 2, 0, 0, 14, 0, 2)],
+    B: [bowl('CSK7', 'Deepak Chahar', 4, 0, 0, 31, 1, 1), bowl('CSK9', 'Matheesha Pathirana', 4, 0, 1, 28, 2, 1), bowl('CSK6', 'Ravindra Jadeja', 4, 0, 0, 30, 2, 1),
+      bowl('CSK10', 'Maheesh Theekshana', 4, 0, 0, 33, 1, 1), bowl('CSK8', 'Tushar Deshpande', 4, 0, 0, 31, 0, 1)]
+  },
+  fallOfWickets: { A: [[1, 31, '3.2'], [2, 58, '6.4'], [3, 92, '11.1'], [4, 104, '12.5'], [5, 131, '16.0'], [6, 140, '17.3'], [7, 146, '18.2']].map(([wkt, runs, over]) => ({ wkt, runs, over, inningsNo: 1 })),
+    B: [{ wkt: 1, runs: 20, over: '2.4', inningsNo: 2 }] },
+  extras: { A: { wd: 0, nb: 0, b: 0, lb: 0, pen: 0 }, B: { wd: 2, nb: 0, b: 1, lb: 0, pen: 0 } },
+  score: { runs: 48, wickets: 1, overs: 6, balls: 2 },
+  striker: { id: 'CSK1', name: 'Devon Conway', runs: 22, balls: 15, fours: 3, sixes: 0 },
+  nonStriker: { id: 'CSK2', name: 'Ajinkya Rahane', runs: 9, balls: 8, fours: 1, sixes: 0 },
+  bowler: { id: 'MI9', name: 'Jasprit Bumrah', overs: 1, balls: 2, maidens: 0, runs: 9, wickets: 0 },
+  ballLog: [{ innings: 2, striker: 'Ruturaj Gaikwad', nonStriker: 'Devon Conway', bowler: 'Mohammed Siraj', ballType: '0' },
+    { innings: 2, striker: 'Ajinkya Rahane', nonStriker: 'Devon Conway', bowler: 'Jasprit Bumrah', ballType: '1', runs: 1 }]
 };
 
 async function chain(){
@@ -286,6 +375,7 @@ async function chain(){
     // —— TOSS from Cricket Panel 3: Hold, a new time while it is up, the end by itself ——
     await P3.page.click('#bcg-toss-btn');
     await P3.page.click('#bcg-dur-chips button[data-dur="hold"]');
+    await until(() => P3.page.evaluate(() => document.querySelector('#bcg-dur-chips [aria-checked="true"]').dataset.dur), v => v === 'hold', 3000);
     eq('the toss card: the recorded result, Hold picked', await P3.page.evaluate(() => [document.getElementById('bcg-toss-result').textContent, document.querySelector('#bcg-dur-chips [aria-checked="true"]').dataset.dur]),
       ['Chennai Super Kings won the toss · elected to bowl first', 'hold']);
     await P3.page.click('#bcg-toss-show');
@@ -325,8 +415,17 @@ async function chain(){
     await sleep(8000);
     o = await ov();
     eq('…past the toss\'s 5 s: the intro is still up (holds until stopped)', [o.mode, o.phase, await air(P1)], ['matchIntro', 'intro', 'On air · Match Intro']);
-    eq('…the intro shows the real teams and this match\'s details', await OV.page.evaluate(() => [...document.querySelectorAll('#bcg .intro-name')].map(e => e.textContent).concat([...document.querySelectorAll('#bcg .intro-ii')].map(e => e.textContent))),
-      ['Mumbai Indians', 'Chennai Super Kings', 'Final', 'T20', 'Wankhede Stadium, Mumbai', '24 OCT 2026']);
+    eq('…the intro shows the real teams and this match\'s details', await OV.page.evaluate(() => [...document.querySelectorAll('#bcg .ar-name')].map(e => e.textContent).concat([...document.querySelectorAll('#bcg .ar-ii')].map(e => e.textContent))),
+      ['Mumbai Indians', 'Chennai Super Kings', 'T20', 'Final', 'Wankhede Stadium, Mumbai', '24 OCT 2026']);
+    eq('…in the Match Arena: no team-coloured halves — one stadium, the teams on plinths, VS between them',
+      await OV.page.evaluate(() => [!!document.querySelector('#bcg .ar-env svg .ar-stands'), document.querySelectorAll('#bcg .ar-frame').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [true, 2, true, false]);
+    // reloaded while it holds: it comes back as it is — not a second opening sequence
+    await OV.page.reload();
+    await OV.page.waitForFunction(() => window.gsap && document.querySelector('#bcg .bcg-scene[data-ready="1"]'), null, { timeout: 6000 });
+    await sleep(150);
+    eq('the overlay reloaded during the intro → the one intro, already on its final picture (not played again)',
+      await OV.page.evaluate(() => [document.querySelectorAll('#bcg .bcg-scene').length, document.querySelector('#bcg .bcg-scene').dataset.hold, getComputedStyle(document.querySelector('#bcg .ar-vs-t')).opacity, getComputedStyle(document.querySelector('#bcg .ar-info-bar')).opacity]),
+      [1, 'until-hidden', '1', '1']);
     await P1.page.click('#bcg-intro-btn');
     o = await until(ov, v => !v.on, 3000);
     eq('MATCH INTRO pressed again (Cricket Panel) = stop → gone', [o.on, await air(P3)], [false, 'Off air']);
@@ -338,6 +437,119 @@ async function chain(){
     await P3.page.click('#bcg-intro-stop');
     o = await until(ov, v => !v.on, 3000);
     eq('STOP INTRO (Cricket Panel 3) in its opening → gone at once', [o.on, o.scenes], [false, 0]);
+
+    // —— PLAYING XI on HOLD: each team stays until NEXT TEAM / HIDE ——
+    const xiMode = (P) => P.page.evaluate(() => document.querySelector('#bcg-xi-mode [aria-checked="true"]').dataset.v);
+    await P3.page.click('#bcg-xi-mode button[data-v="hold"]');
+    eq('HOLD picked in Cricket Panel 3 → Cricket Panel shows HOLD too (one shared choice)', await until(() => xiMode(P1), v => v === 'hold', 3000), 'hold');
+    await P1.page.click('#bcg-xi-btn');
+    o = await until(ov, v => v.phase === 'team1');
+    eq('PLAYING XI on HOLD → team one, held', [o.team, o.hold], ['Mumbai Indians', 'hold']);
+    await sleep(12500);
+    o = await ov();
+    eq('12.5 s later: still team one — no 10 s timer behind HOLD', [o.phase, o.team], ['team1', 'Mumbai Indians']);
+    eq('…NEXT TEAM and HIDE PLAYING XI offered in both panels', await Promise.all([P1, P3].map(P => P.page.evaluate(() => [!document.getElementById('bcg-xi-skip').hidden, !document.getElementById('bcg-xi-stop').hidden]))), [[true, true], [true, true]]);
+    await P3.page.click('#bcg-xi-skip');
+    o = await until(ov, v => v.phase === 'team2' && v.team === 'Chennai Super Kings');
+    eq('NEXT TEAM (Cricket Panel 3) → team two, the graphic still up', [o.on, o.phase, o.hold], [true, 'team2', 'hold']);
+    await sleep(13500);
+    o = await ov();
+    eq('13.5 s later: team two still up — held until hidden', [o.on, o.phase, o.team], [true, 'team2', 'Chennai Super Kings']);
+    await P1.page.click('#bcg-xi-mode button[data-v="auto"]');
+    await until(ov, v => v.hold === 'auto', 3000);
+    const t0 = Date.now();
+    o = await until(ov, v => !v.on, 14000);
+    ok(`AUTO picked (Cricket Panel) while team two was held → it gets its 10 s from now, then goes (${Date.now() - t0} ms, exit included)`, !o.on && Date.now() - t0 >= 9300 && Date.now() - t0 <= 12000, Date.now() - t0);
+    await P1.page.click('#bcg-xi-mode button[data-v="hold"]');
+    await until(() => xiMode(P3), v => v === 'hold', 3000);
+    await P3.page.click('#bcg-xi-btn');
+    await until(ov, v => v.phase === 'team1');
+    await until(() => btn(P1, 'bcg-xi-btn'), v => v.on);
+    await P1.page.click('#bcg-xi-stop');
+    o = await until(ov, v => !v.on, 3000);
+    eq('HIDE PLAYING XI (Cricket Panel) while held → gone, nothing left', [o.on, o.scenes], [false, 0]);
+    await P1.page.click('#bcg-xi-mode button[data-v="auto"]');
+    await until(() => xiMode(P3), v => v === 'auto', 3000);
+
+    // —— INNINGS + MANUAL SCORECARDS (a match in its 2nd innings) ——
+    for(const P of [P1, P3]) await P.page.evaluate((I) => { Object.assign(state, JSON.parse(JSON.stringify(I))); renderSquadUI(); renderPanel(); }, INN);
+    const scoring = (P) => P.page.evaluate(() => JSON.stringify([state.inningsNumber, state.battingTeam, state.score, state.striker.name, state.nonStriker.name, state.bowler.name, state.target, state.battingCard, state.bowlingCard]));
+    const before = await scoring(P1);
+    const inn = (P) => P.page.evaluate(() => [...document.querySelectorAll('#bcg-inn button')].map(b => [b.textContent, b.getAttribute('aria-checked'), b.getAttribute('aria-disabled')]));
+    eq('the innings this T20 has: LIVE (the 2nd, being scored), 1ST, 2ND', await inn(P1), [['LIVE · 2ND', 'true', 'false'], ['1ST', 'false', 'false'], ['2ND', 'false', 'false']]);
+    const card = () => OV.page.evaluate(() => {
+      const s = document.querySelector('#bcg .bcg-scene[data-mode="scorecard"]:not([data-leaving])');
+      if(!s) return null;
+      const t = (q) => { const e = s.querySelector(q); return e ? e.textContent.replace(/\s+/g, ' ').trim() : null; };
+      return { kind: s.dataset.kind, innings: s.dataset.innings, hold: s.dataset.hold || null, team: t('.mc-team'), kicker: t('.mc-kicker'), total: t('.mc-total'), overs: t('.mc-overs'),
+        rows: [...s.querySelectorAll('.mc-tr:not(.mc-th)')].map(r => [...r.children].map(c => c.textContent.trim())), groups: [...s.querySelectorAll('.mc-group')].map(g => [g.querySelector('b').textContent, g.querySelector('span').textContent.replace(/\s+/g, ' ')]),
+        sum: t('.mc-sum'), fow: t('.mc-fow') };
+    });
+    await P1.page.click('#bcg-inn button[data-v="1"]');
+    eq('1ST picked in Cricket Panel → Cricket Panel 3 shows it too', (await until(() => inn(P3), v => v[1][1] === 'true', 3000))[1][1], 'true');
+    await P1.page.click('#bcg-bat-btn');
+    let c = await until(card, v => v && v.kind === 'bat', 4000);
+    await sleep(1600);
+    c = await card();
+    eq('BAT SCORECARD, 1st innings → Mumbai Indians\' real innings: 160/7 in 20 overs, pinned', [c.innings, c.team, c.kicker, c.total, c.overs, c.hold],
+      ['1', 'Mumbai Indians', 'BATTING · 1ST INNINGS', '160/7', '20.0 OV · RR 8.00', 'until-hidden']);
+    eq('…every batter once (the row recorded twice shows once), in batting order, with their real figures',
+      c.rows.map(r => r.slice(0, 4)), INN.battingCard.A.slice(0, 9).map(b => [b.name, b.howOut, String(b.runs), String(b.balls)]));
+    eq('…the rest of the squad by name only: did not bat (XI), not in the XI (bench)', c.groups, [['DID NOT BAT', 'Jasprit Bumrah · Mohammed Siraj'], ['NOT IN XI', 'Benched Batter']]);
+    eq('…extras, total and the fall of wickets from the innings itself', [c.sum, c.fow], ['EXTRAS7 (wd 4, nb 1, lb 2)TOTAL 160/7 (20.0 ov)', 'FALL OF WICKETS1-31 (3.2) · 2-58 (6.4) · 3-92 (11.1) · 4-104 (12.5) · 5-131 (16.0) · 6-140 (17.3) · 7-146 (18.2)']);
+    eq('…Cricket Panel 3: the BAT button lit, the over-end cards marked MANUAL', await P3.page.evaluate(() => [document.getElementById('bcg-bat-btn').classList.contains('on'), document.getElementById('bcg-auto').textContent]),
+      [true, 'MANUAL — over-end cards paused']);
+    await P3.page.click('#bcg-bowl-btn');
+    c = await until(card, v => v && v.kind === 'bowl', 4000);
+    await sleep(1600);
+    c = await card();
+    eq('BOWL SCORECARD (Cricket Panel 3), 1st innings → the side that bowled it: Chennai Super Kings, their figures in bowling order',
+      [c.team, c.kicker, c.rows.map(r => r.slice(0, 5))], ['Chennai Super Kings', 'BOWLING · 1ST INNINGS', INN.bowlingCard.B.map(b => [b.name, `${b.overs}.${b.balls}`, String(b.maidens), String(b.runs), String(b.wickets)])]);
+    eq('…did not bowl (the rest of their XI) and not in the XI — names only, no made-up figures', c.groups,
+      [['DID NOT BOWL', 'Ruturaj Gaikwad · Devon Conway · Ajinkya Rahane · Shivam Dube · Moeen Ali · MS Dhoni'], ['NOT IN XI', 'Benched Bowler']]);
+    await P3.page.click('#bcg-inn button[data-v="2"]');
+    c = await until(card, v => v && v.innings === '2', 5000);
+    await sleep(1600);
+    c = await card();
+    eq('2ND picked while the bowling card is up → the card follows: Mumbai Indians bowling, the bowler on marked',
+      [c.kind, c.team, c.kicker, c.rows.map(r => r.slice(0, 5))], ['bowl', 'Mumbai Indians', 'BOWLING · 2ND INNINGS',
+        [['Mohammed Siraj', '3.0', '0', '25', '1'], ['Jasprit Bumrah *', '1.2', '0', '9', '0'], ['Hardik Pandya', '2.0', '0', '14', '0']]]);
+    eq('…during the live innings it is "not bowled yet", not "did not bowl"', c.groups[0][0], 'NOT BOWLED YET');
+    await P1.page.click('#bcg-bat-btn');
+    c = await until(card, v => v && v.kind === 'bat' && v.innings === '2', 4000);
+    await sleep(1600);
+    c = await card();
+    eq('BAT SCORECARD, 2nd innings → the chase as it stands: 48/1, target 161, the two at the crease', [c.team, c.total, c.overs, c.rows.map(r => r.slice(0, 3))],
+      ['Chennai Super Kings', '48/1', '6.2 OV · RR 7.58 · TARGET 161', [['Ruturaj Gaikwad', 'b Siraj', '14'], ['Devon Conway *', 'batting', '22'], ['Ajinkya Rahane', 'batting', '9']]]);
+    eq('…the rest of their XI is "yet to bat" (never "did not bat" mid-innings)', c.groups[0], ['YET TO BAT', 'Shivam Dube · Moeen Ali · MS Dhoni · Ravindra Jadeja · Deepak Chahar · Tushar Deshpande · Matheesha Pathirana · Maheesh Theekshana']);
+    await P3.page.click('#bcg-inn button[data-v="1"]');
+    c = await until(card, v => v && v.innings === '1', 5000);
+    await sleep(1600);
+    c = await card();
+    eq('back to the 1ST → its own figures again, never mixed with the 2nd', [c.team, c.total, c.rows.length, c.rows[0].slice(0, 3)], ['Mumbai Indians', '160/7', 9, ['Rohit Sharma', 'c Dhoni b Chahar', '34']]);
+    eq('picking innings and showing cards changed nothing in the scoring (innings, strike, figures)', [await scoring(P1), await scoring(P3)], [before, before]);
+    // the automatic between-overs cards wait while a card is pinned …
+    await P1.page.evaluate(() => emitOverSummary(6, 7, 0, ['1', '4', '0', '1', '1', '0']));
+    await sleep(1500);
+    eq('an over ends while the card is pinned → its automatic over-end card waits (the pinned card stays)',
+      [await OV.page.evaluate(() => getComputedStyle(document.getElementById('over-summary-card')).display), (await card()) && (await card()).kind], ['none', 'bat']);
+    await P3.page.click('#bcg-card-hide');
+    o = await until(ov, v => !v.on, 4000);
+    eq('HIDE SCORECARD (Cricket Panel 3) → gone, both panels back to AUTO', [o.on, await P1.page.evaluate(() => document.getElementById('bcg-auto').textContent)], [false, 'Over-end cards: AUTO']);
+    await sleep(1500);
+    await P1.page.evaluate(() => emitOverSummary(7, 9, 1, ['W', '4', '1', '1', '2', '1']));
+    const shown = await until(() => OV.page.evaluate(() => document.getElementById('over-summary-card').style.display), v => v === 'flex', 3000);
+    eq('…and the next over\'s automatic card comes up by itself, as before', shown, 'flex');
+    eq('…and leaves by itself', await until(() => OV.page.evaluate(() => document.getElementById('over-summary-card').style.display), v => v === 'none', 8000), 'none');
+    // a Test has four innings: the ones not played yet are offered but not available
+    await P3.page.evaluate(() => { state.format = 'Test'; renderPanel(); });
+    eq('a Test → LIVE, 1ST–4TH; 3RD and 4TH not played yet (not pickable)', (await inn(P3)).map(b => [b[0], b[2]]), [['LIVE · 2ND', 'false'], ['1ST', 'false'], ['2ND', 'false'], ['3RD', 'true'], ['4TH', 'true']]);
+    await P3.page.click('#bcg-inn button[data-v="3"]', { force: true });
+    await sleep(500);
+    eq('…a 3RD picked anyway changes nothing', (await inn(P3))[1][1], 'true');
+    await P3.page.evaluate(() => { state.format = 'T20'; renderPanel(); });
+    await P1.page.click('#bcg-inn button[data-v="live"]');
+    await until(() => inn(P3), v => v[0][1] === 'true', 3000);
 
     // —— double presses ——
     await P1.page.dblclick('#bcg-xi-btn');
@@ -395,7 +607,7 @@ function sameInBothPanels(){
   for(const [what, a, b] of [
     ['the script', '/* ============================================================\n   🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro', '\nbcgRender();\n'],
     ['the card', '<!-- 🎬 BROADCAST GRAPHICS — Playing XI / Toss / Match Intro, full screen on', '<div class="card squad-hub" id="card-team-squads">'],
-    ['its styles', '/* 🎬 BROADCAST GRAPHICS — the three full-screen graphics', 'html[data-theme="light"] .bcg-msg.bad']
+    ['its styles', '/* 🎬 BROADCAST GRAPHICS — the full-screen graphics', 'html[data-theme="light"] .bcg-msg.bad']
   ]) eq(`${what}: cricket-panel.html = cricket-panel3.html`, cut('cricket-panel.html', a, b) === cut('cricket-panel3.html', a, b), true);
 }
 

@@ -24,8 +24,8 @@
 //     is the odometer, not a defect).
 //   • The innings-break strip keeps its full size when a webfont finishes
 //     loading during its reveal; the team record fits a 480p output.
-//   • The full-screen broadcast graphics — TOSS, PLAYING XI (both teams) and
-//     MATCH INTRO — at 854x480, 1280x720, 1920x1080 and 1920x1280, with the
+//   • The full-screen broadcast graphics — TOSS, PLAYING XI (both teams),
+//     MATCH INTRO and the manual BAT / BOWL SCORECARDS — at 854x480, 1280x720, 1920x1080 and 1920x1280, with the
 //     longest names and every detail: every text and logo on the screen and
 //     inside its 5% margin, none cut or on top of another, none on a logo it
 //     is not part of; the score bar off air while one is up.
@@ -484,7 +484,18 @@ const GFX = {
   'PLAYING XI, team 1': () => gfx('playingXI', { teams: [{ ...LONG_A, players: XI_LONG('a') }, { ...LONG_B, players: XI_LONG('b') }], info: GFX_INFO }, 0, n => ({ xi: { swapAt: n + 11500, endAt: n + 23900 } })),
   // (opened in the middle of team 2's time — as an overlay reloaded then would be)
   'PLAYING XI, team 2': () => gfx('playingXI', { teams: [{ ...LONG_A, players: XI_LONG('a') }, { ...LONG_B, players: XI_LONG('b') }], info: GFX_INFO }, 15000, n => ({ xi: { swapAt: n + 11500, endAt: n + 23900 } })),
-  'MATCH INTRO': () => gfx('matchIntro', { teamA: LONG_A, teamB: LONG_B, info: GFX_INFO }, 7000, n => ({ intro: { readyAt: n + 6400 } }))
+  'MATCH INTRO': () => gfx('matchIntro', { teamA: LONG_A, teamB: LONG_B, info: GFX_INFO }, 8000, n => ({ intro: { readyAt: n + 7200, durationSec: null, expiresAt: null } })),
+  // the longest card there is: twelve batters (one retired) with long names and dismissals, all ten wickets, a 17-player squad
+  'BAT SCORECARD': () => gfx('scorecard', { kind: 'bat', inningsNo: 2, label: '2ND INNINGS', live: false, batting: LONG_B, bowling: LONG_A, info: GFX_INFO,
+    batters: XI_LONG('b').concat([{ id: 'b11', name: 'Abdul Rahman Mohammed Fitzgerald' }]).map((p, i) => ({ ...p, runs: 100 + i, balls: 99, fours: 12, sixes: 10, sr: '101.0',
+      status: i === 11 ? 'notout' : i === 4 ? 'retired' : 'out', howOut: i === 4 ? 'retired hurt' : 'c Christopher Fitzgerald-Montgomery b Venkatasubramanian Raghunathan' })),
+    bowlers: [], groups: [{ label: 'REPLACED (IMPACT)', names: ['Venkatasubramanian Raghunathan Iyer'] }, { label: 'NOT IN XI', names: ['Mohammed Abdul Rahman Siddiqui Junior', 'Christopher Fitzgerald-Montgomery Senior', 'Suryakumar Ashok Yadav Junior', 'Hardik Himanshu Pandya', 'Jasprit Jasbirsingh Bumrah Junior'] }],
+    total: { runs: 199, wickets: 10, overs: '19.5', target: 288, extrasTotal: 23, extras: { wd: 11, nb: 4, b: 4, lb: 3, pen: 1 } },
+    fow: Array.from({ length: 10 }, (_, i) => ({ wkt: i + 1, runs: 100 + i * 19, over: `${10 + i}.${i % 6}` })) }, 1500, n => ({ card: { durationSec: null, readyAt: n + 1400, expiresAt: null } })),
+  'BOWL SCORECARD': () => gfx('scorecard', { kind: 'bowl', inningsNo: 1, label: '1ST INNINGS', live: true, batting: LONG_A, bowling: LONG_B, info: GFX_INFO, batters: [],
+    bowlers: XI_LONG('b').slice(0, 9).map((p, i) => ({ ...p, overs: '10.0', maidens: 2, runs: 100 + i, wickets: 5, econ: '10.00', dots: 30, wides: 10, noBalls: 10, current: i === 3 })),
+    groups: [{ label: 'NOT BOWLED YET', names: XI_LONG('b').slice(9).map(p => p.name) }, { label: 'NOT IN XI', names: ['Mohammed Abdul Rahman Siddiqui Junior', 'Christopher Fitzgerald-Montgomery Senior', 'Hardik Himanshu Pandya', 'Jasprit Jasbirsingh Bumrah Junior'] }],
+    total: { runs: 312, wickets: 9, overs: '49.5', extrasTotal: 23, extras: { wd: 11, nb: 4, b: 4, lb: 3, pen: 1 } }, fow: [] }, 1500, n => ({ card: { durationSec: null, readyAt: n + 1400, expiresAt: null } }))
 };
 async function broadcastGraphics(browser){
   console.log('\n######## TOSS / PLAYING XI / MATCH INTRO — full screen, every output size ########');
@@ -512,7 +523,7 @@ async function broadcastGraphics(browser){
         return { mode: sc && sc.dataset.mode, phase: sc && sc.dataset.phase, barOff: +getComputedStyle(document.getElementById('scorecard')).opacity < 0.05, outside };
       });
       const issues = await O.page.evaluate(() => window.__audit({ roots: ['#bcg .bcg-scene:not([data-leaving])'], icons: '#bcg .bcg-plate', minOpacity: 0.15, clipPath: false }));
-      const want = label.startsWith('PLAYING XI') ? (label.endsWith('2') ? 'team2' : 'team1') : label === 'TOSS' ? 'toss' : 'intro';
+      const want = label.startsWith('PLAYING XI') ? (label.endsWith('2') ? 'team2' : 'team1') : label === 'TOSS' ? 'toss' : label.includes('SCORECARD') ? 'card' : 'intro';
       eq(`${w}x${h}: ${label} — on air, the bar off air, every text / logo inside the margin, nothing cut or overlapping`,
         [r.phase, r.barOff, r.outside, issues], [want, true, [], []]);
       if(SHOTS) await O.page.screenshot({ path: path.join(SHOTS, `gfx-${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${w}x${h}.png`) });
