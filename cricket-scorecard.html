@@ -6157,15 +6157,10 @@ function renderHero(s){
   if(battingTagLive) battingTagLive.classList.toggle('result-note', !!liveLeadNote);
   setText('batting-tag', isFinished ? liveLeadNote
     : (liveInSuperOver(s) ? `Super Over ${(s.superOver && s.superOver.number) || 1} \u00b7 ` : '') + (battingObj.short || battingObj.name || '') + ' batting');
-  // 🎨 Tie the Batting/Bowling scorecard cards to the ACTUAL team currently
-  // in each role (this flips every innings), instead of a fixed accent
-  // colour on both — see --card-accent in the .card-featured CSS.
-  const bowlingObj = teamObj(s, s.battingTeam === 'A' ? 'B' : 'A');
-  const battingCardEl = document.getElementById('batting-card');
-  const bowlingCardEl = document.getElementById('bowling-card');
-  if(battingCardEl) battingCardEl.style.setProperty('--card-accent', battingObj.color || 'var(--accent)');
-  if(bowlingCardEl) bowlingCardEl.style.setProperty('--card-accent', bowlingObj.color || 'var(--six)');
-  applyScorecardTeams(battingObj, bowlingObj);
+  // 🎨 The Batting / Bowling cards' team names and colours are set by
+  // renderTables (which runs right after this), from the innings ON SHOW —
+  // not from who is batting now, or the 1st innings tab would wear the
+  // 2nd innings' teams.
 
   // Test cricket: show each side's full match score line (e.g. "230 & 145/6")
   // under their name, not just the live figure for whoever's batting now —
@@ -7547,12 +7542,13 @@ function renderTables(s){
   const isLive = viewingInnings === (s.inningsNumber || 1);
   const bat = battingRowsForInnings(s, viewingInnings);
   const bowl = bowlingRowsForInnings(s, viewingInnings);
-  // The team chips follow the innings on show — during a Super Over the
-  // side at the crease is NOT the side whose regulation innings is listed.
-  if(liveInSuperOver(s)){
-    const bk = battingTeamForInnings(s, viewingInnings);
-    applyScorecardTeams(teamObj(s, bk), teamObj(s, bk === 'A' ? 'B' : 'A'));
-  }
+  // The cards' team names + colours follow the innings ON SHOW: the 1st
+  // innings tab during the 2nd innings is the side that batted first, and
+  // during a Super Over the side at the crease is NOT the side whose
+  // regulation innings is listed. (Before the early return below, so a tab
+  // switch always repaints them even when the rows have not changed.)
+  const bk = battingTeamForInnings(s, viewingInnings);
+  applyScorecardTeams(teamObj(s, bk), teamObj(s, bk === 'A' ? 'B' : 'A'));
   scImpactLog = impactListOf(s);
   const key = viewingInnings + '|' + JSON.stringify(bat) + '|' + JSON.stringify(bowl) + '|' + JSON.stringify(scImpactLog);
   if(!changed('tables', key)) return;

@@ -224,6 +224,21 @@ async function scorecardSuite(){
   eq('13 NB shown as NB / NB+1 in the ball chips', S.E(`(latestState = ${JSON.stringify({ ...fixtures.so.soBreak, ballHistory: ['Nb', 'Nb+1', '4'] })}, _lastKey.balls = null, renderBalls(latestState), [...document.querySelectorAll('#balls-scroll .ball-chip')].map(e => e.textContent))`), ['NB', 'NB+1', '4']);
   eq('13 NB+4 commentary badge', S.E(`ballBadgeInfo({ ballType:'Nb', runs:5 }).label`), 'NB+4');
   eq('13 a first-ball NB (stored at 0.0) reads as ball 0.1', S.E(`overBallLabel(0, 'Nb')`), '0.1');
+  // 📋 The Batting / Bowling cards wear the teams of the innings ON SHOW: mid
+  // 2nd innings, the 1st innings tab is the side that batted first (A here)
+  const base = fixtures.normal.state, tA = { ...base.teamA, color: '#7a1c2b' }, tB = { ...base.teamB, color: '#e8590c' };
+  const mid = { ...base, teamA: tA, teamB: tB, inningsNumber: 2, battingTeam: 'B', inningsArchive: [{ no: 1, team: 'A', runs: 280, wickets: 0, overs: '20.0' }] };
+  const lbl = (t) => t.short || t.name;
+  const cards = () => S.E(`['batting-team-chip', 'bowling-team-chip'].map(id => document.getElementById(id).textContent).concat(['batting-card', 'bowling-card'].map(id => document.getElementById(id).style.getPropertyValue('--card-accent')))`);
+  S.E(`finalMatchData = null; liveSelectedInnings = null; latestState = ${JSON.stringify(mid)}; render();`);
+  eq('13 mid 2nd innings: Batting card = the side batting now, Bowling = the other, in their colours', cards(), [lbl(tB), lbl(tA), '#e8590c', '#7a1c2b']);
+  S.E(`document.querySelector('#live-innings-toggle button[data-inn="1"]').click()`);
+  eq('13 1st innings tab → its own sides: the team that batted first on Batting, in its colour', cards(), [lbl(tA), lbl(tB), '#7a1c2b', '#e8590c']);
+  S.E(`render()`);
+  eq('13 …and they stay so through the next live update', cards(), [lbl(tA), lbl(tB), '#7a1c2b', '#e8590c']);
+  S.E(`document.querySelector('#live-innings-toggle button[data-inn="2"]').click()`);
+  eq('13 back on the live 2nd innings → its sides again', cards(), [lbl(tB), lbl(tA), '#e8590c', '#7a1c2b']);
+
   // 🪙 The toss under the score: live, in a saved match, and not at all for an older save without it
   S.E(`finalMatchData = null; latestState = ${JSON.stringify({ ...fixtures.so.soLive, toss: { winner: 'B', decision: 'BOWL' } })}; render();`);
   eq('13 live: who won the toss and what they chose, under the score', [S.E(`document.getElementById('toss-line').hidden`), S.text('#toss-text')],
