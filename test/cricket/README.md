@@ -17,6 +17,9 @@ node test/cricket/clip-attribution-panel-test.js # both panels: every clip names
 node test/cricket/clip-linkage-server-test.js    # the website links a clip to the same delivery and dismissed batter
 node test/clip-attribution.test.js               # the shared ownership rule + clip organiser folders/names
 node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server: owner cases 1-9, 403, rollback
+NODE_PATH=$(npm root -g) node test/cricket/clip-delete-test.js  # 🪦 an owner-deleted clip stays deleted: real server + stand-in R2 —
+                                                  # video + poster off R2; sent again / status / attach / classify / replace
+                                                  # never bring it back; a refused R2 delete is kept for the retry sweep
 node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
 node test/cricket/scorecard-clip-download-test.js # scorecard player drawer: download all / 4s / 6s / 4s + 6s / wickets as one video, after picking 16:9 / 9:16 + wagon wheel
 node test/cricket/commentary-wagon-wheel-test.js # Full Commentary: a wagon wheel per over (MCA President Cup 2026 + matches from 10 Oct 2026 on), over pips, Fours / Sixes wheel, only changed overs rebuilt

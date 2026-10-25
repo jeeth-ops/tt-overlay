@@ -8051,6 +8051,7 @@ function withServerClipStatus(j){
   const c = serverClipStatus[j.clipId];
   const d = c && c.d;
   if(!d) return j; // website never got it (e.g. cut failed, or we are offline) — helper's view is right
+  if(d.deleted) return { ...j, deletedOnWebsite: true }; // the owner deleted it on the scorecard
   // 🧭 The helper owns the STAGE (it is the one doing the work and the one
   // that knows whether this laptop is online); the website is simply a
   // second, sometimes-fresher opinion on how far each upload leg has got.
@@ -8078,6 +8079,7 @@ function legIcon(s){ return s === 'uploaded' ? '✓' : s === 'failed' ? '✕ (re
    merely waiting for the internet is NEVER shown as a failure — that is
    what "UPLOAD PENDING - OFFLINE" is for. */
 function clipJobLine(j){
+  if(j.deletedOnWebsite) return '🗑️ Deleted from the scorecard — not sent again';
   const secs = j.nextUploadAt ? Math.max(0, Math.round((j.nextUploadAt - Date.now()) / 1000)) : null;
   const legs = `R2 ${legIcon(j.r2Status)} · Drive ${legIcon(j.driveStatus)}`;
   switch(j.syncStatus || j.status){

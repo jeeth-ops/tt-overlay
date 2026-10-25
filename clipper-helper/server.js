@@ -1155,6 +1155,7 @@ async function syncJob(job) {
   }
   if (!neverSent) noteNetworkOutcome(true); // a real answer proves the connection; a skipped check proves nothing
   const doc = remote.status === 200 && remote.json && remote.json.success ? remote.json : null;
+  if (doc && doc.deleted) return markDeletedOnWebsite(job);
   const r2Done = !!doc && doc.r2Status === 'uploaded';
   const driveDone = !!doc && doc.driveStatus === 'uploaded';
   update(job, {
@@ -1210,8 +1211,18 @@ async function syncJob(job) {
     return onSyncFailure(job, r.error, stats, r.phases);
   }
   noteNetworkOutcome(true);
+  if (/"deleted"\s*:\s*true/.test(r.body || '')) return markDeletedOnWebsite(job); // (the owner deleted it meanwhile — dropped there)
   console.log(`📤 [${job.eventType}] ${job.clipId}: received by website (${stats} · ${r.phases}) — R2 + Drive uploads running there`);
   update(job, { status: 'SENT', uploadedAt: Date.now(), r2Status: job.r2Status === 'uploaded' ? 'uploaded' : 'pending', driveStatus: job.driveStatus === 'uploaded' ? 'uploaded' : 'pending', error: null });
+}
+
+// 🪦 The owner deleted this clip on the scorecard: it is finished here too —
+// never sent again (the website would drop it anyway), and nothing more
+// to follow. The local file stays where it is, like every other clip.
+function markDeletedOnWebsite(job) {
+  if (job.deletedOnWebsite && job.status === 'SYNC_COMPLETE') return;
+  console.log(`🗑️  [${job.eventType}] ${job.clipId}: deleted on the website by the owner — not sent again`);
+  update(job, { status: 'SYNC_COMPLETE', deletedOnWebsite: true, websiteStatus: 'deleted', error: null, nextUploadAt: null });
 }
 
 // 📌 THE LAST STAGE — tell the website exactly which event this clip
@@ -1414,6 +1425,7 @@ async function pollOneClipStatus(server, job) {
   noteNetworkOutcome(true);
   if (r.status !== 200 || !r.json || !r.json.success) return;
   const d = r.json;
+  if (d.deleted) { markDeletedOnWebsite(job); return; }
 
   // Remembered before the patch so each leg is announced EXACTLY once,
   // on the tick it actually changes — never re-logged on later polls.
@@ -1615,8 +1627,9 @@ function jobView(j) {
     striker: j.strikerName || null, bowler: j.bowlerName || null,
     strikerId: j.strikerId || null, bowlerId: j.bowlerId || null,
     r2Status: j.r2Status || null, driveStatus: j.driveStatus || null,
-    websiteStatus: j.status === 'SYNC_COMPLETE' ? 'updated' : (j.websiteStatus || 'pending'),
+    websiteStatus: j.deletedOnWebsite ? 'deleted' : j.status === 'SYNC_COMPLETE' ? 'updated' : (j.websiteStatus || 'pending'),
     driveBackupFailed: !!j.driveBackupFailed,
+    deletedOnWebsite: !!j.deletedOnWebsite,
     createdAt: j.createdAt, updatedAt: j.updatedAt, syncedAt: j.syncedAt || null,
   };
 }

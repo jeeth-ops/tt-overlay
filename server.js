@@ -135,6 +135,7 @@ let mongoDb = null;
 let ballsCollection = null;
 let matchesCollection = null;
 let clipsCollection = null;
+let deletedClipsCollection = null; // 🪦 clips the owner deleted — see DELETED CLIPS below
 let leaguesCollection = null;
 let templatesCollection = null;
 let auditLogsCollection = null;
@@ -197,6 +198,7 @@ async function connectMongoOnce() {
         ballsCollection = mongoDb.collection('balls');
         matchesCollection = mongoDb.collection('matches');
         clipsCollection = mongoDb.collection('clips');
+        deletedClipsCollection = mongoDb.collection('deletedClips');
         leaguesCollection = mongoDb.collection('leagues');
         // 🛡️ Owner Admin Portal — templates (Broadcasting tab), auditLogs
         // (every admin action, append-only) and settings (single doc of
@@ -261,6 +263,7 @@ async function connectMongoOnce() {
         // unique so two ingests of the exact same event can never create
         // two docs (finalizeClip upserts on this instead of inserting).
         await clipsCollection.createIndex({ clipId: 1 }, { unique: true, sparse: true });
+        await deletedClipsCollection.createIndex({ clipId: 1 }, { unique: true });
         // Restart-safe retry sweep scans exactly this shape of query.
         await clipsCollection.createIndex({ status: 1, retryCount: 1 });
         // 🔗 Clip ↔ player linking (see "PLAYER IDENTITY FOR CLIPS & STATS"
@@ -968,6 +971,12 @@ const HIGHLIGHT_VISIBLE = { isHighlight: { $ne: false }, status: { $ne: 'AWAITIN
 
 async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMeta, uid, outFile, offsetStartSec, offsetEndSec, clipMeta }) {
     clipId = clipId || buildClipId(matchId, eventType, eventTimestamp);
+    // 🪦 The owner deleted this clip: a copy sent again is dropped, never re-created.
+    if (await isClipDeleted(clipId)) {
+        console.log(`🪦 [CLIP] clipId=${clipId} was deleted by the owner — this copy is dropped, not brought back`);
+        if (outFile) fs.unlink(outFile, () => {});
+        return { clipId, r2Ok: false, driveOk: false, deleted: true };
+    }
     if (clipsCollection) {
         const link = await computeClipLinkage(matchId, ballMeta, uid, eventType);
         const { linkedToCanonicalBall, ...linkFields } = link;
@@ -1079,6 +1088,11 @@ async function finalizeClip({ clipId, matchId, eventType, eventTimestamp, ballMe
     if (optimized.posterPath) fs.unlink(optimized.posterPath, () => {});
     console.log(`[R2] ${r2Ok ? 'success' : 'failure'} — clipId=${clipId}`);
     console.log(`[DRIVE] ${driveOk ? 'success' : 'failure'} — clipId=${clipId}`);
+    // Deleted while it was uploading: take back off R2 what just landed.
+    if (await removeIfDeletedMeanwhile(clipId, matchId)) {
+        fs.unlink(outFile, () => {});
+        return { clipId, r2Ok: false, driveOk: false, deleted: true };
+    }
 
     if (clipsCollection) {
         await clipsCollection.updateOne({ clipId }, { $set: { status: computeClipStatus(r2Ok ? 'uploaded' : 'failed', driveOk ? 'uploaded' : 'failed') } }).catch(() => {});
@@ -1200,6 +1214,7 @@ async function runClipRetrySweep() {
             needsDrive ? uploadClipToDrive(doc.clipId, doc.matchId, doc.filePath) : Promise.resolve(true),
         ]);
 
+        if (await removeIfDeletedMeanwhile(doc.clipId, doc.matchId)) { fs.unlink(doc.filePath, () => {}); continue; }
         const newRetryCount = (doc.retryCount || 0) + 1;
         if (r2Ok && driveOk) {
             await clipsCollection.updateOne({ clipId: doc.clipId }, { $set: { status: 'COMPLETE' }, $unset: { permanentFailureReason: '' } }).catch(() => {});
@@ -1226,6 +1241,13 @@ setInterval(runClipRetrySweep, CLIP_RETRY_INTERVAL_MS);
 app.get('/api/clips/status/:clipId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
     try {
+        // 🪦 Deleted by the owner. Never a 404: the Clipper helper reads "no
+        // such clip" as "the website lost its copy" and sends it again. Both
+        // legs read as done, so an uploader of any version has nothing left
+        // to send and stops; the attach an older helper sends next is dropped.
+        if (await isClipDeleted(req.params.clipId)) {
+            return res.json({ success: true, clipId: req.params.clipId, status: 'DELETED', deleted: true, r2Status: 'uploaded', driveStatus: 'uploaded' });
+        }
         const doc = await clipsCollection.findOne(
             { clipId: req.params.clipId },
             // r2Key/driveFileId are here so the local helper can record the
@@ -1271,6 +1293,7 @@ app.post('/api/clips/classify', async (req, res) => {
     if (!matchId || !m || !clipId.startsWith(`${matchId}_`)) {
         return res.status(400).json({ success: false, error: 'clipId must be a HIGHLIGHTS or WICKET clip of this match' });
     }
+    if (await isClipDeleted(clipId)) return res.json({ success: true, clipId, status: 'DELETED', deleted: true });
     const eventType = CLASSIFY_EVENT_TYPES.has(String(body.eventType || '').toUpperCase()) ? String(body.eventType).toUpperCase() : 'CLIP';
     const isHighlight = body.isHighlight === true;
     const ballMeta = body.ballMeta && typeof body.ballMeta === 'object' ? body.ballMeta : null;
@@ -1353,6 +1376,8 @@ app.post('/api/clips/attach', async (req, res) => {
     // A clipId always starts with its own match's id (see buildClipId), so
     // this route can never be used to touch another match's clip.
     if (!clipId.startsWith(`${matchId}_`)) return res.status(400).json({ success: false, error: 'clipId does not belong to this match' });
+    // 🪦 Deleted by the owner — acknowledged (the helper is done with it), never re-created.
+    if (await isClipDeleted(clipId)) return res.json({ success: true, clipId, status: 'DELETED', deleted: true });
 
     const ballMeta = (body.ballMeta && typeof body.ballMeta === 'object') ? body.ballMeta : clipBallMetaFromClipMeta(meta);
     try {
@@ -1499,6 +1524,12 @@ app.post('/api/clips/ingest', express.raw({ type: '*/*', limit: '60mb' }), async
     // and for which clip. Without it, a clip upload that dies with no
     // answer is indistinguishable from one that never reached the server.
     console.log(`⬇️  [INGEST] clipId=${clipId} matchId=${matchId} bytes=${req.body ? req.body.length : 0} ua=${(req.headers['user-agent'] || 'none').slice(0, 40)}`);
+    // 🪦 A clip the owner deleted, sent again (the helper's or the Stream
+    // Engine's retry): acknowledged so the sender stops, and dropped.
+    if (await isClipDeleted(clipId)) {
+        console.log(`🪦 [INGEST] clipId=${clipId} was deleted by the owner — acknowledged and dropped`);
+        return res.json({ success: true, clipId, status: 'DELETED', deleted: true });
+    }
 
     let ballMeta = null;
     try {
@@ -6436,37 +6467,101 @@ adminRouter.put('/clips/:clipId', async (req, res) => {
     }
 });
 
-// Removes a clip wrongly attached to a player/event entirely (rather than
-// reassigning it) — e.g. it was never a real four/six/wicket.
-// Removes a clip's actual video files from wherever they were uploaded
-// (R2 and/or Drive) — best-effort: storage deletion failures are logged
-// but never block the Mongo record from being removed (the DB doc is
-// the source of truth for "does this clip exist"; a straggling R2/Drive
-// object with nothing pointing at it just gets cleaned up on the next
-// attempt or manually, rather than leaving the clip listed as
-// "deleted" everywhere but still playable via a direct link).
-async function deleteClipStorage(clip) {
-    const results = { r2: null, drive: null };
-    if (clip.r2Key && r2Client && R2_BUCKET_NAME) {
-        try {
-            await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: clip.r2Key }));
-            results.r2 = 'deleted';
-        } catch (err) {
-            console.log(`R2 delete error (${clip.r2Key}):`, err.message || err);
-            results.r2 = 'failed';
+// ================================================================
+// 🪦 DELETED CLIPS — an owner's delete is final.
+// The uploaders on the operator's laptop keep every clip they cut and send
+// it again whenever the website seems not to have it: the Clipper helper
+// re-sends a clip whose status comes back "not found" (it reads that as a
+// website that lost its copy) and when the ball's details change later;
+// the Stream Engine retries a send whose answer got lost; a late attach /
+// classify upserts the record. Each of those used to bring a deleted clip
+// straight back — onto Cloudflare R2 and into the scorecard. So the id of
+// every deleted clip is kept in deletedClips, and every way in (ingest,
+// attach, classify, status, finalizeClip, the retry sweep) checks it. Any
+// of its files R2 / Drive refused to delete at the time are listed on that
+// record, and runDeletedClipCleanup keeps trying until they are gone.
+// ================================================================
+async function isClipDeleted(clipId) {
+    if (!deletedClipsCollection || !clipId) return false;
+    try { return !!(await deletedClipsCollection.findOne({ clipId: String(clipId) }, { projection: { _id: 1 } })); }
+    catch (err) { return false; }
+}
+// Every R2 object a clip can own — its video and its poster — by the keys
+// it recorded and by the keys they are always written under (in case the
+// write of a key was lost after its upload).
+function clipR2Keys(clip) {
+    const keys = [clip.r2Key, clip.r2PosterKey];
+    if (clip.clipId && clip.matchId) keys.push(`matches/${clip.matchId}/clips/${clip.clipId}.mp4`, `matches/${clip.matchId}/clips/${clip.clipId}.jpg`);
+    return [...new Set(keys.filter(Boolean))];
+}
+// Removes these R2 objects and this Drive file, each on its own, and says
+// what is left (r2Left / driveLeft) so that can be retried. A file that is
+// already gone counts as removed.
+async function removeClipObjects(r2Keys, driveFileId) {
+    const results = { r2: null, drive: null, r2Left: [], driveLeft: null };
+    if (r2Keys.length && r2Client && R2_BUCKET_NAME) {
+        for (const key of r2Keys) {
+            try { await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key })); }
+            catch (err) { console.log(`R2 delete error (${key}):`, err.message || err); results.r2Left.push(key); }
         }
+        results.r2 = results.r2Left.length ? 'failed' : 'deleted';
     }
-    if (clip.driveFileId && driveClient) {
+    if (driveFileId && driveClient) {
         try {
-            await driveClient.files.delete({ fileId: clip.driveFileId });
+            await driveClient.files.delete({ fileId: driveFileId });
             results.drive = 'deleted';
         } catch (err) {
-            console.log(`Drive delete error (${clip.driveFileId}):`, err.message || err);
-            results.drive = 'failed';
+            if (err && (err.code === 404 || (err.response && err.response.status === 404))) results.drive = 'deleted';
+            else { console.log(`Drive delete error (${driveFileId}):`, err.message || err); results.drive = 'failed'; results.driveLeft = driveFileId; }
         }
     }
     return results;
 }
+// A clip's files off R2 (video + poster) and Drive.
+async function deleteClipStorage(clip) {
+    return removeClipObjects(clipR2Keys(clip), clip.driveFileId || null);
+}
+// Deletes a clip for good: marked deleted FIRST (so a copy sent again in
+// the middle of this is already refused), then its record, then its files.
+// Files that could not be removed stay listed on the mark for the sweep.
+async function deleteClipForGood(clip, by) {
+    if (clip.clipId && deletedClipsCollection) {
+        await deletedClipsCollection.updateOne({ clipId: clip.clipId },
+            { $set: { clipId: clip.clipId, matchId: clip.matchId || null, eventType: clip.eventType || null, deletedAt: Date.now(), deletedBy: by || null } },
+            { upsert: true });
+    }
+    await clipsCollection.deleteOne({ _id: clip._id });
+    invalidateClipsCache(clip.matchId);
+    const storage = await deleteClipStorage(clip);
+    if (clip.clipId && deletedClipsCollection && (storage.r2Left.length || storage.driveLeft)) {
+        await deletedClipsCollection.updateOne({ clipId: clip.clipId }, { $set: { cleanupPending: true, r2Left: storage.r2Left, driveLeft: storage.driveLeft } }).catch(() => {});
+    }
+    return storage;
+}
+// A clip deleted while one of its uploads was still running: whatever just
+// landed on R2 comes straight back off. true = it was deleted, stop here.
+async function removeIfDeletedMeanwhile(clipId, matchId) {
+    if (!(await isClipDeleted(clipId))) return false;
+    const left = await removeClipObjects(clipR2Keys({ clipId, matchId }), null);
+    if (left.r2Left.length) await deletedClipsCollection.updateOne({ clipId }, { $set: { cleanupPending: true, r2Left: left.r2Left } }).catch(() => {});
+    console.log(`🪦 [CLIP] clipId=${clipId} was deleted while it uploaded — taken back off R2`);
+    return true;
+}
+// Retries the files deleted clips still have on R2 / Drive.
+async function runDeletedClipCleanup() {
+    if (!deletedClipsCollection) return;
+    let rows;
+    try { rows = await deletedClipsCollection.find({ cleanupPending: true }).limit(20).toArray(); }
+    catch (err) { return; }
+    for (const row of rows) {
+        const left = await removeClipObjects(row.r2Left || [], row.driveLeft || null);
+        const done = !left.r2Left.length && !left.driveLeft;
+        await deletedClipsCollection.updateOne({ clipId: row.clipId }, { $set: done
+            ? { cleanupPending: false, r2Left: [], driveLeft: null, cleanedAt: Date.now() }
+            : { r2Left: left.r2Left, driveLeft: left.driveLeft } }).catch(() => {});
+    }
+}
+setInterval(() => { runDeletedClipCleanup().catch(() => {}); }, 10 * 60 * 1000);
 
 adminRouter.delete('/clips/:clipId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
@@ -6474,10 +6569,9 @@ adminRouter.delete('/clips/:clipId', async (req, res) => {
     let _id;
     try { _id = new ObjectId(req.params.clipId); } catch { return res.status(400).json({ success: false, error: 'Invalid clip id' }); }
     try {
-        const result = await clipsCollection.findOneAndDelete({ _id });
-        if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
-        invalidateClipsCache(result.value.matchId);
-        const storage = await deleteClipStorage(result.value);
+        const clip = await clipsCollection.findOne({ _id });
+        if (!clip) return res.status(404).json({ success: false, error: 'Clip not found' });
+        const storage = await deleteClipForGood(clip, req.ownerEmail);
         await logAuditAction(req.ownerEmail, 'Delete clip', req.params.clipId, null, storage);
         res.json({ success: true, storage });
     } catch (err) {
@@ -6563,10 +6657,8 @@ adminRouter.post('/clips/attach/upload', express.raw({ type: '*/*', limit: '80mb
         if (existing && !replace) {
             return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing._id.toString() });
         }
-        if (existing && replace) {
-            await deleteClipStorage(existing);
-            await clipsCollection.deleteOne({ _id: existing._id });
-        }
+        // (for good: the helper must not send the replaced clip back)
+        if (existing && replace) await deleteClipForGood(existing, req.ownerEmail);
 
         const clipDir = path.join(CLIPS_DIR, matchId);
         if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
@@ -6630,10 +6722,8 @@ adminRouter.post('/clips/attach/drive', async (req, res) => {
         // successfully — if the Drive fetch above had failed, the existing
         // clip stays exactly as it was (spec section 15: never leave the
         // event with no clip because of a failed replace).
-        if (existing && replace) {
-            await deleteClipStorage(existing);
-            await clipsCollection.deleteOne({ _id: existing._id });
-        }
+        // (for good: the helper must not send the replaced clip back)
+        if (existing && replace) await deleteClipForGood(existing, req.ownerEmail);
 
         await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
         await logAuditAction(req.ownerEmail, replace ? 'Manually replaced clip (Drive)' : 'Manually attached clip (Drive)', matchId, null, { fileId, ...ballMeta });
