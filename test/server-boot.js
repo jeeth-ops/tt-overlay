@@ -1,7 +1,8 @@
 // Boots the REAL server.js in this process for a test: MongoDB is the
 // in-memory test/mongo-memory.js (production indexes created first),
 // firebase-admin a stub that knows no users (opts.idTokens: { token: decoded }
-// are the only ID tokens it accepts). Resolves once the server answers.
+// are the only ID tokens it accepts, opts.users: { uid: email } the only
+// accounts it knows). Resolves once the server answers.
 //
 //   const { port, mem, url } = await bootServer();
 const path = require('path');
@@ -20,7 +21,7 @@ async function bootServer(opts){
   require.cache[require.resolve('firebase-admin')] = { id: 'firebase-admin', filename: require.resolve('firebase-admin'), loaded: true, exports: {
     initializeApp(){}, credential: { cert: () => ({}) },
     firestore: () => ({ collection: () => ({ doc: () => fakeDoc, where: () => ({ get: async () => ({ docs: [] }) }) }) }),
-    auth: () => ({ verifyIdToken: async (t) => { if(opts.idTokens && opts.idTokens[t]) return opts.idTokens[t]; throw new Error('no tokens here'); }, getUser: async () => { throw new Error('no user'); },
+    auth: () => ({ verifyIdToken: async (t) => { if(opts.idTokens && opts.idTokens[t]) return opts.idTokens[t]; throw new Error('no tokens here'); }, getUser: async (uid) => { if(opts.users && opts.users[uid]) return { uid, email: opts.users[uid] }; throw new Error('no user'); },
       getUserByEmail: async () => { throw new Error('no user'); }, listUsers: async () => ({ users: [] }) }) } };
   const port = opts.port || (5200 + Math.floor(Math.random() * 700));
   process.env.PORT = String(port);

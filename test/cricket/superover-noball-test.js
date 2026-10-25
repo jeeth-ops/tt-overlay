@@ -108,6 +108,8 @@ async function panelSuite(file, label){
   eq(`${label}: 4 match summary has no Super Over block`, snap(P, 'buildMatchSummaryPayload().superOver') || null, null);
   eq(`${label}: 4 every delivery is a regulation innings`, snap(P, 'state.ballLog.filter(b => b.innings >= 100).length'), 0);
   fixtures.normal = { state: snap(P, 'state'), record: r1 };
+  eq(`${label}: 1 a decided match carries every delivery's id, complete (the website lines its ball log up with them)`,
+    [r1.deliveryIdsComplete, r1.deliveryIds.length, r1.deliveryIds.length === snap(P, "state.ballLog.filter(b => b.ballType !== 'PEN').length")], [true, r1.deliveryIds.length, true]);
 
   console.log('\n=== 15. The toss goes into the saved match ===');
   const tossWas = P.E('JSON.stringify(state.toss)');
@@ -224,6 +226,16 @@ async function scorecardSuite(){
   eq('13 NB shown as NB / NB+1 in the ball chips', S.E(`(latestState = ${JSON.stringify({ ...fixtures.so.soBreak, ballHistory: ['Nb', 'Nb+1', '4'] })}, _lastKey.balls = null, renderBalls(latestState), [...document.querySelectorAll('#balls-scroll .ball-chip')].map(e => e.textContent))`), ['NB', 'NB+1', '4']);
   eq('13 NB+4 commentary badge', S.E(`ballBadgeInfo({ ballType:'Nb', runs:5 }).label`), 'NB+4');
   eq('13 a first-ball NB (stored at 0.0) reads as ball 0.1', S.E(`overBallLabel(0, 'Nb')`), '0.1');
+  // 🧮 The result in the header is the one the panel decided — never a margin
+  // worked out from saved totals that disagree with it (206-8 in 20.3 overs
+  // read "won by 6 runs" under the panel's "WON BY 8 RUNS")
+  const off = { ...fixtures.normal.record, winningTeam: 'A', superOver: null, resultText: 'MI WON BY 8 RUNS',
+    scoreA: { runs: 212, wickets: 3, overs: '20.0' }, scoreB: { runs: 206, wickets: 8, overs: '20.3' } };
+  S.E(`finalMatchData = null; renderFinalSnapshot(${JSON.stringify(off)}, 'IPL');`);
+  eq('13 saved match: the header says the panel\'s result (won by 8 runs), once — not a margin from the totals', [S.text('#main-score'), S.text('#chip-status-text'), S.text('#batting-tag')], ['Won by 8 runs', 'Won by 8 runs', '']);
+  S.E(`finalMatchData = null; renderFinalSnapshot(${JSON.stringify({ ...off, resultText: null })}, 'IPL');`);
+  eq('13 …and only with no result line from the panel, a margin from the totals', S.text('#main-score'), 'Won by 6 runs');
+
   // 📋 The Batting / Bowling cards wear the teams of the innings ON SHOW: mid
   // 2nd innings, the 1st innings tab is the side that batted first (A here)
   const base = fixtures.normal.state, tA = { ...base.teamA, color: '#7a1c2b' }, tB = { ...base.teamB, color: '#e8590c' };

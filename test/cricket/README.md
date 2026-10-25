@@ -17,6 +17,10 @@ node test/cricket/clip-attribution-panel-test.js # both panels: every clip names
 node test/cricket/clip-linkage-server-test.js    # the website links a clip to the same delivery and dismissed batter
 node test/clip-attribution.test.js               # the shared ownership rule + clip organiser folders/names
 node test/cricket/clip-editor-server-test.js     # Advanced Clip Editor, server: owner cases 1-9, 403, rollback
+NODE_PATH=$(npm root -g) node test/cricket/result-matches-panel-test.js  # 🧮 the website's result is the panel's: real server, the panels'
+                                                  # own socket events + save — a panel Undo is not an owner correction; an
+                                                  # undo that overtakes its delivery drops it; a finished save lines the ball
+                                                  # log up with the panel (only when the rest reproduces its totals)
 NODE_PATH=$(npm root -g) node test/cricket/clip-delete-test.js  # 🪦 an owner-deleted clip stays deleted: real server + stand-in R2 —
                                                   # video + poster off R2; sent again / status / attach / classify / replace
                                                   # never bring it back; a refused R2 delete is kept for the retry sweep

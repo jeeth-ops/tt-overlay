@@ -12332,6 +12332,14 @@ function debouncedSyncLeagueFromServer(name){
 // approach buildMatchSummaryPayload() uses, so a match saved right as it's
 // won (or mid-match, via the manual button) always captures the two
 // not-out batsmen and the bowler currently on.
+// Every delivery in this panel's ball log, by its id (a penalty is not a
+// delivery and has none). Complete only when every one of them has an id —
+// a match started on an older build may not.
+function panelDeliveryIds(){
+  const log = (state.ballLog || []).filter(b => b && b.ballType !== 'PEN');
+  const ids = log.map(b => b.deliveryId).filter(Boolean);
+  return { deliveryIds: ids, deliveryIdsComplete: ids.length === log.length };
+}
 function buildMatchRecordForLeague(){
   const battingCardA = [...state.battingCard.A];
   const battingCardB = [...state.battingCard.B];
@@ -12448,6 +12456,10 @@ function buildMatchRecordForLeague(){
     partnerships: computeLivePartnerships(),
     // The decided result in words (e.g. "MI WON THE SUPER OVER BY 1 RUN").
     resultText: (state.milestonesHit['match-result'] && state.matchResultText) || null,
+    // 🧮 With a decided match, the id of every delivery this panel holds —
+    // the website lines its ball log up with it (reconcileBallLogWithPanel
+    // in server.js), so its scorecard comes out exactly as scored here.
+    ...(winningTeam ? panelDeliveryIds() : {}),
     // 🏆 Super Over(s), as their own section — the regulation totals above
     // are never replaced by them. null when no Super Over was played.
     superOver: superOverSummary()
@@ -15591,11 +15603,13 @@ function unlogLastBall(){
   const last = sentBallUids.pop();
   if(!last) return;
   try{ localStorage.setItem(BALL_SENT_KEY, JSON.stringify(sentBallUids)); }catch(e){}
-  const pending = ballOutbox.some(b => b.uid === last.uid);
-  if(pending){
+  const queued = ballOutbox.find(b => b.uid === last.uid);
+  if(queued){
     ballOutbox = ballOutbox.filter(b => b.uid !== last.uid);
     saveBallOutbox();
-    return;
+    // Never sent: nothing to take back. Sent and still waiting for its
+    // receipt: it may yet land — the undo goes too, and the server drops it.
+    if(!queued.sentAt) return;
   }
   if(socket && socket.connected){
     socket.emit('undoBall', { matchId: last.matchId, ballUid: last.uid });

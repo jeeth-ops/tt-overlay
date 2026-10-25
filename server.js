@@ -2755,6 +2755,14 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
         // ?force=1 (the Recovery Centre, and an operator who has been
         // shown what they are about to overwrite) skips the guard.
         let incomingRecord = { ...record, roomId: roomId || record.roomId || null, ownerUid, leagueKey, savedAt: record.savedAt || new Date().toISOString() };
+        // 🧮 A finished match with the panel's list of its deliveries: the
+        // ball log is lined up with the panel first (reconcileBallLogWithPanel).
+        // The list itself is not part of the record.
+        delete incomingRecord.deliveryIds; delete incomingRecord.deliveryIdsComplete;
+        const ballLogIds = [...new Set([incomingRecord.roomId, record.matchId].filter(Boolean).map(id => safeMatchId(String(id))).filter(Boolean))];
+        const lined = record.winningTeam && record.deliveryIdsComplete === true && Array.isArray(record.deliveryIds)
+            ? await reconcileBallLogWithPanel(ballLogIds, record.deliveryIds, { A: record.scoreA, B: record.scoreB }, req.creatorEmail || ownerUid)
+            : { removed: 0 };
         // 🛡️ A FINISHED match whose scorecard the owner has corrected/merged
         // (ownerCorrectedAt) must not be rolled back by a later panel save —
         // the panel still holds the pre-correction cards in memory, so
@@ -2776,6 +2784,9 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
             incomingRecord,
             { upsert: true, force: req.query.force === '1', reason: 'panel save' }
         );
+        // Rebuilt from the lined-up log, so the saved cards and totals are the
+        // panel's — also where the stored cards were kept above.
+        if (lined.removed) await syncMatchRecordFromBalls(ownerUid, ballLogIds[0], { force: true, panel: true, reason: 'ball log lined up with the panel' });
         // League doc itself stays tiny now — just metadata (displayName,
         // publicToken, live pointer). matches[] is intentionally never
         // written here anymore.
@@ -12141,7 +12152,11 @@ async function syncMatchRecordFromBalls(ownerUid, matchId, opts) {
         console.log('[syncDebug] recomputed bowlingCard B:', JSON.stringify((cards.bowlingCard && cards.bowlingCard.B) || []));
         const guard = await writeMatchRecordSafely(
             { _id: existing._id, matchId: existing.matchId },
-            { ...cards, liveSyncedAt: Date.now(), ...(opts.force ? { ownerCorrectedAt: Date.now() } : {}) },
+            // ownerCorrectedAt: an OWNER's correction, which a later panel save
+            // must not roll back. A rebuild the panel itself asked for (its
+            // Undo, a bowler it assigned) is the panel's own scoring — marking
+            // it would stop every later panel save from fixing the totals.
+            { ...cards, liveSyncedAt: Date.now(), ...(opts.force && !opts.panel ? { ownerCorrectedAt: Date.now() } : {}) },
             { reason: opts.reason || 'balls-sync', force: !!opts.force }
         );
         if (guard.lost.length) {
@@ -12227,12 +12242,63 @@ async function reassignBowlerInDb(matchId, op, hintUid) {
             { $set: { bowlerName: bowler, bowlerKey: playerKey(bowler), ...(bowlerPlayerId ? { bowlerPlayerId } : {}) } }
         ).then(() => invalidateClipsCache(matchId)).catch(err => console.log('Clip resync after bowler assignment error:', err));
     }
-    if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId, { force: true, reason: 'panel bowler assignment' });
+    if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId, { force: true, panel: true, reason: 'panel bowler assignment' });
     await logAuditAction('panel scorer', 'Panel bowler assignment',
         `Match ${matchId} — Innings ${innings} Over ${over + 1}: ${[...new Set(docs.map(d => d.bowler || 'Unassigned'))].join(', ')} → ${bowler}`,
         { balls: docs.map(d => ({ _id: d._id, bowler: d.bowler || null })) }, { bowler },
         { matchId, ballIds: docs.map(d => String(d._id)) });
     return { ok: true, updated: docs.length };
+}
+
+// 🛟 Deliveries undone on the panel, remembered for a while: an Undo can
+// overtake its own delivery (the panel sends it the moment the operator
+// presses Undo, while logBall is still resolving players), and the
+// delivery must not land in the log after its undo.
+const undoneBallUids = new Map(); // `${matchId}|${ballUid}` -> expiresAt
+const UNDONE_BALL_TTL_MS = 30 * 60 * 1000;
+function markBallUndone(matchId, ballUid) {
+    const now = Date.now();
+    if (undoneBallUids.size > 5000) for (const [k, t] of undoneBallUids) if (t < now) undoneBallUids.delete(k);
+    undoneBallUids.set(`${matchId}|${ballUid}`, now + UNDONE_BALL_TTL_MS);
+}
+function isBallUndone(matchId, ballUid) {
+    const t = undoneBallUids.get(`${matchId}|${ballUid}`);
+    return !!t && t > Date.now();
+}
+
+// 🧮 THE PANEL SCORED THE MATCH — its ball log is the record of it. When the
+// panel saves a finished match it sends the id of every delivery it holds.
+// A row in the server's ball log that the panel does not have (a delivery
+// undone on the panel whose undo never reached the server) would put runs,
+// wickets and balls into the website's scorecard that were never scored:
+// such rows are moved to ballsArchive. Only when that is provably right —
+// the rows that remain must reproduce the panel's own totals for both
+// sides exactly; otherwise (a panel holding an older copy of the match, an
+// owner correction that changed the runs) nothing is touched. Penalties
+// (their own ids), rows with no id (older matches) and deliveries the owner
+// added by hand are never candidates.
+async function reconcileBallLogWithPanel(ids, deliveryIds, panelScores, by) {
+    if (!ballsCollection || !ids.length) return { removed: 0 };
+    const keep = new Set(deliveryIds.map(String));
+    const balls = await ballsCollection.find({ matchId: { $in: ids } }).toArray();
+    const stray = balls.filter(b => b.ballUid && !keep.has(String(b.ballUid)) && b.kind !== 'PEN' && !b.insertedAt && !b.insertedBy && !b.addedByOwnerAt);
+    if (!stray.length) return { removed: 0 };
+    const strayIds = new Set(stray.map(b => String(b._id)));
+    const cards = buildLiveCardsFromBallsArray(balls.filter(b => !strayIds.has(String(b._id))));
+    const same = (a, b) => !!a && !!b && Number(a.runs) === Number(b.runs) && Number(a.wickets) === Number(b.wickets) && String(a.overs) === String(b.overs);
+    if (!same(cards.scoreA, panelScores.A) || !same(cards.scoreB, panelScores.B)) {
+        console.log(`🧮 [BALL LOG] ${ids.join('/')}: ${stray.length} delivery(ies) not on the panel, but without them the log would not match the panel's totals — left as they are`);
+        return { removed: 0, mismatch: true };
+    }
+    if (ballsArchiveCollection) {
+        await ballsArchiveCollection.insertMany(stray.map(d => ({
+            ...d, _id: undefined, originalBallId: String(d._id),
+            archivedAt: Date.now(), archivedBy: by || 'panel', reason: 'not in the panel\'s ball log (undone on the panel)'
+        })), { ordered: false });
+    }
+    await ballsCollection.deleteMany({ _id: { $in: stray.map(b => b._id) } });
+    console.log(`🧮 [BALL LOG] ${ids.join('/')}: ${stray.length} delivery(ies) the panel had undone moved to ballsArchive — the log now matches the panel`);
+    return { removed: stray.length };
 }
 
 function scheduleMatchRecordSync(ownerUid, matchId, opts) {
@@ -12957,6 +13023,9 @@ io.on('connection', async (socket) => {
             const nonStrikerName = personName(data.nonStriker);
             const bowlerName = personName(data.bowler);
             const fielderName = personName(data.dismissal && data.dismissal.fielder);
+            // 🛟 Undone on the panel before it got here (the undo overtook
+            // it): acknowledged, so the panel's outbox lets go, and not stored.
+            if (data.ballUid && isBallUndone(matchId, data.ballUid)) return reply({ ok: true, undone: true, ballUid: data.ballUid });
             await ballsCollection.insertOne({
                 matchId,
                 // 🛟 Minted once per delivery by the panel and carried
@@ -13038,6 +13107,11 @@ io.on('connection', async (socket) => {
                 timestamp: data.timestamp || Date.now()
             });
 
+            // …or undone while it was being stored: taken straight back out.
+            if (data.ballUid && isBallUndone(matchId, data.ballUid)) {
+                await ballsCollection.deleteOne({ matchId, ballUid: String(data.ballUid) }).catch(() => {});
+                return reply({ ok: true, undone: true, ballUid: data.ballUid });
+            }
             // 🩹 Keep the tournament's read path (matchRecordsCollection) from
             // going stale — see the big comment above buildLiveCardsFromBalls.
             if (ownerUid) scheduleMatchRecordSync(ownerUid, matchId);
@@ -13111,6 +13185,9 @@ io.on('connection', async (socket) => {
         const ballUid = String((data && data.ballUid) || '');
         if (!matchId || !ballUid) return reply({ ok: false, error: 'no-ball' });
         try {
+            // Remembered before anything else, so a delivery still on its way
+            // (or being stored right now) is dropped when it lands — see logBall.
+            markBallUndone(matchId, ballUid);
             const doc = await ballsCollection.findOne({ matchId, ballUid });
             if (!doc) return reply({ ok: true, alreadyGone: true });
             if (ballsArchiveCollection) {
@@ -13120,7 +13197,7 @@ io.on('connection', async (socket) => {
                 });
             }
             await ballsCollection.deleteOne({ _id: doc._id });
-            if (doc.ownerUid) scheduleMatchRecordSync(doc.ownerUid, matchId, { force: true });
+            if (doc.ownerUid) scheduleMatchRecordSync(doc.ownerUid, matchId, { force: true, panel: true });
             reply({ ok: true });
         } catch (err) {
             console.log('undoBall error:', err);

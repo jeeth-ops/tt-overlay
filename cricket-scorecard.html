@@ -4294,6 +4294,16 @@ function resultDetailLine(x){
   return (k === 'DRAW' || !k) ? firstInningsLeadNote(x) : '';
 }
 
+// The margin in the result the panel decided ("DYP WON BY 8 RUNS",
+// "… won by 5 wickets", "… by an innings and 12 runs"), as "Won by 8 runs".
+// The scorer saw every ball, so this is the result — the saved totals can
+// disagree with it (a delivery the ball log still holds after the panel
+// undid it), and a margin worked out from them would contradict the line
+// printed right under it.
+function marginFromResultLine(m){
+  const r = /\bwon\s+by\s+(an\s+innings(?:\s+and\s+\d+\s+runs?)?|\d+\s+(?:runs?|wickets?))/i.exec(String(resultLineOf(m) || ''));
+  return r ? 'Won by ' + r[1].replace(/\s+/g, ' ').toLowerCase() : '';
+}
 function winMarginText(m){
   // A match decided by a Super Over has no regulation margin — the scores
   // were level. Never compute "won by 0 runs" / "by N wickets" off them.
@@ -4305,6 +4315,8 @@ function winMarginText(m){
   if(m.winningTeam === 'DRAW') return 'Match Drawn';
   if(m.winningTeam === 'TIE') return 'Match Tied';
   if(m.winningTeam !== 'A' && m.winningTeam !== 'B') return '';
+  const decided = marginFromResultLine(m);
+  if(decided) return decided;
   const winner = m.winningTeam, loser = winner === 'A' ? 'B' : 'A';
   const wScore = (winner === 'A' ? m.scoreA : m.scoreB) || {};
   const lScore = (loser === 'A' ? m.scoreA : m.scoreB) || {};
@@ -4637,7 +4649,10 @@ function renderFinalSnapshot(match, displayName){
   // "Match Drawn" and leave the viewer none the wiser about who finished
   // ahead. The line underneath carries that, on its own row, so neither
   // has to be crammed into the other — on a phone especially.
-  const leadNote = resultDetailLine(match);
+  // (not when it only repeats the banner: "WON BY 8 RUNS" over "BY 8 RUNS")
+  const flat = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  let leadNote = resultDetailLine(match);
+  if(leadNote && flat(document.getElementById('main-score').textContent).includes(flat(leadNote))) leadNote = '';
   const battingTagEl = document.getElementById('batting-tag');
   if(battingTagEl) battingTagEl.classList.toggle('result-note', !!leadNote);
   setText('batting-tag', leadNote);
