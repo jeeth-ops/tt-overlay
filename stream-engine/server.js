@@ -3220,7 +3220,8 @@ async function renderPollTick() {
             // stays in the match's recording folder next to master.mp4.
             console.log(`✅ [CLIP] clipId=${job.clipId} — uploaded to R2 + Drive; local copy kept at ${job.localPath}`);
             renderPolls.delete(job.clipId);
-        } else if (data.status === 'FAILED_PERMANENT') {
+        } else if (data.status === 'FAILED_PERMANENT' || data.deleted) {
+            // (deleted: the owner removed it from the scorecard — nothing left to follow)
             renderPolls.delete(job.clipId);
         }
     }));
