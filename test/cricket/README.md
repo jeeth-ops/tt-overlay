@@ -32,8 +32,8 @@ NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the ov
                                                   # every chase state (TARGET for 8 s as the chase begins / after each over / when the bar returns,
                                                   # else NEED x RUNS FROM y BALLS; RRR beside CRR), never two faces at once; the team record on 480p;
                                                   # the full-screen TOSS / PLAYING XI (both teams) / MATCH INTRO / BAT + BOWL SCORECARDS with the longest names at 854x480 /
-                                                  # 1280x720 / 1920x1080 / 1920x1280: on air, bar off air, nothing off the 5% margin, cut or overlapping
-                                                  # (ONLY=gfx runs just those)
+                                                  # 1280x720 / 1920x1080 / 1920x1280: on air, bar off air, nothing off the 5% margin, cut or overlapping,
+                                                  # the picture showing through (no full-screen layer over 60% opaque) (ONLY=gfx runs just those)
                                                   # (gsap + webfonts from node_modules when installed: npm install --no-save gsap@3.12.5
                                                   #  @fontsource/inter @fontsource/manrope @fontsource/anton; else their CDNs. SHOTS=<dir> saves pictures)
 node test/cricket/wicket-bowler-test.js          # Wicket Details + optional / late / corrected bowler (tests 1-45): both panels, scorecard, overlay, database
@@ -52,7 +52,10 @@ NODE_PATH=$(npm root -g) node test/cricket/broadcast-graphics-test.js  # 🎬 PL
                                                   # Arena intro held, reloaded without replaying; INNINGS picked in one panel → the other; BAT /
                                                   # BOWL SCORECARD of each innings with its real figures, every player once, the rest of the
                                                   # squad by name (did not bat / yet to bat / did not bowl / not in XI), the scoring untouched;
-                                                  # over-end cards wait while a card is pinned and run again after HIDE SCORECARD
+                                                  # over-end cards wait while a card is pinned and run again after HIDE SCORECARD; the knockout
+                                                  # round read from stage / title (SEMI-FINAL, FINAL …, never a league game); a final's gold
+                                                  # ribbon on the intro; with the score bar switched off the graphics still go on air and the
+                                                  # bar stays off after; Live Output blurs its camera while one is up, sharp again after
 node test/cricket/match-report-test.js           # 📑 scorecard Excel + PDF report with wagon wheels, auto-download at match end: both panels
                                                   # (MR_LIBS=<dir with node_modules/exceljs + jspdf> also builds and checks the real files;
                                                   #  --sync re-inlines match-report.js into both panels)
