@@ -781,6 +781,26 @@
   }
   .team-block.winner .team-prev-score{ color:var(--team-color, var(--accent)); opacity:1; }
 
+  /* 🪙 The toss — the winner's crest in a gold ring and one sentence,
+     under the score. Wraps inside its own pill on a phone. */
+  #toss-line{ position:relative; display:flex; justify-content:center; margin-top:14px; }
+  #toss-line[hidden]{ display:none; }
+  .tl-pill{
+    display:inline-flex; align-items:center; gap:9px; max-width:100%; min-width:0;
+    padding:5px 15px 5px 5px; border-radius:17px;
+    background:color-mix(in srgb, var(--panel) 82%, transparent); border:1px solid var(--border-soft);
+    box-shadow:inset 0 1px 0 var(--card-top-light);
+    font-size:12.5px; font-weight:600; line-height:1.35; color:var(--text-dim);
+  }
+  .tl-logo{
+    flex:none; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-display); font-size:9px; font-weight:800; color:#fff; background-size:cover; background-position:center;
+    box-shadow:0 0 0 2px #e2b04a, 0 0 0 3.5px color-mix(in srgb, #e2b04a 30%, transparent);
+    margin:2px 1px 2px 3px;
+  }
+  .tl-pill b{ color:var(--text); font-weight:800; }
+  #toss-text{ min-width:0; overflow-wrap:anywhere; }
+
   #target-wrap{ position:relative; margin-top:16px; }
   #target-label{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--text-dim); font-weight:600; margin-bottom:6px; }
   .progress-track{ height:8px; border-radius:99px; background:var(--panel-2); border:1px solid var(--border); overflow:hidden; }
@@ -2742,6 +2762,11 @@
       </div>
     </div>
 
+    <!-- 🪙 who won the toss and what they chose (renderToss) -->
+    <div id="toss-line" hidden>
+      <span class="tl-pill"><span class="tl-logo" id="toss-logo" aria-hidden="true"></span><span id="toss-text"></span></span>
+    </div>
+
     <div id="target-wrap" style="display:none;">
       <div id="target-label"><span id="target-need">—</span><span id="target-num">Target —</span></div>
       <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
@@ -4520,6 +4545,7 @@ function renderFinalSnapshot(match, displayName){
   const chartsGrid = document.getElementById('charts-grid'); if(chartsGrid) chartsGrid.style.display = 'none';
 
   // Hero: both teams' final score line + result, instead of one live score.
+  renderToss(match);
   document.getElementById('chip-format').textContent = match.format || '';
   const venueChip = document.getElementById('chip-venue');
   if(match.venue){ venueChip.style.display=''; venueChip.textContent = match.venue; } else venueChip.style.display='none';
@@ -6085,6 +6111,7 @@ function renderHero(s){
   const A = s.teamA || {}, B = s.teamB || {};
   setPageTeamTheme(A, B);
   applyLogoWatermarks(A, B);
+  renderToss(s);
   setText('name-a', A.name || 'Team A'); setText('short-a', A.short || '—');
   setText('name-b', B.name || 'Team B'); setText('short-b', B.short || '—');
   setText('hl-team-a-name', A.name || A.short || 'Team A'); setText('hl-team-b-name', B.name || B.short || 'Team B');
@@ -6234,6 +6261,23 @@ function renderHero(s){
 // above), not just the team logo squares. Falls back to leaving the
 // default accent/six colors in place when a team has no custom color set
 // in the panel, so a match with no custom branding still looks fine.
+// 🪙 Who won the toss and what they chose, under the score. The live state
+// carries toss { winner: 'A' | 'B', decision: 'BAT' | 'BOWL' }, and a saved
+// match keeps the same field (older saves have none: then nothing shows,
+// as it does before the toss is recorded).
+function renderToss(x){
+  const line = document.getElementById('toss-line');
+  if(!line) return;
+  const t = x && x.toss, key = t && (t.winner === 'A' || t.winner === 'B') ? t.winner : null;
+  const team = key ? (key === 'A' ? x.teamA : x.teamB) || {} : null;
+  const name = team && String(team.name || team.short || '').trim();
+  if(!name){ line.hidden = true; return; }
+  paintLogo('toss-logo', team, key === 'A' ? 'var(--accent)' : 'var(--six)');
+  const dec = t.decision === 'BOWL' ? 'bowl' : t.decision === 'BAT' ? 'bat' : '';
+  document.getElementById('toss-text').innerHTML = `<b>${escapeHtml(name)}</b> won the toss` + (dec ? ` and elected to <b>${dec}</b> first` : '');
+  line.hidden = false;
+}
+
 function setPageTeamTheme(A, B){
   const root = document.documentElement;
   root.style.setProperty('--team-a-color', (A && A.color) || 'var(--accent)');
