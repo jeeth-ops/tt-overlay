@@ -142,6 +142,20 @@ function roster(prefix) {
   eq('the owner account\'s tournaments are private by default', priv.json.tournament.visibility, 'private');
   eq('a private tournament is 404 to everyone else', [(await api('GET', `/api/volleyball/tournaments/${priv.json.tournament.tournamentId}`)).status, (await api('GET', `/api/volleyball/tournaments/${priv.json.tournament.tournamentId}`, { token: TOK.work })).status], [404, 404]);
   eq('…and visible to its owner', (await api('GET', `/api/volleyball/tournaments/${priv.json.tournament.tournamentId}`, { token: TOK.owner })).status, 200);
+  // a private match's overlay / scorecard media open with the match key only
+  const PT = priv.json.tournament.tournamentId;
+  const pteams = [];
+  for (const nm of ['Owner Hawks', 'Owner Owls']) pteams.push((await api('POST', '/api/volleyball/teams', { json: { name: nm, players: roster(nm.split(' ')[1]) }, token: TOK.owner })).json.team);
+  await api('PUT', `/api/volleyball/tournaments/${PT}`, { json: { teamIds: pteams.map((t) => t.teamId), logo }, token: TOK.owner });
+  const pm = (await api('POST', `/api/volleyball/tournaments/${PT}/matches`, { json: { teamA: pteams[0].teamId, teamB: pteams[1].teamId }, token: TOK.owner })).json.match;
+  eq('private: the overlay\'s points table needs the match key', [(await api('GET', `/api/volleyball/matches/${pm.matchId}/standings`)).status, (await api('GET', `/api/volleyball/matches/${pm.matchId}/standings?key=wrong`)).status, (await api('GET', `/api/volleyball/matches/${pm.matchId}/standings?key=${pm.overlayKey}`)).status], [404, 404, 200]);
+  const plogo = (await api('GET', `/api/volleyball/tournaments/${PT}`, { token: TOK.owner })).json.tournament.logo;
+  eq('private: the tournament logo shows on its overlay with the key, nowhere else', [(await api('GET', plogo)).status, (await api('GET', `${plogo}&match=${pm.matchId}&key=${pm.overlayKey}`)).status], [404, 200]);
+  const pclip = `${pm.matchId}_ev-private`;
+  await api('POST', `/api/volleyball/matches/${pm.matchId}/clips`, { json: { clipId: pclip, eventId: 'ev-private', status: 'REQUESTED' }, token: TOK.owner });
+  await api('POST', `/api/volleyball/clips/ingest?matchId=${pm.matchId}&clipId=${pclip}&timestamp=${Date.now()}`, { raw: makeClip(2), headers: { 'X-Ball-Meta': JSON.stringify({ sport: 'volleyball', vbClipToken: pm.clipToken, eventId: 'ev-private' }) } });
+  const pv = [(await api('GET', `/api/volleyball/clips/${pclip}/video`)).status, (await api('GET', `/api/volleyball/clips/${pclip}/video?key=${pm.overlayKey}`)).status];
+  ok('private: a clip video plays with the match key (a <video> carries no sign-in), never without', pv[0] === 404 && (pv[1] === 200 || pv[1] === 302), pv);
   const dir = (await api('GET', '/api/volleyball/public/tournaments')).json.tournaments.map((t) => t.name);
   ok('the public list has the public tournament only', dir.includes('Mumbai Volley League') && !dir.includes('Owner Private Cup'));
 
@@ -277,16 +291,29 @@ function roster(prefix) {
   const key = [...bucket.keys()].find((k) => k.endsWith(clipId + '.mp4'));
   eq('stored under the volleyball namespace, by set and point', key, `volleyball/${T.tournamentId}/${MID}/set-1/point-1-${clipId}.mp4`);
   const forAttacker = (await api('GET', `/api/volleyball/matches/${MID}/clips?playerId=${attacker}`)).json.clips;
-  eq('the attacker’s video icon finds the clip of HIS point', forAttacker.map((c) => [c.clipId, c.set, c.pointNo, c.displayStatus]), [[clipId, 1, 1, 'Upload complete']]);
+  eq('the attacker’s video icon finds the clip of their point', forAttacker.map((c) => [c.clipId, c.set, c.pointNo, c.displayStatus]), [[clipId, 1, 1, 'Upload complete']]);
   const someoneElse = six('A')[0];
   eq('…another player’s icon does not', (await api('GET', `/api/volleyball/matches/${MID}/clips?playerId=${someoneElse}`)).json.clips.length, 0);
   await api('POST', `/api/volleyball/clips/${clipId}/players`, { json: { links: [{ playerId: someoneElse, role: 'setter' }] }, token: TOK.work });
-  eq('linked by hand to the setter: now in his list too', (await api('GET', `/api/volleyball/matches/${MID}/clips?playerId=${someoneElse}`)).json.clips.length, 1);
+  eq('linked by hand to the setter: now in their list too', (await api('GET', `/api/volleyball/matches/${MID}/clips?playerId=${someoneElse}`)).json.clips.length, 1);
   eq('only a manager can link players', (await api('POST', `/api/volleyball/clips/${clipId}/players`, { json: { links: [] }, token: TOK.vinit })).status, 403);
   const reg = await api('POST', `/api/volleyball/matches/${MID}/clips`, { json: { clipId: `${MID}_ev-unavail`, eventId: 'ev-unavail', status: 'UNAVAILABLE', error: 'Stream Engine not running on this PC' }, token: TOK.work });
   eq('a point whose clip could not be made says so honestly', reg.json.clip.displayStatus, 'Unavailable');
   const counts = (await api('GET', `/api/volleyball/matches/${MID}/stats`)).json.clipCounts;
   ok('per-player clip counts for the scorecard', counts[attacker] === 1 && counts[someoneElse] === 1, counts);
+
+  head('ONE POINT, TWO DEVICES (phone panel + Clipper PC)');
+  const twoId = `${MID}_ev-two-dev`;
+  const regAs = (status, extra) => api('POST', `/api/volleyball/matches/${MID}/clips`, { json: Object.assign({ clipId: twoId, eventId: 'ev-two-dev', status, t0: Date.now(), preRollSec: 7, postRollSec: 3 }, extra || {}), token: TOK.work });
+  const st1 = await regAs('UNAVAILABLE', { error: 'The Stream Engine is not running on this PC' });
+  eq('the phone (no engine) says it could not clip the point', [st1.status, st1.json.clip.status], [200, 'UNAVAILABLE']);
+  const st2b = await regAs('REQUESTED', { sourceSessionId: 'clipper:pc' });
+  eq('the Clipper PC then clips it: the record is upgraded', [st2b.json.clip.status, st2b.json.clip.displayStatus], ['REQUESTED', 'Waiting for post-roll']);
+  const st3 = await regAs('UNAVAILABLE', { error: 'late answer from the phone' });
+  eq('a late "could not" from the phone never overwrites the clip being made', st3.json.clip.status, 'REQUESTED');
+  const shown2 = (await api('GET', `/api/volleyball/matches/${MID}/clips?eventId=ev-two-dev`)).json.clips;
+  eq('…and the website shows one clip for the point, with no error', [shown2.length, shown2[0].error], [1, null]);
+  eq('a clip id cannot be re-used for another point', (await api('POST', `/api/volleyball/matches/${MID}/clips`, { json: { clipId: twoId, eventId: 'ev-other', status: 'REQUESTED' }, token: TOK.work })).status, 409);
 
   head('AUDIT AND ISOLATION');
   const au = (await api('GET', `/api/volleyball/matches/${MID}/audit`, { token: TOK.work })).json.audit.map((a) => a.action);

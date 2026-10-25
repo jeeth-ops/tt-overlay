@@ -70,4 +70,20 @@ function clipMetaFor(job, extra) {
     }, extra || {});
 }
 
-module.exports = { CRICKET, LIMITS, ROUTES, routeFor, buildWindow, actualPreRoll, clipMetaFor };
+// The pages the engine opens for a match: the Live Output window it
+// captures (camera + overlay) and the overlay the native compositor
+// renders. Cricket — anything not registered as another sport — gets
+// exactly the paths it always had; a volleyball match shows the volleyball
+// overlay (with its key, which a private match needs, when one was given).
+function capturePagesFor(sport, matchId, opts) {
+    const o = opts || {};
+    const id = encodeURIComponent(matchId);
+    const cam = `video=${encodeURIComponent(o.videoDeviceId || '')}&videoLabel=${encodeURIComponent(o.videoLabel || '')}`;
+    if (sport === 'volleyball') {
+        const key = /^[a-f0-9]{6,64}$/i.test(String(o.overlayKey || '')) ? `&key=${o.overlayKey}` : '';
+        return { liveOutput: `/volleyball-live-output?match=${id}&${cam}${key}`, overlay: `/volleyball-overlay?match=${id}${key}` };
+    }
+    return { liveOutput: `/live-output.html?room=${id}&${cam}`, overlay: `/cricket-overlay?room=${id}` };
+}
+
+module.exports = { CRICKET, LIMITS, ROUTES, routeFor, buildWindow, actualPreRoll, clipMetaFor, capturePagesFor };

@@ -333,7 +333,12 @@ module.exports = function setupVolleyball(deps) {
   }
   app.get('/api/volleyball/tournaments/:tid/logo', openRoute(async (req, res, user, c) => {
     const t = await c.tournaments.findOne({ tournamentId: String(req.params.tid) });
-    if (!t || !t.logo || !canView(user, t)) return res.status(404).end();
+    if (!t || !t.logo) return res.status(404).end();
+    if (!canView(user, t)) {
+      // a private tournament's overlay shows its logo with the match key
+      const m = req.query.match && req.query.key ? await c.matches.findOne({ matchId: String(req.query.match), tournamentId: t.tournamentId }) : null;
+      if (!m || !sameSecret(req.query.key, m.overlayKey)) return res.status(404).end();
+    }
     res.set('Content-Type', t.logo.type);
     res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
     res.send(Buffer.from(t.logo.data, 'base64'));
@@ -493,6 +498,14 @@ module.exports = function setupVolleyball(deps) {
     const [teams, matches] = await Promise.all([c.teams.find({ teamId: { $in: t.teamIds || [] } }).toArray(), c.matches.find({ tournamentId: t.tournamentId }).toArray()]);
     res.json({ success: true, standings: standingsOf(t, teams, matches) });
   }));
+  // The same table for one match's overlay, which cannot sign in (the
+  // overlay of a private tournament carries its match key instead).
+  app.get('/api/volleyball/matches/:mid/standings', openRoute(async (req, res, user, c) => {
+    const a = await matchAccess(c, user, req.params.mid, req.query.key);
+    if (!a.m || !a.t) return res.status(404).json({ success: false, error: 'Match not found' });
+    const [teams, matches] = await Promise.all([c.teams.find({ teamId: { $in: a.t.teamIds || [] } }).toArray(), c.matches.find({ tournamentId: a.t.tournamentId }).toArray()]);
+    res.json({ success: true, tournament: { tournamentId: a.t.tournamentId, name: a.t.name }, standings: standingsOf(a.t, teams, matches) });
+  }));
 
   /* ------------------------------------------------------------ matches */
   function publicMatch(m, manage) {
@@ -628,7 +641,7 @@ module.exports = function setupVolleyball(deps) {
     const out = { success: true, match: publicMatch(a.m, a.manage), tournament: publicTournament(a.t, user) };
     if (req.query.timeline === '1') {
       const L = await getLedger(c, a.m);
-      out.timeline = L.timeline;
+      out.timeline = publicTimeline(L, a.manage);
       out.summary = E.summary(L.setup, L.state);
       out.invalid = L.invalid.map((x) => ({ eventId: x.eventId, seq: x.seq, error: x.invalid.error }));
     }
@@ -794,6 +807,12 @@ module.exports = function setupVolleyball(deps) {
     return L;
   }
   function dbEventToEvent(r) { const o = clean(r); delete o.matchId; return o; }
+  // Who pressed a button is for the match's managers (and the audit), not
+  // for every viewer of a public scorecard.
+  function publicTimeline(L, manage) {
+    return manage ? L.timeline : L.timeline.map((e) => { if (!e.by) return e; const o = Object.assign({}, e); delete o.by; return o; });
+  }
+  function publicEvent(ev) { if (!ev) return null; const o = Object.assign({}, ev); delete o.by; delete o.matchId; return o; }
 
   // Only the fields each event type may carry — nothing else is stored.
   function sanitizeEvent(raw) {
@@ -925,7 +944,8 @@ module.exports = function setupVolleyball(deps) {
       }
       if (status !== 'completed' && prevStatus === 'completed') await audit(c, { action: 'match.reopen', tournamentId: m.tournamentId, matchId: m.matchId, by: byOf(user), details: { by: ev.type } });
       const entry = L.timeline[L.timeline.length - 1];
-      nsp.to(room(m.matchId)).emit('vb:update', { matchId: m.matchId, seq: L.seq, status, summary, entry, full: !!E.META[ev.type] || !!CORRECTION_TYPES.has(ev.type), at: Date.now() });
+      const pubEntry = Object.assign({}, entry); delete pubEntry.by;
+      nsp.to(room(m.matchId)).emit('vb:update', { matchId: m.matchId, seq: L.seq, status, summary, entry: pubEntry, event: publicEvent(chk.pending.event), full: !!E.META[ev.type] || !!CORRECTION_TYPES.has(ev.type), at: Date.now() });
       if (prevStatus !== status || status === 'completed') {
         invalidateStandings(m.tournamentId); invalidateDirectory();
       }
@@ -934,7 +954,7 @@ module.exports = function setupVolleyball(deps) {
         if (prevStatus !== 'completed') await audit(c, { action: 'match.complete', tournamentId: m.tournamentId, matchId: m.matchId, by: byOf(user), details: { result: done.result } });
         afterCompletion(c, done).catch((e) => log('after-completion error', e.message || e));
       }
-      return { ok: true, seq: L.seq, summary, entry, status };
+      return { ok: true, seq: L.seq, summary, entry, status, event: publicEvent(chk.pending.event) };
     });
   }
 
@@ -947,7 +967,7 @@ module.exports = function setupVolleyball(deps) {
     const a = await matchAccess(c, user, req.params.mid, req.query.key);
     if (!a.m) return res.status(404).json({ success: false, error: 'Match not found' });
     const L = await getLedger(c, a.m);
-    res.json({ success: true, seq: L.seq, timeline: L.timeline, summary: E.summary(L.setup, L.state), invalid: L.invalid.map((x) => ({ eventId: x.eventId, seq: x.seq, error: x.invalid.error })) });
+    res.json({ success: true, seq: L.seq, timeline: publicTimeline(L, a.manage), summary: E.summary(L.setup, L.state), invalid: L.invalid.map((x) => ({ eventId: x.eventId, seq: x.seq, error: x.invalid.error })) });
   }));
 
   /* ------------------------------------------------------------ statistics */
@@ -1290,10 +1310,10 @@ module.exports = function setupVolleyball(deps) {
     res.json({ success: true, clips: list });
   }));
 
-  async function clipWithAccess(c, user, clipId) {
+  async function clipWithAccess(c, user, clipId, key) {
     const clip = await c.clips.findOne({ clipId: safeId(clipId) });
     if (!clip) return { status: 404 };
-    const a = await matchAccess(c, user, clip.matchId, null);
+    const a = await matchAccess(c, user, clip.matchId, key || null);
     if (!a.m) return { status: 404 };
     return Object.assign({ clip }, a);
   }
@@ -1308,18 +1328,30 @@ module.exports = function setupVolleyball(deps) {
     const clipId = safeId(b.clipId);
     if (!clipId.startsWith(m.matchId + '_') || !idOk(b.eventId)) return res.status(400).json({ success: false, error: 'clipId must belong to this match, with its point event' });
     const status = b.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'REQUESTED';
-    const set = { local: { status: str(b.localStatus || (status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'WAITING_FOR_POSTROLL'), 32), error: str(b.error, 300) || null, at: Date.now(), engine: str(b.engine, 32) || null } };
-    if (status === 'UNAVAILABLE') set.error = str(b.error, 300) || 'No clip engine was reachable';
-    await c.clips.updateOne({ clipId }, {
-      $set: set,
-      $setOnInsert: {
-        clipId, matchId: m.matchId, tournamentId: m.tournamentId, eventId: b.eventId, status,
-        eventTimestamp: num(b.t0, Date.now()), preRollSec: num(b.preRollSec, CLIP_PRE_ROLL_SEC), postRollSec: num(b.postRollSec, CLIP_POST_ROLL_SEC),
-        scoreAtTrigger: b.scoreAtTrigger && typeof b.scoreAtTrigger === 'object' ? { A: num(b.scoreAtTrigger.A, 0), B: num(b.scoreAtTrigger.B, 0), set: num(b.scoreAtTrigger.set, null) } : null,
-        team: b.team === 'A' || b.team === 'B' ? b.team : null, sourceSessionId: str(b.sourceSessionId, 80) || null,
-        createdAt: Date.now(), retryCount: 0, r2Status: 'pending', driveStatus: 'pending'
-      }
-    }, { upsert: true });
+    const local = { status: str(b.localStatus || (status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'WAITING_FOR_POSTROLL'), 32), error: str(b.error, 300) || null, at: Date.now(), engine: str(b.engine, 32) || null };
+    const error = status === 'UNAVAILABLE' ? str(b.error, 300) || 'No clip engine was reachable' : null;
+    const timing = { eventTimestamp: num(b.t0, Date.now()), preRollSec: num(b.preRollSec, CLIP_PRE_ROLL_SEC), postRollSec: num(b.postRollSec, CLIP_POST_ROLL_SEC), sourceSessionId: str(b.sourceSessionId, 80) || null };
+    // The same point can be registered by two devices: the scoring panel
+    // (which may have no clip engine — a phone) and the Clipper on the PC
+    // that records. "Could not clip it here" never overwrites a clip that
+    // is actually being made elsewhere; a real request upgrades it.
+    const prev = await c.clips.findOne({ clipId });
+    if (!prev) {
+      try {
+        await c.clips.insertOne(Object.assign({
+          clipId, matchId: m.matchId, tournamentId: m.tournamentId, eventId: b.eventId, status, error, local,
+          scoreAtTrigger: b.scoreAtTrigger && typeof b.scoreAtTrigger === 'object' ? { A: num(b.scoreAtTrigger.A, 0), B: num(b.scoreAtTrigger.B, 0), set: num(b.scoreAtTrigger.set, null) } : null,
+          team: b.team === 'A' || b.team === 'B' ? b.team : null,
+          createdAt: Date.now(), retryCount: 0, r2Status: 'pending', driveStatus: 'pending'
+        }, timing));
+      } catch (e) { if (!(e && e.code === 11000)) throw e; }   // the other device got there first — fine
+    } else if (prev.eventId !== b.eventId) {
+      return res.status(409).json({ success: false, error: 'That clip belongs to another point' });
+    } else if (status === 'REQUESTED' && prev.status === 'UNAVAILABLE') {
+      await c.clips.updateOne({ clipId, status: 'UNAVAILABLE' }, { $set: Object.assign({ status: 'REQUESTED', error: null, local }, timing) });
+    } else if (status === prev.status && status === 'UNAVAILABLE') {
+      await c.clips.updateOne({ clipId, status: 'UNAVAILABLE' }, { $set: { error, local } });
+    }
     const doc = await c.clips.findOne({ clipId });
     emitClip(m.matchId, doc);
     res.json({ success: true, clip: { clipId, status: doc.status, displayStatus: displayStatus(doc) } });
@@ -1370,7 +1402,7 @@ module.exports = function setupVolleyball(deps) {
     res.json({ success: true, clipId: clip.clipId, status: clip.status === 'SERVER_ONLY' ? 'COMPLETE' : clip.status, r2Status: leg(clip.r2Status), driveStatus: leg(clip.driveStatus), r2Url: clip.r2Url || null, driveUrl: clip.driveUrl || null, retryCount: clip.retryCount || 0 });
   }));
   app.get('/api/volleyball/clips/:clipId/video', openRoute(async (req, res, user, c) => {
-    const a = await clipWithAccess(c, user, req.params.clipId);
+    const a = await clipWithAccess(c, user, req.params.clipId, req.query.key);
     if (!a.clip || a.clip.deleted) return res.status(404).end();
     if (a.clip.r2Url && a.clip.r2Status === 'uploaded') return res.redirect(302, a.clip.r2Url);
     if (a.clip.filePath && fs.existsSync(a.clip.filePath)) {
@@ -1573,6 +1605,7 @@ module.exports = function setupVolleyball(deps) {
   app.get('/volleyball-panel', page('volleyball-panel.html'));
   app.get('/volleyball-overlay', page('volleyball-overlay.html'));
   app.get('/volleyball-clipper', page('volleyball-clipper.html'));
+  app.get('/volleyball-live-output', page('volleyball-live-output.html'));
   app.get('/volleyball/tournament/:tid', page('volleyball-tournament.html'));
   app.get('/volleyball/match/:mid', page('volleyball-scorecard.html'));
 
@@ -1621,7 +1654,8 @@ module.exports = function setupVolleyball(deps) {
         if (!a.m) return reply({ ok: false, error: 'not-found' });
         socket.join(room(a.m.matchId));
         const L = await getLedger(c, a.m);
-        reply({ ok: true, match: publicMatch(a.m, a.manage), summary: E.summary(L.setup, L.state), seq: L.seq, timeline: d && d.timeline ? L.timeline : undefined, now: Date.now() });
+        reply({ ok: true, match: publicMatch(a.m, a.manage), summary: E.summary(L.setup, L.state), seq: L.seq, timeline: d && d.timeline ? publicTimeline(L, a.manage) : undefined,
+          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic: a.m.graphic || null, now: Date.now() });
       } catch (e) { log('join error', e.message || e); reply({ ok: false, error: 'join-failed' }); }
     });
 
@@ -1633,7 +1667,8 @@ module.exports = function setupVolleyball(deps) {
         const a = await matchAccess(c, socket.data.user, d && d.matchId, d && d.key);
         if (!a.m) return reply({ ok: false, error: 'not-found' });
         const L = await getLedger(c, a.m);
-        reply({ ok: true, match: publicMatch(a.m, a.manage), seq: L.seq, summary: E.summary(L.setup, L.state), timeline: L.timeline, invalid: L.invalid.map((x) => ({ eventId: x.eventId, error: x.invalid.error })) });
+        reply({ ok: true, match: publicMatch(a.m, a.manage), seq: L.seq, summary: E.summary(L.setup, L.state), timeline: publicTimeline(L, a.manage),
+          events: a.manage ? L.events.map(publicEvent) : undefined, graphic: a.m.graphic || null, invalid: L.invalid.map((x) => ({ eventId: x.eventId, error: x.invalid.error })), now: Date.now() });
       } catch (e) { reply({ ok: false, error: 'sync-failed' }); }
     });
 

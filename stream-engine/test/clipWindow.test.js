@@ -61,6 +61,17 @@ test('what the website is told about a cut', () => {
   assert.deepStrictEqual([m.sport, m.preRollSec, m.postRollSec, m.actualPreRollSec, m.partialPreRoll, m.durationSec, m.windowStart, m.windowEnd], ['volleyball', 7, 3, 4, true, 7, 93000, 103000]);
 });
 
+test('capture pages: cricket keeps its exact URLs; a volleyball match shows the volleyball overlay', () => {
+  const vid = 'abc/=', label = 'Cam Link 4K';
+  const old = `/live-output.html?room=${encodeURIComponent('m 1')}&video=${encodeURIComponent(vid)}&videoLabel=${encodeURIComponent(label)}`;
+  assert.strictEqual(W.capturePagesFor(undefined, 'm 1', { videoDeviceId: vid, videoLabel: label }).liveOutput, old);
+  assert.strictEqual(W.capturePagesFor('cricket', 'm1').overlay, '/cricket-overlay?room=m1');
+  const v = W.capturePagesFor('volleyball', 'vbm1', { videoLabel: label, overlayKey: 'a1b2c3d4e5' });
+  assert.strictEqual(v.overlay, '/volleyball-overlay?match=vbm1&key=a1b2c3d4e5');
+  assert.strictEqual(v.liveOutput, `/volleyball-live-output?match=vbm1&video=&videoLabel=${encodeURIComponent(label)}&key=a1b2c3d4e5`);
+  assert.strictEqual(W.capturePagesFor('volleyball', 'vbm1', { overlayKey: '"><script>' }).overlay, '/volleyball-overlay?match=vbm1', 'a key that is not hex is left out');
+});
+
 test('the retry queue keeps a volleyball clip’s sport and cut details across a restart', () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rq-')), 'q.json');
   const entry = { clipId: 'm_1', matchId: 'm', eventType: 'VBPOINT', timestamp: 1, ballMeta: { eventId: 'e1' }, filePath: '/x.mp4', mainServerUrl: 'http://h', attempts: 2,

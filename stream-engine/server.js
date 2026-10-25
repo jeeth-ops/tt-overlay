@@ -908,6 +908,20 @@ function coerceFps(fps, who) {
 // (recorder + live encoder) each capturing this same window is safe —
 // see README "Why two processes, not one" for the reasoning.
 // ================================================================
+// 🏐 Which sport a match id belongs to, as the page that started its
+// capture window / recording / preview said (volleyball pages say so;
+// cricket pages send nothing and stay on the cricket pages).
+const matchSports = new Map();
+function rememberSport(matchId, body) {
+    if (!matchId || !body) return;
+    if (body.sport === 'volleyball') matchSports.set(matchId, { sport: 'volleyball', overlayKey: body.overlayKey || null });
+    else if (body.sport === 'cricket') matchSports.delete(matchId);
+}
+function capturePages(matchId, opts) {
+    const reg = matchSports.get(matchId) || {};
+    return clipWindow.capturePagesFor(reg.sport, matchId, Object.assign({ overlayKey: reg.overlayKey }, opts || {}));
+}
+
 function windowTitleFor(matchId) {
     return `AllSportsLive-LiveOutput-${safeMatchId(matchId)}`;
 }
@@ -1370,7 +1384,7 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     // device name, NOT profile-scoped) is what live-output.html actually
     // uses to pick the right camera in this profile — see its own
     // startCamera().
-    const url = `${String(origin).replace(/\/+$/, '')}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId || '')}&videoLabel=${encodeURIComponent(videoLabel || '')}`;
+    const url = `${String(origin).replace(/\/+$/, '')}${capturePages(matchId, { videoDeviceId, videoLabel }).liveOutput}`;
     const w = Math.max(1280, Number(width) || 1920);
     const h = Math.max(720, Number(height) || 1080);
     const args = [
@@ -2419,7 +2433,7 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         compositor = new nativePipeline.Compositor({
             spawnFfmpeg,
             execPath,
-            overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}/cricket-overlay?room=${encodeURIComponent(matchId)}`,
+            overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}${capturePages(matchId).overlay}`,
             width, height, fps: programFps,
         });
         if (programFps > 30) {
@@ -4283,6 +4297,7 @@ app.post('/capture-window/launch', (req, res) => {
     const body = req.body || {};
     const matchId = safeMatchId(body.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    rememberSport(matchId, body);
     const result = launchCaptureWindow({ matchId, videoDeviceId: body.videoDeviceId, videoLabel: body.videoLabel, origin: body.origin, width: body.width, height: body.height });
     res.json({ success: result.ok, ...result });
 });
@@ -4635,6 +4650,7 @@ app.post('/native-preview/start', async (req, res) => {
     if (!body.cameraDeviceName) return res.status(400).json({ success: false, error: 'cameraDeviceName required' });
     if (!body.audioDeviceName) return res.status(400).json({ success: false, error: 'audioDeviceName required' });
     if (!body.mainServerUrl) return res.status(400).json({ success: false, error: 'mainServerUrl required' });
+    rememberSport(matchId, body);
     // 🛠 Preview used to start the SHARED program feed with no format at all
     // — always 1920x1080 @ 30 — so a later 25p recording was told "the feed
     // is already running at 30" and the camera was upscaled on the CPU. It
@@ -4675,6 +4691,7 @@ app.post('/recording-start', async (req, res) => {
     recorder.interlacedSource = recMode ? captureModes.VIDEO_MODES[recMode].interlaced : false;
     recorder.captureFps = recMode ? captureModes.VIDEO_MODES[recMode].captureFps : null;
 
+    rememberSport(matchId, req.body);
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
     adoptLocalOnlyClips(matchId, mainServerUrl);
@@ -4723,6 +4740,11 @@ app.get('/recording-info', (req, res) => {
     res.json({
         success: true,
         folder: dir,
+        // whether THIS match can be clipped right now (the recorder may be
+        // recording another match)
+        registered: !!(matchId && recordingMatches[matchId]),
+        recorderMatchId: recorder.matchId || null,
+        recorderState: recorder.state,
         segments: recorder.segments,
         totalSizeBytes: sizeBytes,
         diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
