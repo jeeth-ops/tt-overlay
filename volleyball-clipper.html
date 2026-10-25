@@ -345,9 +345,10 @@
         ${nat ? `<div><div class="field"><span>Camera (capture device)</span><select class="input" id="ncam"><option value="">Choose…</option>${opt(C.engine.video, p.nativeCamera)}</select></div></div>`
           : `<div class="${C.launched ? 'ok' : ''}"><div class="stack" style="gap:8px"><div class="field"><span>Camera for the Live Output window</span><select class="input" id="cam"><option value="">Default camera</option>${C.cams.map((c) => `<option value="${esc(c.id)}" data-label="${esc(c.label)}" ${c.id === p.cameraId || (c.label && c.label === p.cameraLabel) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
               <div class="row wrapr"><button class="btn sm" id="cams">${C.cams.length ? 'Refresh cameras' : 'List cameras'}</button><button class="btn sm primary" id="lo">Open Live Output window</button></div></div></div>`}
-        <div><div class="grid2"><div class="field"><span>Audio device</span><select class="input" id="aud"><option value="">Choose…</option>${opt(C.engine.audio, p.audio)}</select></div>
+        <div><div class="stack" style="gap:8px"><div class="grid2"><div class="field"><span>Audio device</span><select class="input" id="aud"><option value="">Choose…</option>${opt(C.engine.audio, p.audio)}</select></div>
           <div class="field"><span>Quality</span><select class="input" id="res">${['1080p', '720p'].map((x) => `<option ${x === p.resolution ? 'selected' : ''}>${x}</option>`).join('')}</select></div></div>
-          <div class="field" style="margin-top:8px"><span>Video mode</span><select class="input" id="vm">${['25p', '50p', '50i', '30p', '60p'].map((x) => `<option ${x === p.videoMode ? 'selected' : ''}>${x}</option>`).join('')}</select></div></div>
+          <div class="field"><span>Video mode</span><select class="input" id="vm">${['25p', '50p', '50i', '30p', '60p'].map((x) => `<option ${x === p.videoMode ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+          ${!C.engine.audio.length ? '<p class="tiny muted">The engine lists no audio device on this PC — the recording needs one (Windows dshow).</p>' : ''}</div></div>
         <div class="${rs.mine ? 'ok' : ''}"><div class="row wrapr">${rs.mine ? '<button class="btn danger" id="recStop">Stop recording</button>' : '<button class="btn green" id="recStart">Start recording this match</button>'}<button class="btn sm ghost" id="pv">${C.preview ? 'Hide preview' : 'Preview'}</button></div></div>
       </div>
       ${C.preview ? `<img class="preview" id="pvImg" alt="What the engine records" style="margin-top:12px">` : ''}`;
@@ -368,7 +369,9 @@
     const d = rec.durationSec;
     const dur = d ? `${Math.floor(d / 3600)}:${String(Math.floor(d / 60) % 60).padStart(2, '0')}:${String(d % 60).padStart(2, '0')}` : '–';
     const free = C.engine.info && C.engine.info.diskFreeBytes ? (C.engine.info.diskFreeBytes / 1073741824).toFixed(1) + ' GB free' : '–';
-    if ($('#recFig')) $('#recFig').textContent = `${dur} · ${size}${rec.segmentCount ? ` · ${rec.segmentCount} part${rec.segmentCount === 1 ? '' : 's'}` : ''}`;
+    const parts = rec.segmentCount ? `${rec.segmentCount} part${rec.segmentCount === 1 ? '' : 's'}` : '';
+    const live = rec.state === 'recording' || rec.state === 'starting';
+    if ($('#recFig')) $('#recFig').textContent = live ? [dur, size, parts].filter((x) => x && x !== '–').join(' · ') || 'Starting…' : `Not recording${rec.matchId && rec.matchId === C.matchId && parts ? ` (${parts} of this match on disk)` : ''}`;
     if ($('#diskFig')) $('#diskFig').textContent = free;
   }
   let pvTimer = null;

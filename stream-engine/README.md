@@ -253,7 +253,7 @@ worth fixing before match day, not just NVENC.
 | GET | `/health` | live bitrate/fps/dropped-frames/duration/state + clip engine state |
 | POST | `/recording-start` | `{matchId, tournamentId, mainServerUrl}` — starts the local clip buffer for a match |
 | POST | `/recording-stop` | `{matchId}` — stops it (buffer is kept ~90s for in-flight clips, then deleted) |
-| POST | `/clip` | `{eventType, timestamp, matchId, ballMeta}` — cuts a clip from the local buffer, forwards it to `mainServerUrl`'s `/api/clips/ingest` |
+| POST | `/clip` | `{eventType, timestamp, matchId, ballMeta}` — cuts a clip from the local buffer, forwards it to `mainServerUrl`'s `/api/clips/ingest`. Optional `sport: 'volleyball'` + `preRollSec` / `postRollSec` (bounded) give a job its own frozen window and route: a volleyball point is T0−7 s → T0+3 s, sent to `/api/volleyball/clips/ingest` (see `clipWindow.js`); without them it is a cricket clip exactly as before |
 | POST | `/set-folder` | legacy no-op — kept so older UI calls don't break; Drive/R2 folder routing is handled entirely by server.js now |
 
 ### Native capture / program-feed endpoints (current, accurate)
@@ -263,7 +263,7 @@ worth fixing before match day, not just NVENC.
 | GET | `/capture-preview?matchId=` | one real gdigrab frame as a PNG — same path the recorder/encoder use |
 | GET | `/program-feed-health?matchId=` | on-demand black/white/frozen sample of the real capture (see "Native preview showing black/white" above) |
 | GET/POST | `/capture-config` | get/set the gdigrab crop margins (`cropTop`/`cropBottom`/`cropLeft`/`cropRight`) |
-| POST | `/capture-window/launch` | `{matchId, videoDeviceId, origin, width, height}` — launches Live Output as a dedicated, GPU-compositing-disabled Chromium process |
+| POST | `/capture-window/launch` | `{matchId, videoDeviceId, origin, width, height}` — launches Live Output as a dedicated, GPU-compositing-disabled Chromium process. With `sport: 'volleyball'` (and `overlayKey` for a private match) it opens `volleyball-live-output` — the volleyball overlay over the camera; `/recording-start` and `/native-preview/start` take the same two fields for the native compositor's overlay |
 | POST | `/capture-window/close` | closes that dedicated process |
 | GET | `/capture-window/status` | whether it's running + last reported camera-ended reason |
 | POST | `/capture-window/camera-ended` | `live-output.html` reports here directly when its camera track ends/has no signal |

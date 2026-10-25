@@ -28,6 +28,14 @@
   .score { display: flex; align-items: center; gap: 10px; font-size: clamp(34px, 6vw, 54px); font-weight: 800; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
   .score i { font-style: normal; color: var(--mute); font-weight: 600; font-size: .6em; }
   .score .w { color: var(--ink); } .score .l { color: var(--mute); }
+  @media (max-width: 600px) {
+    .vs { gap: 8px; }
+    .side, .side.r { flex-direction: column; text-align: center; gap: 6px; }
+    .side .nm { font-size: 15px; }
+    .side .nm.ellipsis { white-space: normal; overflow-wrap: anywhere; }
+    .side .nm small { display: none; }
+    .side .logo.lg { width: 48px; height: 48px; border-radius: 14px; font-size: 15px; }
+  }
   .live-now { margin-top: 12px; text-align: center; font-weight: 700; }
   .live-now b { font-size: 22px; font-variant-numeric: tabular-nums; }
   .setchips { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
@@ -41,6 +49,10 @@
   .cmp-row .bar { height: 8px; border-radius: 99px; background: var(--fill); overflow: hidden; display: flex; }
   .cmp-row .bar.l { justify-content: flex-end; }
   .cmp-row .bar i { display: block; height: 100%; border-radius: 99px; }
+  /* a team's own colour, lifted on a dark page so a navy team stays readable */
+  .tcol { color: var(--tc); } .tfill { background: var(--tc); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tcol { color: color-mix(in srgb, var(--tc) 50%, #fff); } :root:not([data-theme="light"]) .tfill { background: color-mix(in srgb, var(--tc) 70%, #fff); } }
+  :root[data-theme="dark"] .tcol { color: color-mix(in srgb, var(--tc) 50%, #fff); } :root[data-theme="dark"] .tfill { background: color-mix(in srgb, var(--tc) 70%, #fff); }
   .vid { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-radius: 8px; background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); font-weight: 700; font-size: 12.5px; }
   .vid:hover { background: color-mix(in srgb, var(--blue) 22%, transparent); }
   .pname { font-weight: 600; text-align: left; }
@@ -64,7 +76,7 @@
 <header class="topbar">
   <a class="brand" href="/volleyball"><span class="ball">🏐</span><span>Volleyball</span></a>
   <div class="grow ellipsis small" id="crumb"></div>
-  <button class="btn sm ghost" id="theme" title="Light / dark">◐</button>
+  <button class="btn sm ghost" id="theme" title="Light / dark / automatic theme" aria-label="Theme"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg></button>
 </header>
 <main class="wrap" id="main"><div class="skel" style="height:220px"></div></main>
 
@@ -169,8 +181,8 @@
     const rows = [['Attack points', T.A.byCategory.attack, T.B.byCategory.attack], ['Block points', T.A.byCategory.block, T.B.byCategory.block], ['Serve points', T.A.byCategory.serve, T.B.byCategory.serve],
       ['Opponent errors', T.A.byCategory.opponentError, T.B.byCategory.opponentError], ['Side-out points', T.A.sideOutPoints, T.B.sideOutPoints], ['Break points', T.A.breakPoints, T.B.breakPoints],
       ['Longest run', T.A.longestRun, T.B.longestRun], ['Errors made', T.A.errorsCommitted, T.B.errorsCommitted], ['Time-outs', T.A.timeouts, T.B.timeouts], ['Substitutions', T.A.substitutions, T.B.substitutions]];
-    const cmp = `<div class="card"><div class="row"><b class="grow" style="color:${esc(color('A'))}">${esc(team('A').shortName || team('A').name)}</b><h3>Team comparison</h3><b class="grow" style="text-align:right;color:${esc(color('B'))}">${esc(team('B').shortName || team('B').name)}</b></div>
-      ${rows.map(([l, a, b]) => { const mx = Math.max(a, b, 1); return `<div class="cmp-row"><span class="v">${a}</span><span class="bar l"><i style="width:${a / mx * 100}%;background:${esc(color('A'))}"></i></span><span class="lbl">${esc(l)}</span><span class="bar"><i style="width:${b / mx * 100}%;background:${esc(color('B'))}"></i></span><span class="v">${b}</span></div>`; }).join('')}</div>`;
+    const cmp = `<div class="card"><div class="row"><b class="grow tcol" style="--tc:${esc(color('A'))}">${esc(team('A').shortName || team('A').name)}</b><h3>Team comparison</h3><b class="grow tcol" style="text-align:right;--tc:${esc(color('B'))}">${esc(team('B').shortName || team('B').name)}</b></div>
+      ${rows.map(([l, a, b]) => { const mx = Math.max(a, b, 1); return `<div class="cmp-row"><span class="v">${a}</span><span class="bar l"><i class="tfill" style="width:${a / mx * 100}%;--tc:${esc(color('A'))}"></i></span><span class="lbl">${esc(l)}</span><span class="bar"><i class="tfill" style="width:${b / mx * 100}%;--tc:${esc(color('B'))}"></i></span><span class="v">${b}</span></div>`; }).join('')}</div>`;
     $('#tab').innerHTML = `<div class="stack">${setTable}${cmp}<div class="grid-2">${['A', 'B'].map(playerTable).join('')}</div>
       <p class="tiny muted">Statistics are derived from the saved points. A kill, block or ace is only credited when the scorer recorded who made it; 🎬 opens the clips of the points a player is part of.</p></div>`;
     $$('[data-clips]').forEach((b) => b.onclick = () => playerClips(b.dataset.clips));

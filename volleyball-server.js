@@ -1388,7 +1388,10 @@ module.exports = function setupVolleyball(deps) {
     if (!a.manage) return res.status(403).json({ success: false });
     await c.clips.updateOne({ clipId: a.clip.clipId }, { $set: { retryCount: 0, lastRetryAt: 0, status: a.clip.status === 'FAILED_PERMANENT' ? 'RETRY_PENDING' : a.clip.status } });
     await audit(c, { action: 'clip.retry', tournamentId: a.m.tournamentId, matchId: a.m.matchId, by: byOf(user), details: { clipId: a.clip.clipId } });
-    setImmediate(() => clipSweep().catch(() => {}));
+    // asked for by a person: now, not after the automatic back-off (the
+    // sweep waits ~10 s after a clip arrives before its first retry)
+    if (a.clip.filePath && fs.existsSync(a.clip.filePath)) setImmediate(() => finishClip(c, a.clip.clipId).catch((e) => log('clip retry error', a.clip.clipId, e.message || e)));
+    else setImmediate(() => clipSweep().catch(() => {}));
     res.json({ success: true });
   }));
   // Polled by the Stream Engine / Clipper Helper after forwarding a clip.

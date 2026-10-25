@@ -41,7 +41,9 @@
   function normalizePolicy(p) {
     if (typeof p === 'string' && POLICIES[p]) return Object.assign({ key: p }, POLICIES[p]);
     if (p && typeof p === 'object') {
-      if (p.key && POLICIES[p.key] && p.winStraight == null) return Object.assign({ key: p.key }, POLICIES[p.key]);
+      // a preset by name — also one already normalised and stored, whose
+      // figures are the preset's own (it is not "custom" for being stored)
+      if (p.key && POLICIES[p.key] && ['winStraight', 'winDecider', 'loseDecider', 'loseStraight'].every(function (k) { return p[k] == null || Number(p[k]) === POLICIES[p.key][k]; })) return Object.assign({ key: p.key }, POLICIES[p.key]);
       var n = function (v, d) { var x = Number(v); return isFinite(x) ? Math.max(-10, Math.min(10, x)) : d; };
       return { key: 'custom', label: 'Custom', winStraight: n(p.winStraight, 3), winDecider: n(p.winDecider, 2), loseDecider: n(p.loseDecider, 1), loseStraight: n(p.loseStraight, 0), forfeitLoser: n(p.forfeitLoser, 0) };
     }

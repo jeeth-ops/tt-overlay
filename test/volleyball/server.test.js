@@ -39,6 +39,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- stand-in R2 (installed before server.js loads) ----
 const bucket = new Map();
+let r2FailVideos = 0;   // the next N clip uploads fail (R2 "down")
 class Cmd { constructor(input) { this.input = input; } }
 class PutObjectCommand extends Cmd {}
 class DeleteObjectCommand extends Cmd {}
@@ -46,6 +47,7 @@ class GetObjectCommand extends Cmd {}
 class S3Client {
   async send(cmd) {
     const k = cmd.input.Key;
+    if (cmd instanceof PutObjectCommand && r2FailVideos > 0 && /\.mp4$/.test(k)) { r2FailVideos--; throw new Error('R2 is down'); }
     if (cmd instanceof PutObjectCommand) { bucket.set(k, Buffer.from(cmd.input.Body)); return {}; }
     if (cmd instanceof DeleteObjectCommand) { bucket.delete(k); return {}; }
     if (cmd instanceof GetObjectCommand) { const b = bucket.get(k); if (!b) throw new Error('NoSuchKey'); return { Body: { transformToByteArray: async () => b } }; }
@@ -313,6 +315,20 @@ function roster(prefix) {
   eq('a late "could not" from the phone never overwrites the clip being made', st3.json.clip.status, 'REQUESTED');
   const shown2 = (await api('GET', `/api/volleyball/matches/${MID}/clips?eventId=ev-two-dev`)).json.clips;
   eq('…and the website shows one clip for the point, with no error', [shown2.length, shown2[0].error], [1, null]);
+  head('THE UPLOAD FAILS, THEN A RETRY');
+  r2FailVideos = 1;
+  const rid = `${MID}_ev-retry`;
+  await api('POST', `/api/volleyball/matches/${MID}/clips`, { json: { clipId: rid, eventId: 'ev-retry', status: 'REQUESTED' }, token: TOK.work });
+  await api('POST', `/api/volleyball/clips/ingest?matchId=${MID}&clipId=${rid}&timestamp=${Date.now()}`, { raw: makeClip(3), headers: { 'X-Ball-Meta': JSON.stringify({ sport: 'volleyball', vbClipToken: match.clipToken, eventId: 'ev-retry' }) } });
+  let rst = null;
+  for (let i = 0; i < 80; i++) { rst = (await api('GET', `/api/volleyball/matches/${MID}/clips?eventId=ev-retry`)).json.clips[0]; if (rst && rst.status === 'RETRY_PENDING') break; await sleep(100); }
+  eq('R2 down: the clip stays on the website, "Upload pending" — never reported complete', rst && [rst.status, rst.displayStatus, rst.r2Status, !!rst.watchUrl], ['RETRY_PENDING', 'Upload pending', 'failed', true]);
+  eq('…the engine is told it is not done', (await api('GET', `/api/volleyball/clips/status/${rid}`)).json.status, 'RETRY_PENDING');
+  eq('…another account cannot ask for a retry', (await api('POST', `/api/volleyball/clips/${rid}/retry`, { token: TOK.vinit })).status, 403);
+  const t0r = Date.now();
+  const rr = await api('POST', `/api/volleyball/clips/${rid}/retry`, { token: TOK.work });
+  for (let i = 0; i < 80; i++) { rst = (await api('GET', `/api/volleyball/matches/${MID}/clips?eventId=ev-retry`)).json.clips[0]; if (rst.status === 'COMPLETE') break; await sleep(100); }
+  eq('…the operator\'s retry (R2 back) uploads it at once', [rr.status, rst.status, rst.displayStatus, Date.now() - t0r < 5000], [200, 'COMPLETE', 'Upload complete', true]);
   eq('a clip id cannot be re-used for another point', (await api('POST', `/api/volleyball/matches/${MID}/clips`, { json: { clipId: twoId, eventId: 'ev-other', status: 'REQUESTED' }, token: TOK.work })).status, 409);
 
   head('AUDIT AND ISOLATION');

@@ -123,6 +123,14 @@ const FAKE_FIREBASE = `(function(){
     return page;
   }
   const shot = (page, name) => page.screenshot({ path: path.join(OUT, name + '.png') });
+  // the overlay's screenshots over a camera-like picture (the page itself stays transparent)
+  const backdrop = (page) => page.evaluate(() => {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;inset:0;z-index:-1;background:radial-gradient(ellipse at 50% 120%,#d9a066 0%,#8a5a2b 35%,#2f4f2f 70%,#16261a 100%)';
+    document.body.prepend(d);
+  });
+  // no text cut short with an ellipsis
+  const clipped = (page, sel) => page.evaluate((q) => [...document.querySelectorAll(q)].filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent.trim()), sel);
   const toastSeen = (page, text) => page.waitForSelector(`.toast:has-text("${text}")`, { timeout: 8000 }).then(() => true, () => false);
   const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
@@ -196,6 +204,7 @@ const FAKE_FIREBASE = `(function(){
     const reg = (await call(sePort, 'GET', `/recording-info?matchId=${MID}`)).json;
     eq('…the engine now clips this match', reg.registered, true);
     ok('the relay switch is on by default', (await clipper.getAttribute('#relay', 'aria-checked')) === 'true');
+    ok('the record button is usable again after the answer', await clipper.evaluate(() => { const b = document.querySelector('#recStart, #recStop'); return !!b && !b.disabled; }));
     await shot(clipper, 'clipper-engine');
 
     /* ------------------------------------------------------------ overlay */
@@ -204,8 +213,28 @@ const FAKE_FIREBASE = `(function(){
     await overlay.waitForFunction(() => document.body.classList.contains('ready'), null, { timeout: 15000 });
     const bg = await overlay.evaluate(() => [getComputedStyle(document.documentElement).backgroundColor, getComputedStyle(document.body).backgroundColor]);
     eq('the page background is transparent (OBS shows the camera through it)', bg, ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+    await backdrop(overlay);
     const names = await overlay.evaluate(() => [document.querySelector('#na').textContent.trim(), document.querySelector('#nb').textContent.trim()]);
     eq('the bar shows both teams', names, ['Pune Panthers', 'Goa Waves']);
+
+    /* ------------------------------------------------------------ live output window */
+    head('LIVE OUTPUT WINDOW — the camera + overlay window the engine records');
+    const camBrowser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
+    try {
+      const lctx = await camBrowser.newContext({ viewport: { width: 1280, height: 720 }, permissions: ['camera'] });
+      const lo = await lctx.newPage();
+      await lo.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
+      await lo.route('http://127.0.0.1:5006/**', (r) => r.fulfill({ contentType: 'application/json', body: '{"success":true}' }));
+      lo.on('pageerror', (e) => pageErrors.push('live-output: ' + String(e)));
+      await lo.goto(`${base}/volleyball-live-output?match=${MID}&videoLabel=fake`);
+      const playing = await lo.waitForFunction(() => document.querySelector('#camera-video').readyState >= 2, null, { timeout: 15000 }).then(() => true, () => false);
+      eq('its title is the one the engine finds the window by', await lo.title(), `AllSportsLive-LiveOutput-${MID}`);
+      eq('the volleyball overlay (never the cricket one) is over the camera', await lo.getAttribute('#overlay-frame', 'src'), `${base}/volleyball-overlay?match=${MID}`);
+      ok('the camera picture is playing under it', playing);
+      await lo.frameLocator('#overlay-frame').locator('body.ready').waitFor({ timeout: 15000 }).then(() => ok('…and the overlay inside it is live', true), () => ok('…and the overlay inside it is live', false));
+      await shot(lo, 'live-output-window');
+      await lctx.close();
+    } finally { await camBrowser.close(); }
 
     /* ------------------------------------------------------------ panel */
     head('PANEL on a phone (no clip engine reachable) — toss, line-ups, scoring');
@@ -252,6 +281,7 @@ const FAKE_FIREBASE = `(function(){
     await panel.click('[data-to="B"]');
     await overlay.waitForFunction(() => /Time-out/i.test(document.querySelector('#pill').textContent) && document.querySelector('#pill').classList.contains('show'), null, { timeout: 8000 }).then(() => ok('the overlay shows the time-out with its count-down', true), () => ok('the overlay shows the time-out with its count-down', false));
     ok('…and so does the panel', /Time-out/.test(await panel.textContent('#status')));
+    await sleep(900);
     await shot(overlay, 'overlay-timeout');
     // a wrong point, undone
     await plus('B', 1);
@@ -271,6 +301,38 @@ const FAKE_FIREBASE = `(function(){
     eq('substitution recorded (5 left)', s.subsLeft.A, 5);
     await shot(panel, 'panel-live');
     ok('the panel fits 1366×768 without sideways scrolling', await noOverflow(panel));
+
+    /* ------------------------------------------------------------ offline */
+    head('OFFLINE — a dropped line never loses a point');
+    await panel.evaluate(() => window.__vbPanel.socket.disconnect());
+    await panel.waitForSelector('#chips .chip:has-text("Offline")', { timeout: 8000 });
+    await plus('A', 1);
+    await plus('B', 1);
+    eq('scored while offline: the panel shows both points at once and holds them', [await panel.evaluate(() => [...document.querySelectorAll('.bigscore')].map((b) => b.textContent).join('-')), /2 waiting/.test(await panel.textContent('#chips'))], ['3-3', true]);
+    s = await sum();
+    eq('…the website does not have them yet', [s.points.A, s.points.B], [2, 2]);
+    // the panel warns before leaving with unsent points; the person leaves anyway
+    const leaveWarned = new Promise((resolve) => panel.once('dialog', (d) => { resolve(d.type()); d.accept().catch(() => {}); }));
+    await panel.reload();   // the phone's browser reloads before the line is back
+    eq('leaving with unsent points asks first', await Promise.race([leaveWarned, sleep(3000).then(() => 'no dialog')]), 'beforeunload');
+    await panel.waitForSelector('.live [data-point="A"]', { timeout: 15000 });
+    await panel.waitForFunction(() => { const c = document.querySelector('#chips').textContent; return /Live/.test(c) && !/waiting|Saving/.test(c); }, null, { timeout: 15000 }).catch(() => {});
+    s = await sum();
+    eq('after the reload the held points reach the website — once each (3–3)', [s.points.A, s.points.B], [3, 3]);
+    const tlOff = (await api('GET', `/api/volleyball/matches/${MID}?timeline=1`)).json.timeline.filter((e) => e.type === 'RALLY');
+    eq('…no rally recorded twice', new Set(tlOff.map((e) => e.eventId)).size, tlOff.length);
+
+    /* ------------------------------------------------------------ corrections */
+    head('CORRECTIONS — a void, with its reason, in the ledger and the audit log');
+    await panel.click('#fixBtn');
+    await panel.locator('.sheet [data-void]').first().click();
+    await panel.fill('.sheet input.input', 'Line judge reversed the call');
+    await panel.click('.sheet [data-ok]');
+    await sleep(1000);
+    s = await sum();
+    eq('the voided point leaves the score (A 3 – B 2)', [s.points.A, s.points.B], [3, 2]);
+    const au = (await api('GET', `/api/volleyball/matches/${MID}/audit`)).json.audit.find((a) => a.action === 'event.void');
+    eq('…and the audit log keeps who, what and why', au && [au.details.reason, au.by.email], ['Line judge reversed the call', U.email]);
 
     /* ------------------------------------------------------------ the clip of the kill */
     head('THE KILL’S CLIP — phone press, clipped on the recording PC');
@@ -356,6 +418,7 @@ const FAKE_FIREBASE = `(function(){
       const inside = g && g.x >= 0 && g.y >= 0 && g.x + g.w <= 1920 && g.y + g.h <= 1080;
       const barShown = await overlay.evaluate(() => !document.body.classList.contains('hide-bar'));
       ok(`${label || 'Player card'}: on air, inside the frame${barShown ? ', clear of the score bar' : ' (the bar steps aside)'}`, shown && inside && (!barShown || (!overlaps(g, bar) && !overlaps(g, pill))), { shown, g, bar, pill });
+      eq(`${label || 'Player card'}: no team or player name cut short`, await clipped(overlay, '#gfx .scene.on b, #gfx .scene.on .pnm, #na span, #nb span'), []);
       await shot(overlay, 'overlay-' + scene);
     }
     const pc = await overlay.textContent('#gfx .scene.on');
@@ -365,6 +428,8 @@ const FAKE_FIREBASE = `(function(){
 
     const compact = await open(`/volleyball-overlay?match=${MID}&layout=compact`, { who: null, engine: null, viewport: { width: 1920, height: 1080 } });
     await compact.waitForFunction(() => document.body.classList.contains('ready'), null, { timeout: 15000 });
+    await backdrop(compact);
+    eq('compact layout: the team names fit the corner bug', await clipped(compact, '.crow .cn'), []);
     await panel.click('#gfxBtn'); await panel.click('.sheet [data-sc="lineup"]');
     await compact.waitForSelector('#gfx .scene.on', { timeout: 8000 });
     await sleep(1300);
@@ -409,6 +474,7 @@ const FAKE_FIREBASE = `(function(){
     const scPhone = await open(`/volleyball/match/${MID}`, { who: null, engine: null, viewport: { width: 390, height: 844 } });
     await scPhone.waitForSelector('.tbl');
     ok('the scorecard fits a 390 px phone (tables scroll inside their cards)', await noOverflow(scPhone));
+    eq('…with both team names in full', await clipped(scPhone, '.side .nm'), []);
     await shot(scPhone, 'scorecard-phone');
 
     /* ------------------------------------------------------------ tournament page */
@@ -420,6 +486,7 @@ const FAKE_FIREBASE = `(function(){
     await tp.waitForSelector('.tbl tbody tr');
     const top = await tp.evaluate(() => [...document.querySelector('.tbl tbody tr').querySelectorAll('td')].map((d) => d.textContent.trim()));
     eq('the table: Pune first — 1 played, 1 won, 3 points (3-2-1-0), sets 3:0', [top[1].includes('Pune'), top[2], top[3], top[5], top[6]], [true, '1', '1', '3', '3:0']);
+    ok('the table names the points policy (3-0 / 3-1 win: 3 …), not "Custom"', /3-0 \/ 3-1 win: 3/.test(await tp.textContent('#tab .card.flat')));
     await shot(tp, 'tournament-table');
     await tp.click('#tabs [data-t="leaders"]');
     await tp.waitForSelector('.lb');

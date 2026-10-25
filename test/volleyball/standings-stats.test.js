@@ -106,6 +106,8 @@ head('TIE-BREAKS (FIVB order: wins, match points, set ratio, point ratio, head-t
   ok('a perfect three-way tie stays stable and complete', r.length === 3 && new Set(r.map((x) => x.position)).size === 3);
 }
 eq('ratio display: no sets lost = MAX', [S.fmtRatio(Infinity), S.fmtRatio(1.5)], ['MAX', '1.500']);
+eq('a stored (already normalised) 3-2-1-0 policy stays 3-2-1-0, not "custom"', [S.normalizePolicy(S.normalizePolicy('3-2-1-0')).key, S.normalizePolicy(JSON.parse(JSON.stringify(S.normalizePolicy('2-1')))).label], ['3-2-1-0', S.POLICIES['2-1'].label]);
+eq('…while changed figures under a preset name are custom', S.normalizePolicy({ key: '3-2-1-0', winStraight: 3, winDecider: 3, loseDecider: 1, loseStraight: 0 }).key, 'custom');
 
 head('GROUPS');
 {

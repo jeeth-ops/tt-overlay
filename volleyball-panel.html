@@ -546,8 +546,10 @@
     const c = P.clips[eventId];
     if (!c) return '';
     const d = c.displayStatus || '';
-    const cls = /complete/i.test(d) ? 'ok' : /fail|unavailable/i.test(d) ? 'bad' : 'wait';
-    return `<span class="clipst ${cls}" title="${esc(c.error || d)}">🎬 ${esc(d.replace('Upload complete', 'Clip ✓'))}${c.partialPreRoll ? ' (short)' : ''}</span>`;
+    const cls = /complete|saved on the website/i.test(d) ? 'ok' : /fail|unavailable/i.test(d) ? 'bad' : 'wait';
+    // a short word in the row; the whole story in the tooltip
+    const SHORT = { 'Upload complete': 'Clip ✓', 'Saved on the website (no cloud storage set up)': 'Clip ✓', 'Saved locally': 'On this PC', 'Waiting for post-roll': 'Clip…', 'Processing': 'Cutting…', 'Uploading': 'Uploading…', 'Upload pending': 'Upload pending', 'Failed': 'Clip failed', 'Unavailable': 'No clip', 'Deleted': 'Deleted' };
+    return `<span class="clipst ${cls}" title="${esc(c.error ? d + ' — ' + c.error : d)}">🎬 ${esc(SHORT[d] || d)}${c.partialPreRoll ? ' (short)' : ''}</span>`;
   }
   function renderTimeline() {
     const el = $('#timeline'); if (!el || !P.L) return;
@@ -931,6 +933,7 @@
     e.preventDefault();
   });
   window.addEventListener('beforeunload', (e) => { if (P.outbox.length) { e.preventDefault(); e.returnValue = ''; } });
+  window.__vbPanel = P;   // test hook: the browser checks drop the line on purpose
   VB.on('auth', (u) => { if (!u) gate('Signed out', 'Sign in again to keep scoring.', true); });
   boot();
 })();
