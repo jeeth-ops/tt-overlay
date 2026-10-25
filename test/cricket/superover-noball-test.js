@@ -109,6 +109,14 @@ async function panelSuite(file, label){
   eq(`${label}: 4 every delivery is a regulation innings`, snap(P, 'state.ballLog.filter(b => b.innings >= 100).length'), 0);
   fixtures.normal = { state: snap(P, 'state'), record: r1 };
 
+  console.log('\n=== 15. The toss goes into the saved match ===');
+  const tossWas = P.E('JSON.stringify(state.toss)');
+  P.E(`state.toss = { winner: 'B', decision: 'BOWL' }`);
+  eq(`${label}: 15 record.toss — who won it and what they chose`, snap(P, 'buildMatchRecordForLeague().toss'), { winner: 'B', decision: 'BOWL' });
+  P.E(`state.toss = { winner: '', decision: 'BAT' }`);
+  eq(`${label}: 15 no toss recorded → none saved`, snap(P, 'buildMatchRecordForLeague().toss'), null);
+  P.E(`state.toss = ${tossWas}`);
+
   console.log('\n=== 2/3/11. Tie → Super Over → completed ===');
   newMatch(P); playRegulation(P, 'tie');
   eq(`${label}: 2 regulation ends level, Super Over offered (not a result yet)`, [P.E('state.score.runs'), P.E('state.target') - 1, P.E('!!state.superOverReady')], [280, 280, true]);
@@ -216,6 +224,17 @@ async function scorecardSuite(){
   eq('13 NB shown as NB / NB+1 in the ball chips', S.E(`(latestState = ${JSON.stringify({ ...fixtures.so.soBreak, ballHistory: ['Nb', 'Nb+1', '4'] })}, _lastKey.balls = null, renderBalls(latestState), [...document.querySelectorAll('#balls-scroll .ball-chip')].map(e => e.textContent))`), ['NB', 'NB+1', '4']);
   eq('13 NB+4 commentary badge', S.E(`ballBadgeInfo({ ballType:'Nb', runs:5 }).label`), 'NB+4');
   eq('13 a first-ball NB (stored at 0.0) reads as ball 0.1', S.E(`overBallLabel(0, 'Nb')`), '0.1');
+  // 🪙 The toss under the score: live, in a saved match, and not at all for an older save without it
+  S.E(`finalMatchData = null; latestState = ${JSON.stringify({ ...fixtures.so.soLive, toss: { winner: 'B', decision: 'BOWL' } })}; render();`);
+  eq('13 live: who won the toss and what they chose, under the score', [S.E(`document.getElementById('toss-line').hidden`), S.text('#toss-text')],
+    [false, `${fixtures.so.soLive.teamB.name} won the toss and elected to bowl first`]);
+  S.E(`finalMatchData = null; renderFinalSnapshot(${JSON.stringify({ ...fixtures.normal.record, toss: { winner: 'A', decision: 'BAT' } })}, 'IPL');`);
+  eq('13 saved match: the toss too', [S.E(`document.getElementById('toss-line').hidden`), S.text('#toss-text')],
+    [false, `${fixtures.normal.record.teamA.name} won the toss and elected to bat first`]);
+  S.E(`finalMatchData = null; renderFinalSnapshot(${JSON.stringify({ ...fixtures.normal.record, toss: null })}, 'IPL');`);
+  eq('13 an older save with no toss → no toss line', S.E(`document.getElementById('toss-line').hidden`), true);
+  S.E(`finalMatchData = null; latestState = ${JSON.stringify({ ...fixtures.so.soLive, toss: { winner: '', decision: 'BAT' } })}; render();`);
+  eq('13 live, toss not recorded yet → no toss line', S.E(`document.getElementById('toss-line').hidden`), true);
   eq('13 no script errors', S.errors.filter(e => !/Could not parse CSS|Not implemented/.test(e)), []);
 }
 
