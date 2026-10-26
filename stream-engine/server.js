@@ -64,6 +64,9 @@
 const express = require('express');
 const retryQueueStore = require('./retryQueueStore');
 const recordingSession = require('./recordingSession');
+// 🏐 Per-job clip windows and per-sport routes (cricket unchanged) — see clipWindow.js.
+const clipWindow = require('./clipWindow');
+const volleyballClips = require('./volleyballClips');
 const captureModes = require('./captureModes');
 
 // 🔊 AUDIO SAMPLE RATE — 48 kHz, everywhere, deliberately.
@@ -905,6 +908,20 @@ function coerceFps(fps, who) {
 // (recorder + live encoder) each capturing this same window is safe —
 // see README "Why two processes, not one" for the reasoning.
 // ================================================================
+// 🏐 Which sport a match id belongs to, as the page that started its
+// capture window / recording / preview said (volleyball pages say so;
+// cricket pages send nothing and stay on the cricket pages).
+const matchSports = new Map();
+function rememberSport(matchId, body) {
+    if (!matchId || !body) return;
+    if (body.sport === 'volleyball') matchSports.set(matchId, { sport: 'volleyball', overlayKey: body.overlayKey || null });
+    else if (body.sport === 'cricket') matchSports.delete(matchId);
+}
+function capturePages(matchId, opts) {
+    const reg = matchSports.get(matchId) || {};
+    return clipWindow.capturePagesFor(reg.sport, matchId, Object.assign({ overlayKey: reg.overlayKey }, opts || {}));
+}
+
 function windowTitleFor(matchId) {
     return `AllSportsLive-LiveOutput-${safeMatchId(matchId)}`;
 }
@@ -1367,7 +1384,7 @@ function launchCaptureWindow({ matchId, videoDeviceId, videoLabel, origin, width
     // device name, NOT profile-scoped) is what live-output.html actually
     // uses to pick the right camera in this profile — see its own
     // startCamera().
-    const url = `${String(origin).replace(/\/+$/, '')}/live-output.html?room=${encodeURIComponent(matchId)}&video=${encodeURIComponent(videoDeviceId || '')}&videoLabel=${encodeURIComponent(videoLabel || '')}`;
+    const url = `${String(origin).replace(/\/+$/, '')}${capturePages(matchId, { videoDeviceId, videoLabel }).liveOutput}`;
     const w = Math.max(1280, Number(width) || 1920);
     const h = Math.max(720, Number(height) || 1080);
     const args = [
@@ -2416,7 +2433,7 @@ async function ensureCompositor({ matchId, mainServerUrl, cameraDeviceName, audi
         compositor = new nativePipeline.Compositor({
             spawnFfmpeg,
             execPath,
-            overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}/cricket-overlay?room=${encodeURIComponent(matchId)}`,
+            overlayUrl: `${String(mainServerUrl).replace(/\/+$/, '')}${capturePages(matchId).overlay}`,
             width, height, fps: programFps,
         });
         if (programFps > 30) {
@@ -2495,6 +2512,19 @@ const recorder = {
     sessionDir: null,         // folder the session file and the segments live in
     finalizing: null,         // {status:'joining'|'done'|'failed', path, error} while/after the parts are joined
 };
+// 🧪 TEST HOOK — never set on an operator's PC. STREAM_ENGINE_TEST_MASTER=
+// "<file>|<startedAtMs>|<seconds>|<matchId>" registers an existing video as
+// that match's finished recorder segment, so the whole clip path (/clip, the
+// post-roll wait, the cut, the forward to the website) runs for real on a
+// machine with no capture device — see test/volleyball/clip-e2e.test.js.
+if (process.env.STREAM_ENGINE_TEST_MASTER) {
+    const [file, startedAt, seconds, matchId] = String(process.env.STREAM_ENGINE_TEST_MASTER).split('|');
+    if (file && fs.existsSync(file)) {
+        recorder.matchId = matchId || null;
+        recorder.segments.push({ path: file, startedAt: Number(startedAt), anchorMs: Number(startedAt), outTimeSec: Number(seconds) || 0, width: null, height: null });
+        console.log(`[stream-engine] 🧪 test master recording registered for ${matchId}: ${file}`);
+    }
+}
 // The session file is the only durable answer to "why did this match come
 // back in two pieces?" — a failure to write it must be visible, not eaten.
 function persistRecordingSession() {
@@ -3098,10 +3128,13 @@ function persistRetryQueue() {
     });
 }
 
-function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, filePath, clipId) {
+// `route` (optional): { ingestPath, clipMeta } for a non-cricket clip — a
+// cricket clip is sent exactly as it always was.
+function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, filePath, clipId, route) {
     return new Promise((resolve) => {
         let url;
-        try { url = new URL(`/api/clips/ingest?matchId=${encodeURIComponent(matchId)}&eventType=${encodeURIComponent(eventType)}&timestamp=${timestamp}&clipId=${encodeURIComponent(clipId)}`, mainServerUrl); }
+        const ingestPath = (route && route.ingestPath) || '/api/clips/ingest';
+        try { url = new URL(`${ingestPath}?matchId=${encodeURIComponent(matchId)}&eventType=${encodeURIComponent(eventType)}&timestamp=${timestamp}&clipId=${encodeURIComponent(clipId)}`, mainServerUrl); }
         catch (e) { return resolve({ ok: false, error: 'Invalid mainServerUrl' }); }
 
         let stat;
@@ -3110,11 +3143,11 @@ function postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta
         const lib = url.protocol === 'https:' ? https : http;
         const req = lib.request(url, {
             method: 'POST',
-            headers: {
+            headers: Object.assign({
                 'Content-Type': 'video/mp4',
                 'Content-Length': stat.size,
                 'X-Ball-Meta': JSON.stringify(ballMeta || {}),
-            },
+            }, route && route.clipMeta ? { 'X-Clip-Meta': JSON.stringify(route.clipMeta) } : {}),
             timeout: 20000,
         }, (res) => {
             let body = '';
@@ -3173,7 +3206,7 @@ function stopRenderPolling() {
 }
 function fetchClipStatus(job) {
     let url;
-    try { url = new URL(`/api/clips/status/${encodeURIComponent(job.clipId)}`, job.mainServerUrl); }
+    try { url = new URL(`${clipWindow.routeFor(job.sport).statusPath}${encodeURIComponent(job.clipId)}`, job.mainServerUrl); }
     catch (e) { return Promise.resolve(null); }
     const lib = url.protocol === 'https:' ? https : http;
     return new Promise((resolve) => {
@@ -3324,7 +3357,8 @@ async function processRetryEntry(entry) {
     entry.attempts = (entry.attempts || 0) + 1;
     entry.timer = null;
     if (entry.clipId) updateJob(entry.clipId, { status: 'RETRY_PENDING', forwardAttempts: entry.attempts });
-    const result = await postFileToServer(entry.mainServerUrl, entry.matchId, entry.eventType, entry.timestamp, entry.ballMeta, entry.filePath, entry.clipId);
+    const job = entry.clipId ? clipJobs.get(entry.clipId) : null;
+    const result = await postFileToServer(entry.mainServerUrl, entry.matchId, entry.eventType, entry.timestamp, entry.ballMeta, entry.filePath, entry.clipId, sportRoute(job || entry));
     if (result.ok) {
         clipWorker.cloudflareConnected = true;
         retryQueue = retryQueue.filter((e) => e !== entry);
@@ -3396,6 +3430,7 @@ function recoverOrphanedClipUploads() {
             clipId: job.clipId, matchId: job.matchId, eventType: job.eventType,
             timestamp: job.timestamp, ballMeta: job.ballMeta, filePath: job.localPath,
             mainServerUrl: job.mainServerUrl, attempts: 0, enqueuedAt: Date.now(),
+            sport: job.sport || undefined,
         };
         retryQueue.push(entry);
         recovered.push(job.clipId);
@@ -3425,6 +3460,7 @@ function adoptLocalOnlyClips(matchId, mainServerUrl) {
             clipId: job.clipId, matchId: job.matchId, eventType: job.eventType,
             timestamp: job.timestamp, ballMeta: job.ballMeta, filePath: job.localPath,
             mainServerUrl, attempts: 0, enqueuedAt: Date.now(),
+            sport: job.sport || undefined,
         };
         retryQueue.push(entry);
         updateJob(job.clipId, { status: 'RETRY_PENDING', mainServerUrl, error: null });
@@ -3505,6 +3541,9 @@ async function cutLocalClip(job) {
     if (shuttingDown) return { ok: false, retryable: false, error: 'Stream Engine shut down before this clip could be cut.' };
 
     const fromSec = Math.max(0, startSec);
+    // A recording (or recorder restart) that began less than the pre-roll
+    // before the press cannot supply all of it — cut what exists, and say so.
+    const actualPreRollSec = clipWindow.actualPreRoll(win, startSec);
     // A finished segment can't supply more than it holds (e.g. recording
     // stopped a second after the event) — cut what exists instead of failing.
     const availableEndSec = recorder.currentSegment === seg ? endSec : Math.min(endSec, Math.max(seg.outTimeSec || endSec, fromSec + 1));
@@ -3548,7 +3587,7 @@ async function cutLocalClip(job) {
     }
 
     console.log(`[CLIP CREATED] clipId=${clipId} localPath=${outFile}${verify.ok === null ? ' (integrity NOT verified — ffprobe unavailable, see bin/README.md)' : ` (verified: ${verify.durationSec.toFixed(1)}s, ${verify.width}x${verify.height})`}`);
-    return { ok: true, outFile, durationSec: verify.durationSec || null };
+    return { ok: true, outFile, durationSec: verify.durationSec || null, actualPreRollSec };
 }
 
 // Windows (antivirus, indexer) can hold a just-written file for a moment.
@@ -3725,14 +3764,22 @@ async function runClipCut(clipId) {
     // the step that has to survive a dead internet connection: the operator
     // gets the organised tree on disk either way, and the upload queue is a
     // separate, later concern.
-    const organised = await organiseClipLocally(job, cutResult.outFile);
+    job.actualPreRollSec = cutResult.actualPreRollSec;
+    job.partialPreRoll = cutResult.actualPreRollSec != null && job.window && cutResult.actualPreRollSec < job.window.preRollSec - 0.5;
+    job.clipDurationSec = cutResult.durationSec;
+    const organised = job.sport === 'volleyball'
+        ? await volleyballClips.placeVolleyballClip({ clipsRoot: CLIPS_ROOT, currentPath: cutResult.outFile, job }).catch(() => ({ path: cutResult.outFile, info: null }))
+        : await organiseClipLocally(job, cutResult.outFile);
     const localPath = organised.path;
+    if (job.partialPreRoll) console.log(`[CLIP] clipId=${clipId} — only ${cutResult.actualPreRollSec}s of the ${job.window.preRollSec}s pre-roll was in the recording (it started after T0-${job.window.preRollSec}s)`);
     updateJob(clipId, {
         status: 'LOCAL_SAVED',
         localPath,
         organised: organised.info || null,
         error: null,
-        clipDurationSec: cutResult.durationSec
+        clipDurationSec: cutResult.durationSec,
+        actualPreRollSec: job.actualPreRollSec,
+        partialPreRoll: job.partialPreRoll
     });
     // Upload runs detached from the cut worker.
     clipUploadsInFlight++;
@@ -3837,7 +3884,8 @@ async function forwardClip(job, outFile) {
         return;
     }
     updateJob(clipId, { status: 'FORWARDING' });
-    const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, outFile, clipId);
+    const route = sportRoute(job);
+    const forwardResult = await postFileToServer(mainServerUrl, matchId, eventType, timestamp, ballMeta, outFile, clipId, route);
     if (forwardResult.ok) {
         clipWorker.cloudflareConnected = true;
         updateJob(clipId, { status: 'RETRY_PENDING' }); // becomes COMPLETE once polling confirms both uploads
@@ -3847,17 +3895,26 @@ async function forwardClip(job, outFile) {
     clipWorker.cloudflareConnected = false;
     clipWorker.lastError = forwardResult.error;
     updateJob(clipId, { status: 'RETRY_PENDING', error: forwardResult.error });
-    const entry = { clipId, matchId, eventType, timestamp, ballMeta, filePath: outFile, mainServerUrl, attempts: 0 };
+    const entry = { clipId, matchId, eventType, timestamp, ballMeta, filePath: outFile, mainServerUrl, attempts: 0, sport: job.sport || undefined, clipMeta: route ? route.clipMeta : undefined };
     retryQueue.push(entry);
     persistRetryQueue();
     scheduleRetry(entry);
+}
+
+// Where a non-cricket clip goes, and what it tells the website about its
+// cut. null for cricket: a cricket clip is forwarded exactly as before.
+function sportRoute(jobOrEntry) {
+    if (!jobOrEntry || !jobOrEntry.sport || jobOrEntry.sport === 'cricket') return null;
+    const r = clipWindow.routeFor(jobOrEntry.sport);
+    const meta = jobOrEntry.window ? clipWindow.clipMetaFor(jobOrEntry) : (jobOrEntry.clipMeta || null);
+    return { ingestPath: r.ingestPath, clipMeta: meta };
 }
 
 // 🔒 DUPLICATE EVENT/CLIP PREVENTION — clipId IS the dedupe key (it's
 // deterministic from matchId+eventType+timestamp — see buildClipId), so
 // the same request twice is one job, while two different presses (even
 // milliseconds apart) are two independent jobs with their own windows.
-function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUrl, clipId }) {
+function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUrl, clipId, sport, preRollSec, postRollSec }) {
     const t0 = Number(timestamp);
     if (!Number.isFinite(t0) || t0 <= 0) return { success: false, error: 'timestamp must be a millisecond epoch number' };
     clipId = clipId || buildClipId(matchId, eventType, t0);
@@ -3879,16 +3936,17 @@ function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUr
     }
     const resolvedMainServerUrl = mainServerUrl || rec.mainServerUrl || null;
 
+    const route = clipWindow.routeFor(sport);
     const job = {
         clipId, matchId, eventType, timestamp: t0, ballMeta: ballMeta || null,
         mainServerUrl: resolvedMainServerUrl,
-        // Frozen at acceptance — the ONLY timing the cut ever uses.
-        window: Object.freeze({
-            t0,
-            startWall: t0 - CLIP_PRE_ROLL_SEC * 1000,
-            endWall: t0 + CLIP_POST_ROLL_SEC * 1000,
-            preRollSec: CLIP_PRE_ROLL_SEC,
-            postRollSec: CLIP_POST_ROLL_SEC,
+        sport: route.sport,
+        // Frozen at acceptance — the ONLY timing the cut ever uses. Cricket
+        // requests name no window and get CLIP_PRE_ROLL_SEC / CLIP_POST_ROLL_SEC
+        // as always; a volleyball point asks for its own (7 s / 3 s).
+        window: clipWindow.buildWindow(t0, {
+            preRollSec: preRollSec != null ? preRollSec : CLIP_PRE_ROLL_SEC,
+            postRollSec: postRollSec != null ? postRollSec : CLIP_POST_ROLL_SEC,
         }),
         status: 'WAITING_FOR_POSTROLL',
         createdAt: Date.now(), updatedAt: Date.now(),
@@ -3902,7 +3960,7 @@ function acceptClipEvent({ matchId, eventType, timestamp, ballMeta, mainServerUr
     console.log(`[CLIP WAIT] clipId=${clipId} waiting ${waitMs}ms for post-roll`);
     clipTimer(() => enqueueClipCut(clipId), waitMs);
 
-    return { success: true, clipId, status: 'WAITING_FOR_POSTROLL' };
+    return { success: true, clipId, status: 'WAITING_FOR_POSTROLL', window: { preRollSec: job.window.preRollSec, postRollSec: job.window.postRollSec, finalizeAt: job.window.endWall } };
 }
 
 // ================================================================
@@ -4239,6 +4297,7 @@ app.post('/capture-window/launch', (req, res) => {
     const body = req.body || {};
     const matchId = safeMatchId(body.matchId);
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    rememberSport(matchId, body);
     const result = launchCaptureWindow({ matchId, videoDeviceId: body.videoDeviceId, videoLabel: body.videoLabel, origin: body.origin, width: body.width, height: body.height });
     res.json({ success: result.ok, ...result });
 });
@@ -4457,6 +4516,10 @@ app.post('/clip-meta', async (req, res) => {
     if (body.eventType) job.eventType = body.eventType;
 
     const currentPath = job.localPath || (job.organised && job.organised.primary) || null;
+    if (job.sport === 'volleyball') {
+        updateJob(clipId, { ballMeta: job.ballMeta });
+        return res.json({ success: true, refiled: false, note: 'Volleyball clips are filed by set and point' });
+    }
     if (!currentPath || !fs.existsSync(currentPath)) {
         // The decision still counts — it is recorded on the job, so whenever
         // the clip does land it will be filed correctly.
@@ -4587,6 +4650,7 @@ app.post('/native-preview/start', async (req, res) => {
     if (!body.cameraDeviceName) return res.status(400).json({ success: false, error: 'cameraDeviceName required' });
     if (!body.audioDeviceName) return res.status(400).json({ success: false, error: 'audioDeviceName required' });
     if (!body.mainServerUrl) return res.status(400).json({ success: false, error: 'mainServerUrl required' });
+    rememberSport(matchId, body);
     // 🛠 Preview used to start the SHARED program feed with no format at all
     // — always 1920x1080 @ 30 — so a later 25p recording was told "the feed
     // is already running at 30" and the camera was upscaled on the CPU. It
@@ -4627,6 +4691,7 @@ app.post('/recording-start', async (req, res) => {
     recorder.interlacedSource = recMode ? captureModes.VIDEO_MODES[recMode].interlaced : false;
     recorder.captureFps = recMode ? captureModes.VIDEO_MODES[recMode].captureFps : null;
 
+    rememberSport(matchId, req.body);
     recordingMatches[matchId] = { mainServerUrl, tournamentId };
     console.log(`🔴 [clip engine] Recording session registered for match ${matchId}`);
     adoptLocalOnlyClips(matchId, mainServerUrl);
@@ -4675,6 +4740,11 @@ app.get('/recording-info', (req, res) => {
     res.json({
         success: true,
         folder: dir,
+        // whether THIS match can be clipped right now (the recorder may be
+        // recording another match)
+        registered: !!(matchId && recordingMatches[matchId]),
+        recorderMatchId: recorder.matchId || null,
+        recorderState: recorder.state,
         segments: recorder.segments,
         totalSizeBytes: sizeBytes,
         diskFreeBytes: diskFreeBytes(RECORDING_ROOT),
@@ -4697,11 +4767,12 @@ app.post('/set-folder', (req, res) => {
 // ACCEPTED (job created, T0 frozen) — never waits for the post-roll or
 // the cut/upload.
 app.post('/clip', (req, res) => {
-    const { eventType, timestamp, matchId, ballMeta, clipId } = req.body || {};
+    const { eventType, timestamp, matchId, ballMeta, clipId, sport, preRollSec, postRollSec } = req.body || {};
     if (!matchId || !eventType || !timestamp) {
         return res.status(400).json({ success: false, error: 'matchId, eventType and timestamp are required' });
     }
-    const result = acceptClipEvent({ matchId: safeMatchId(matchId), eventType, timestamp, ballMeta, clipId });
+    // sport / preRollSec / postRollSec are optional (a cricket panel sends none)
+    const result = acceptClipEvent({ matchId: safeMatchId(matchId), eventType, timestamp, ballMeta, clipId, sport, preRollSec, postRollSec });
     if (!result.success) return res.status(409).json(result);
     res.json(result);
 });

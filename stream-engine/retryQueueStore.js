@@ -47,6 +47,8 @@ const fs = require('fs');
 const PERSISTED_FIELDS = [
     'clipId', 'matchId', 'eventType', 'timestamp', 'ballMeta',
     'filePath', 'mainServerUrl', 'attempts', 'offline', 'lastError', 'enqueuedAt',
+    // which website endpoint the clip goes to (absent = cricket, as always)
+    'sport', 'clipMeta',
 ];
 
 function projectEntry(entry) {

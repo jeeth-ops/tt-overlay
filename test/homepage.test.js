@@ -213,7 +213,7 @@ async function search(page, text) {
     eq('every /assets/home file the page names exists', refs.filter((r) => !fs.existsSync(path.join(ROOT, r))), []);
     eq('nothing comes from Wikimedia any more', /wikimedia/i.test(HTML), false);
     eq('owner sport tiles use the local pictures', await page.$$eval('.sport-card-bg', (b) => b.map((x) => x.style.backgroundImage.replace(/^url\("?|"?\)$/g, ''))),
-      ['/assets/home/sport-tt-720.webp', '/assets/home/sport-cricket-720.webp', '/assets/home/sport-football-720.webp']);
+      ['/assets/home/sport-tt-720.webp', '/assets/home/sport-cricket-720.webp', '/assets/home/sport-football-720.webp', '/assets/home/sport-volleyball-720.webp']);
     eq('the reel: muted, inline, loads nothing until shown, poster first', await page.$eval('#reelVideo', (v) => [v.muted, v.hasAttribute('playsinline'), v.getAttribute('preload'), v.getAttribute('poster'), v.querySelector('source').getAttribute('src')]),
       [true, true, 'none', '/assets/home/reel-title-360.webp', '/assets/home/highlight-reel.mp4']);
     eq('the sample report downloads (never navigates)', await page.$eval('#feat-report .feat-link', (a) => [a.getAttribute('href'), a.hasAttribute('download')]), ['/assets/home/sample-match-report.pdf', true]);

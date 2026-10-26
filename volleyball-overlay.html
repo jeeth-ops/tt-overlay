@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Volleyball Overlay</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;1,700;1,800&display=swap" rel="stylesheet">
+<!--
+  🏐 The volleyball broadcast overlay — an OBS / vMix browser source at
+  1920 × 1080 with a transparent background.
+
+  Everything on it comes from the match's saved event ledger, pushed over
+  the /volleyball socket namespace (never from cricket, never from a local
+  copy): the score bar, set history, serve, set / match point, time-outs,
+  changes of court, and the on-air graphics the panel picks (intro,
+  starting six, toss, set summary, final, player card, points table).
+
+  ?match=<id>  [&key=<overlay key>  — private tournaments]
+  [&layout=compact | graphics]  [&side=court]  [&names=short]  [&debug=1]
+-->
+<style>
+:root{--navy:#0a1136;--navy2:#141c4f;--ca:#e11d48;--cb:#ff9f0a;--ta:#fff;--tb:#fff;--sa:#0a1136;--sb:#0a1136;--acc:#ffd60a;--ease:cubic-bezier(.16,1,.3,1)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent!important;font-family:"Barlow Condensed","Arial Narrow","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#fit{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
+.num,.tab{font-variant-numeric:tabular-nums}
+
+/* ============ the score bar (default layout) ============ */
+#stage{position:absolute;left:0;bottom:56px;width:1920px;display:flex;flex-direction:column;align-items:center;gap:10px;transition:opacity .6s,transform .8s var(--ease)}
+#wrap{position:relative}
+#bar{position:relative;display:flex;height:96px}
+.sg{position:relative;display:flex;align-items:center;justify-content:center;height:100%;color:#fff;opacity:0;
+  transition:transform 1.1s var(--ease) var(--d,0s),opacity .7s var(--d,0s)}
+body.ready .sg{opacity:1;transform:none!important}
+.mid{--d:0s;transform:scaleX(.45)}.sets{--d:.14s;transform:scale(.5)}.name{--d:.26s}.crest{--d:.4s}
+.L.name,.L.crest{transform:translateX(-110px)}.R.name,.R.crest{transform:translateX(110px)}
+.crest{width:132px;background:#fff;padding:10px 14px}
+.crest .img{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:42px;font-weight:800;font-style:italic;color:#0a1136}
+.crest .img img{max-width:100%;max-height:100%;object-fit:contain}
+.name{min-width:230px;max-width:520px;padding:0 34px;font-weight:800;font-style:italic;letter-spacing:1px;text-transform:uppercase;white-space:nowrap}
+.name span{display:block;overflow:hidden;text-overflow:ellipsis}
+.sets{width:124px;flex-direction:column;line-height:1}
+.sets .num{font-size:58px;font-weight:800;font-style:italic}.sets small{font-size:19px;font-weight:700;letter-spacing:3px;margin-top:2px}
+.sets,.name{transition:transform 1.1s var(--ease) var(--d,0s),opacity .7s var(--d,0s),background .5s,color .5s}
+.mid{width:430px;background:linear-gradient(180deg,var(--navy2),var(--navy));gap:20px;font-style:italic}
+.roll{display:inline-grid;padding:6px 0;clip-path:inset(0 -40px)}.roll>.n{grid-area:1/1;text-align:center;will-change:transform,opacity}
+.pts{position:relative;width:120px;text-align:center;font-size:76px;font-weight:800;line-height:1}
+.ball{width:62px;height:62px;flex:none;animation:spin 14s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.L{clip-path:polygon(0 0,100% 0,calc(100% - 22px) 100%,0 100%);margin-right:-10px;z-index:2}
+.R{clip-path:polygon(22px 0,100% 0,100% 100%,0 100%);margin-left:-10px;z-index:2}
+.M{clip-path:polygon(22px 0,calc(100% - 22px) 0,100% 100%,0 100%);z-index:1}
+.sets.L,.sets.R{z-index:3}.name.L{padding-right:48px}.name.R{padding-left:48px}
+.crest.L,.crest.R{clip-path:none;margin:0}
+.accent{position:absolute;top:0;bottom:0;width:6px;background:rgba(255,255,255,.16);transform:skewX(-14deg)}
+#na{background:linear-gradient(100deg,var(--sa),color-mix(in srgb,var(--sa) 76%,#fff) 55%,var(--sa))}
+#nb{background:linear-gradient(100deg,var(--sb),color-mix(in srgb,var(--sb) 76%,#fff) 55%,var(--sb))}
+#setlbl{position:absolute;left:0;right:0;margin:0 auto;width:max-content;top:-34px;transform:translateY(14px);display:flex;align-items:center;gap:14px;font-size:22px;font-weight:700;letter-spacing:4px;color:#fff;background:var(--navy);padding:2px 26px;
+  clip-path:polygon(10px 0,calc(100% - 10px) 0,100% 100%,0 100%);text-transform:uppercase;white-space:nowrap;opacity:0;transition:opacity .8s .8s,transform 1s var(--ease) .8s}
+body.ready #setlbl{opacity:1;transform:none}
+#setlbl .h{display:inline-flex;gap:8px;letter-spacing:1px;font-size:20px;color:rgba(255,255,255,.62)}
+#setlbl .h:empty{display:none}
+#setlbl .h span{padding:0 9px;background:rgba(255,255,255,.1);border-radius:3px}
+#setlbl .h b{font-weight:800;color:#fff}
+#setlbl .h i{font-style:normal;opacity:.5}
+#pill{min-width:320px;max-width:1200px;padding:8px 38px;font-size:30px;font-weight:800;font-style:italic;letter-spacing:3px;text-transform:uppercase;color:#fff;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  background:linear-gradient(90deg,var(--navy),var(--navy2),var(--navy));clip-path:polygon(16px 0,calc(100% - 16px) 0,100% 100%,0 100%);
+  transform:translateY(-34px) scaleY(.15);opacity:0;transform-origin:top;transition:transform .7s var(--ease),opacity .4s,background .4s}
+#pill.show{transform:none;opacity:1}
+#pill.sp{background:linear-gradient(90deg,#b45309,#f59e0b,#b45309);color:#1a1000}
+#pill.mp{background:linear-gradient(90deg,#9f1239,#e11d48,#9f1239)}
+#pill.win{background:linear-gradient(90deg,#065f46,#10b981,#065f46)}
+#pill.tt{background:linear-gradient(90deg,#1e3a8a,#3b82f6,#1e3a8a)}
+#pill.card{background:linear-gradient(90deg,#a16207,#eab308,#a16207);color:#1a1000}
+#pill.red{background:linear-gradient(90deg,#7f1d1d,#dc2626,#7f1d1d)}
+#pill b{color:#ffd60a;margin-left:12px}#pill.sp b,#pill.card b{color:#1a1000}
+#pill.sp,#pill.mp{animation:br 1.8s ease-in-out infinite}@keyframes br{50%{filter:brightness(1.35)}}
+#wrap::before{content:'';position:absolute;left:3%;right:3%;bottom:-18px;height:34px;background:radial-gradient(ellipse at center,rgba(0,0,0,.55),transparent 70%);filter:blur(4px);opacity:0;transition:opacity 1s .5s}
+body.ready #wrap::before{opacity:1}
+.sg:not(.crest)::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 48%,rgba(0,0,0,.14));pointer-events:none}
+#shine{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:10}
+#shine i{position:absolute;top:-10px;bottom:-10px;left:0;width:150px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);transform:translateX(-300px) skewX(-22deg);animation:sweep 10s cubic-bezier(.4,0,.2,1) 3.2s infinite}
+@keyframes sweep{0%{transform:translateX(-300px) skewX(-22deg)}16%,100%{transform:translateX(1800px) skewX(-22deg)}}
+#under{position:absolute;left:0;right:0;bottom:-7px;height:6px;display:flex}
+#under i{flex:1;transform:scaleX(0);transition:transform 1.3s var(--ease) .75s}
+#under i:first-child{background:var(--ca);transform-origin:100% 50%}#under i:last-child{background:var(--cb);transform-origin:0 50%}
+body.ready #under i{transform:none}
+.bw{position:relative;display:grid;place-items:center;flex:none}
+.ring{position:absolute;inset:0;border:3px solid #fff;border-radius:50%;opacity:0;pointer-events:none}
+.hit{position:absolute;top:0;bottom:0;width:120px;opacity:0;transform-origin:50% 100%;pointer-events:none}
+#hA{left:44px;background:linear-gradient(0deg,var(--ca),transparent 85%)}#hB{right:44px;background:linear-gradient(0deg,var(--cb),transparent 85%)}
+#sv{position:absolute;left:44px;bottom:0;width:120px;height:5px;background:var(--acc);box-shadow:0 0 16px var(--acc);transition:transform .9s var(--ease),opacity .5s}
+
+/* ============ the compact corner bug ============ */
+#corner{position:absolute;left:48px;top:44px;width:560px;display:none;color:#fff;filter:drop-shadow(0 14px 26px rgba(0,0,0,.45));transition:opacity .6s,transform .8s var(--ease)}
+body.L-compact #corner{display:block}
+.crow{display:flex;align-items:center;height:56px;background:linear-gradient(180deg,var(--navy2),var(--navy));border-bottom:1px solid rgba(255,255,255,.08);opacity:0;transform:translateX(-40px);transition:transform .9s var(--ease),opacity .6s}
+.crow:nth-child(2){transition-delay:.1s}
+body.ready .crow{opacity:1;transform:none}
+.crow .cc{width:10px;align-self:stretch;background:var(--c)}
+.crow .cl{width:56px;height:56px;display:grid;place-items:center;background:#fff;color:#0a1136;font-weight:800;font-style:italic;font-size:20px;overflow:hidden}
+.crow .cl img{max-width:44px;max-height:44px;object-fit:contain}
+.crow .cn{flex:1;min-width:0;padding:0 16px;font-size:32px;font-weight:800;font-style:italic;text-transform:uppercase;letter-spacing:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .csv{width:14px;height:14px;border-radius:50%;background:var(--acc);box-shadow:0 0 12px var(--acc);margin-right:14px;opacity:0;transform:scale(.3);transition:opacity .4s,transform .6s var(--ease)}
+.crow .csv.on{opacity:1;transform:none}
+.crow .ch{display:flex;gap:2px;margin-right:10px}
+.crow .ch i{width:34px;text-align:center;font-style:normal;font-size:22px;font-weight:700;color:rgba(255,255,255,.55)}
+.crow .ch i.w{color:#fff}
+.crow .cs{width:50px;height:56px;display:grid;place-items:center;font-size:34px;font-weight:800;font-style:italic;background:var(--c);color:var(--tx)}
+.crow .cp{width:78px;text-align:center;font-size:42px;font-weight:800;font-style:italic}
+#cfoot{height:34px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;background:rgba(10,17,54,.92);font-size:20px;font-weight:700;letter-spacing:3px;text-transform:uppercase;opacity:0;transition:opacity .8s .5s}
+body.ready #cfoot{opacity:1}
+#cfoot b{color:#ffd60a;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ============ on-air graphics ============ */
+#gfx{position:absolute;left:0;right:0;top:110px;display:flex;justify-content:center;pointer-events:none}
+body.L-compact #gfx{top:236px}
+body.L-graphics #gfx{top:140px}
+.scene{color:#fff;opacity:0;transform:translateY(26px);transition:opacity .6s,transform .9s var(--ease)}
+.scene.on{opacity:1;transform:none}
+.panel{background:linear-gradient(180deg,var(--navy2),var(--navy));box-shadow:0 30px 60px -20px rgba(0,0,0,.6)}
+.kick{display:flex;align-items:center;justify-content:center;gap:14px;height:46px;padding:0 30px;font-size:24px;font-weight:700;letter-spacing:5px;text-transform:uppercase;background:var(--navy);clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 100%,0 100%);width:max-content;margin:0 auto}
+.kick b{color:#ffd60a;font-weight:800}
+.crestx{display:grid;place-items:center;background:#fff;color:#0a1136;font-weight:800;font-style:italic;overflow:hidden;flex:none}
+.crestx img{max-width:84%;max-height:84%;object-fit:contain}
+.scene .row{opacity:0;transform:translateX(-30px);transition:transform .8s var(--ease) calc(.35s + var(--k,0)*.05s),opacity .5s calc(.35s + var(--k,0)*.05s)}
+.scene.on .row{opacity:1;transform:none}
+
+/* intro */
+.intro{width:1500px}
+.intro .ih{display:flex;align-items:center;justify-content:center;gap:22px;margin-bottom:26px}
+.intro .ih .crestx{width:96px;height:96px;border-radius:50%}
+.intro .ih b{display:block;font-size:56px;font-weight:800;font-style:italic;text-transform:uppercase;letter-spacing:2px;line-height:1;text-shadow:0 6px 24px rgba(0,0,0,.5)}
+.intro .ih small{display:block;font-size:26px;font-weight:700;letter-spacing:6px;text-transform:uppercase;color:#ffd60a;margin-top:6px;text-shadow:0 4px 14px rgba(0,0,0,.5)}
+.intro .iv{display:flex;align-items:stretch;height:300px}
+.intro .it{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:linear-gradient(160deg,var(--c),color-mix(in srgb,var(--c) 55%,#000));color:var(--tx);transition:transform 1s var(--ease) .15s,opacity .6s .15s;opacity:0}
+.intro .it.L{transform:translateX(-120px);clip-path:polygon(0 0,100% 0,calc(100% - 50px) 100%,0 100%)}
+.intro .it.R{transform:translateX(120px);clip-path:polygon(50px 0,100% 0,100% 100%,0 100%)}
+.intro.on .it{opacity:1;transform:none}
+.intro .it .crestx{width:150px;height:150px;border-radius:24px;font-size:56px}
+.intro .it b{font-size:52px;font-weight:800;font-style:italic;text-transform:uppercase;letter-spacing:1px;max-width:600px;text-align:center;line-height:1.02}
+.intro .vs{width:150px;margin:0 -40px;z-index:2;display:grid;place-items:center;font-size:84px;font-weight:800;font-style:italic;color:#ffd60a;text-shadow:0 8px 30px rgba(0,0,0,.6);transform:scale(.3);opacity:0;transition:transform .9s var(--ease) .55s,opacity .5s .55s}
+.intro.on .vs{transform:none;opacity:1}
+.intro .if{margin-top:22px;display:flex;justify-content:center;gap:34px;font-size:28px;font-weight:700;letter-spacing:3px;text-transform:uppercase;text-shadow:0 4px 14px rgba(0,0,0,.6)}
+.intro .if span+span::before{content:'•';margin-right:34px;color:#ffd60a}
+
+/* starting six */
+.lineup{display:flex;gap:48px}
+.lc{width:560px;clip-path:inset(0 100% 0 0);transition:clip-path 1.1s var(--ease)}
+.lc+.lc{clip-path:inset(0 0 0 100%);transition-delay:.15s}
+.lineup.on .lc{clip-path:inset(0 0 0 0)}
+.lh{position:relative;display:flex;align-items:center;gap:16px;height:84px;padding:0 24px;color:var(--tx);background:linear-gradient(100deg,var(--c),color-mix(in srgb,var(--c) 65%,#000))}
+.lh .crestx{width:62px;height:62px;border-radius:12px;font-size:24px}
+.lh .lt{flex:1;min-width:0;line-height:1}
+.lh .lt b{display:block;font-size:40px;font-weight:800;font-style:italic;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lh .lt small{display:block;margin-top:4px;font-size:17px;letter-spacing:3px;text-transform:uppercase;opacity:.85;white-space:nowrap}
+.lh::after{content:'';position:absolute;left:0;right:0;bottom:0;height:4px;background:var(--acc);transform:scaleX(0);transform-origin:0 50%;transition:transform 1.2s var(--ease) .6s}
+.lineup.on .lh::after{transform:none}
+.pr{display:flex;align-items:center;gap:16px;height:48px;padding:0 24px;font-size:30px;font-weight:600;border-top:1px solid rgba(255,255,255,.08)}
+.pr .ps{width:40px;font-size:20px;font-weight:700;letter-spacing:1px;color:rgba(255,255,255,.55)}
+.pn{min-width:54px;height:36px;display:grid;place-items:center;background:var(--c);color:var(--tx);font-style:italic;font-weight:800;clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+.pnm{flex:1;min-width:0;text-transform:uppercase;letter-spacing:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pr em{font-style:normal;font-size:20px;opacity:.7;letter-spacing:2px}
+.pr u{text-decoration:none;font-size:18px;font-weight:800;background:var(--acc);color:#111;padding:1px 8px;border-radius:3px}
+.pr.lib{background:rgba(255,255,255,.05)}
+.pr.lib .pn{background:#fff;color:#0a1136}
+
+/* toss */
+.toss{width:1100px}
+.toss .tb{display:flex;align-items:center;gap:30px;padding:30px 40px;background:linear-gradient(110deg,var(--c),color-mix(in srgb,var(--c) 55%,#000));color:var(--tx)}
+.toss .tb .crestx{width:120px;height:120px;border-radius:20px;font-size:46px}
+.toss .tb .tt{min-width:0}
+.toss .tb .tt b{display:block;font-size:58px;font-weight:800;font-style:italic;text-transform:uppercase;line-height:1}
+.toss .tb .tt span{display:block;font-size:34px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-top:8px;opacity:.92}
+.toss .tf{display:flex;justify-content:center;gap:40px;padding:16px 30px;font-size:26px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
+.toss .tf b{color:#ffd60a}
+
+/* set summary + final */
+.res{width:1180px}
+.res .rt{display:flex;align-items:stretch;height:120px}
+.res .rteam{flex:1;display:flex;align-items:center;gap:22px;padding:0 30px;background:linear-gradient(100deg,var(--c),color-mix(in srgb,var(--c) 60%,#000));color:var(--tx);min-width:0}
+.res .rteam.R{flex-direction:row-reverse;background:linear-gradient(260deg,var(--c),color-mix(in srgb,var(--c) 60%,#000))}
+.res .rteam .crestx{width:84px;height:84px;border-radius:16px;font-size:32px}
+.res .rteam b{flex:1;font-size:46px;font-weight:800;font-style:italic;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.res .rteam.R b{text-align:right}
+.res .rs{width:150px;display:grid;place-items:center;font-size:96px;font-weight:800;font-style:italic;background:var(--navy);color:#fff;line-height:1}
+.res .rs.w{color:#ffd60a}
+.res .rsets{display:flex;justify-content:center;gap:10px;padding:16px 20px 6px}
+.res .rsets div{min-width:128px;text-align:center;padding:6px 10px;background:rgba(255,255,255,.07)}
+.res .rsets small{display:block;font-size:18px;letter-spacing:3px;color:rgba(255,255,255,.6);text-transform:uppercase}
+.res .rsets span{font-size:36px;font-weight:800;font-style:italic}
+.res .rsets em{font-style:normal;color:#ffd60a}
+.res .rsets div.cur{outline:3px solid #ffd60a;outline-offset:-3px}
+.res .cmp{padding:10px 40px 6px}
+.cr{display:grid;grid-template-columns:90px 1fr 280px 1fr 90px;align-items:center;gap:14px;height:46px;font-size:30px;font-weight:800}
+.cr .lbl{text-align:center;font-size:22px;letter-spacing:3px;text-transform:uppercase;font-weight:700;color:rgba(255,255,255,.75)}
+.cr .v{text-align:center;font-style:italic}
+.cr .bar{height:10px;background:rgba(255,255,255,.1);display:flex;overflow:hidden}
+.cr .bar.l{justify-content:flex-end}
+.cr .bar i{display:block;height:100%;background:var(--c);transform-origin:var(--o,100%) 50%;transform:scaleX(0);transition:transform 1.2s var(--ease) calc(.5s + var(--k,0)*.06s)}
+.scene.on .cr .bar i{transform:none}
+.res .top{display:flex;justify-content:space-between;gap:30px;padding:12px 40px 22px;font-size:26px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+.res .top > div{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;column-gap:10px}
+.res .top > div+div{text-align:right}
+.res .top small{flex-basis:100%;font-size:18px;letter-spacing:3px;color:rgba(255,255,255,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res .top .ts{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res .top b{flex:none;color:#ffd60a}
+
+/* player card */
+.pcard{width:980px}
+.pcard .ph{display:flex;align-items:center;gap:26px;height:150px;padding:0 34px;background:linear-gradient(105deg,var(--c),color-mix(in srgb,var(--c) 55%,#000));color:var(--tx)}
+.pcard .ph .big{font-size:110px;font-weight:800;font-style:italic;line-height:1;min-width:120px;text-align:center}
+.pcard .ph .who{flex:1;min-width:0}
+.pcard .ph b{display:block;font-size:58px;font-weight:800;font-style:italic;text-transform:uppercase;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcard .ph small{display:block;font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;margin-top:8px;opacity:.9}
+.pcard .ph .crestx{width:96px;height:96px;border-radius:18px;font-size:34px}
+.pcard .tiles{display:grid;grid-template-columns:repeat(5,1fr)}
+.pcard .tile{padding:20px 10px 16px;text-align:center;border-left:1px solid rgba(255,255,255,.08)}
+.pcard .tile:first-child{border-left:0}
+.pcard .tile b{display:block;font-size:64px;font-weight:800;font-style:italic;line-height:1}
+.pcard .tile:first-child b{color:#ffd60a}
+.pcard .tile small{display:block;font-size:20px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,.7);margin-top:6px}
+.pcard .pf{padding:10px 34px 16px;font-size:22px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,.7);text-align:center}
+
+/* points table */
+.stand{width:1100px}
+.stand table{width:100%;border-collapse:collapse;font-size:30px;font-weight:700;table-layout:fixed}
+.stand th{height:46px;font-size:20px;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,.65);font-weight:700;text-align:center;background:rgba(255,255,255,.05)}
+.stand th.t{text-align:left;padding-left:20px}
+.stand td{height:52px;text-align:center;border-top:1px solid rgba(255,255,255,.08)}
+.stand td.t{text-align:left;padding-left:20px}
+.stand td.t span{display:flex;align-items:center;gap:14px;width:100%;padding-right:12px;text-transform:uppercase;font-style:italic;font-weight:800}
+.stand td.t .tn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stand td.t i{width:10px;height:30px;background:var(--c);flex:none}
+.stand td.pos{width:70px;font-style:italic;font-weight:800;color:rgba(255,255,255,.7)}
+.stand td.pts{font-weight:800;color:#ffd60a;font-size:34px}
+.stand tr.me td{background:rgba(255,214,10,.10)}
+.stand .foot{padding:10px 20px 14px;font-size:20px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.6);text-align:center}
+
+/* the operator's problem note — never shown while all is well */
+#diag{position:absolute;left:24px;top:24px;max-width:760px;padding:12px 18px;background:rgba(10,17,54,.92);color:#fff;font:600 22px/1.3 system-ui,sans-serif;border-left:6px solid #ff9f0a;display:none}
+#diag.show{display:block}
+
+body.hide-bar #stage,body.hide-bar #corner{opacity:0;transform:translateY(30px)}
+body.L-graphics #stage,body.L-compact #stage{display:none}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style></head>
+<body>
+<div id="fit">
+  <div id="gfx"></div>
+
+  <div id="corner" aria-hidden="true">
+    <div class="crow" id="cr0"><i class="cc"></i><span class="cl"></span><b class="cn"></b><i class="csv"></i><span class="ch"></span><b class="cs num"><span class="roll"><span class="n">0</span></span></b><b class="cp num"><span class="roll"><span class="n">0</span></span></b></div>
+    <div class="crow" id="cr1"><i class="cc"></i><span class="cl"></span><b class="cn"></b><i class="csv"></i><span class="ch"></span><b class="cs num"><span class="roll"><span class="n">0</span></span></b><b class="cp num"><span class="roll"><span class="n">0</span></span></b></div>
+    <div id="cfoot"><span id="cset">Set 1</span><b id="cstat"></b></div>
+  </div>
+
+  <div id="stage" aria-hidden="true">
+    <div id="wrap"><div id="setlbl"><span id="setname">Set 1</span><span class="h" id="hist"></span></div>
+      <div id="bar"><div id="shine"><i></i></div>
+        <div class="sg crest L"><div class="img" id="ia"></div></div>
+        <div class="sg name L" id="na"><span></span></div>
+        <div class="sg sets L" id="sa" style="background:var(--ca)"><b class="roll num"><span class="n">0</span></b><small>SETS</small></div>
+        <div class="sg mid M">
+          <div class="accent" style="left:30px"></div><div class="accent" style="right:30px"></div><i class="hit" id="hA"></i><i class="hit" id="hB"></i><i id="sv"></i>
+          <div class="pts num" id="pa"><span class="roll"><span class="n">0</span></span></div>
+          <span class="bw"><i class="ring"></i><svg class="ball" viewBox="0 0 64 64" aria-hidden="true"><defs>
+            <clipPath id="bc"><circle cx="32" cy="32" r="30"/></clipPath>
+            <radialGradient id="bsh" cx=".34" cy=".3" r=".85"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#0a1136" stop-opacity=".55"/></radialGradient></defs>
+            <circle cx="32" cy="32" r="30" fill="#fbf6e6"/>
+            <g clip-path="url(#bc)" fill="none" stroke-linecap="butt">
+              <g stroke="#0a1136" stroke-opacity=".55" stroke-width="12"><path d="M-4 20C16 16 38 24 44 70"/><path d="M70 22C48 26 28 18 16 -6"/><path d="M14 70C18 46 34 34 70 42"/></g>
+              <path d="M-4 20C16 16 38 24 44 70" stroke="#1d5fd6" stroke-width="10"/>
+              <path d="M70 22C48 26 28 18 16 -6" stroke="#f5c518" stroke-width="10"/>
+              <path d="M14 70C18 46 34 34 70 42" stroke="#1d5fd6" stroke-width="10"/>
+              <g stroke="#fff" stroke-opacity=".55" stroke-width="1" stroke-dasharray="2 2.4"><path d="M-4 20C16 16 38 24 44 70"/><path d="M70 22C48 26 28 18 16 -6"/><path d="M14 70C18 46 34 34 70 42"/></g>
+            </g>
+            <circle cx="32" cy="32" r="30" fill="url(#bsh)"/>
+            <circle cx="32" cy="32" r="30" fill="none" stroke="#fff" stroke-width="1.6"/></svg></span>
+          <div class="pts num" id="pb"><span class="roll"><span class="n">0</span></span></div>
+        </div>
+        <div class="sg sets R" id="sb" style="background:var(--cb)"><b class="roll num"><span class="n">0</span></b><small>SETS</small></div>
+        <div class="sg name R" id="nb"><span></span></div>
+        <div class="sg crest R"><div class="img" id="ib"></div></div>
+      </div><div id="under"><i></i><i></i></div></div>
+    <div id="pill"></div>
+  </div>
+
+  <div id="diag" role="status"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/volleyball-common.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (s, r) => (r || document).querySelector(s);
+  const esc = VB.esc;
+  const qs = new URLSearchParams(location.search);
+  const O = {
+    matchId: qs.get('match'), key: qs.get('key') || undefined,
+    layout: ['compact', 'graphics'].includes(qs.get('layout')) ? qs.get('layout') : 'bar',
+    follow: qs.get('side') === 'court', shortNames: qs.get('names') === 'short', debug: qs.has('debug'),
+    socket: null, match: null, tournament: null, summary: null, seq: 0, timeline: [], graphic: null, offset: 0,
+    stats: null, statsSeq: -1, statsAt: 0, standings: null, standingsAt: 0,
+    flash: null, first: true, prev: {}, sides: ['A', 'B']
+  };
+  document.body.classList.add('L-' + O.layout);
+  const serverNow = () => Date.now() + O.offset;
+
+  /* ---------- the operator's note: only when something is wrong for a while ---------- */
+  let problemTimer = null;
+  function problem(text, later) {
+    clearTimeout(problemTimer);
+    const show = () => { $('#diag').textContent = '🏐 Volleyball overlay: ' + text; $('#diag').classList.add('show'); };
+    if (later && !O.debug) problemTimer = setTimeout(show, 8000); else show();
+  }
+  function clearProblem() {
+    clearTimeout(problemTimer);
+    if (O.debug && O.match) { $('#diag').textContent = '🏐 Connected · ' + teamOf('A').name + ' v ' + teamOf('B').name + ' · seq ' + O.seq; $('#diag').classList.add('show'); }
+    else $('#diag').classList.remove('show');
+  }
+
+  /* ---------- data in ---------- */
+  async function start() {
+    if (!O.matchId) return problem('no match in the link — copy it from the volleyball dashboard');
+    loadInfo();
+    O.socket = await VB.connect();
+    O.socket.on('connect', join);
+    O.socket.on('disconnect', () => problem('reconnecting to the server…', true));
+    O.socket.on('vb:update', onUpdate);
+    O.socket.on('vb:match', (d) => { if (d.matchId === O.matchId && d.match) { O.match = Object.assign(O.match || {}, d.match); paint(); refreshScene(); } });
+    O.socket.on('vb:graphic', (d) => { if (d.matchId === O.matchId) setGraphic(d.graphic); });
+    setInterval(tick, 500);
+  }
+  // Tournament name + logo for the intro (the socket carries the match only).
+  async function loadInfo() {
+    try {
+      const r = await fetch(`/api/volleyball/matches/${encodeURIComponent(O.matchId)}${O.key ? '?key=' + encodeURIComponent(O.key) : ''}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (j && j.success) { O.tournament = j.tournament; refreshScene(); }
+    } catch (e) { /* the intro shows without it */ }
+  }
+  let joinRetry = null;
+  async function join() {
+    clearTimeout(joinRetry);
+    const r = await VB.ack(O.socket, 'vb:join', { matchId: O.matchId, key: O.key, timeline: true }, 15000);
+    if (!r.ok) {
+      problem(r.error === 'not-found' ? 'match not found — check the link (a private match needs its key)' : 'could not load the match — retrying', r.error !== 'not-found');
+      joinRetry = setTimeout(join, r.error === 'not-found' ? 30000 : 4000);
+      return;
+    }
+    if (r.now) O.offset = r.now - Date.now();
+    O.match = r.match; O.summary = r.summary; O.seq = r.seq; O.timeline = r.timeline || [];
+    clearProblem();
+    paint();
+    setGraphic(r.graphic);
+  }
+  function onUpdate(d) {
+    if (!d || d.matchId !== O.matchId || !O.match) return;
+    if (d.seq <= O.seq) return;
+    const gap = d.seq !== O.seq + 1;
+    O.seq = d.seq; O.summary = d.summary; O.match.status = d.status;
+    if (d.full || gap || !d.entry) { paint(); return resync(); }
+    d.entry._recv = Date.now();
+    O.timeline.push(d.entry);
+    onLiveEntry(d.entry);
+    paint();
+    refreshScene();
+    if (O.debug) clearProblem();
+  }
+  let syncing = null;
+  function resync() {
+    if (syncing) { syncing.again = true; return; }
+    syncing = { again: false };
+    VB.ack(O.socket, 'vb:sync', { matchId: O.matchId, key: O.key }, 15000).then((r) => {
+      const again = syncing.again; syncing = null;
+      if (r && r.ok) { O.match = r.match; O.summary = r.summary; O.seq = r.seq; O.timeline = r.timeline || []; paint(); refreshScene(); }
+      if (again) resync();
+    });
+  }
+
+  /* ---------- helpers ---------- */
+  const other = (t) => (t === 'A' ? 'B' : 'A');
+  function teamOf(side) {
+    const t = (O.match && O.match['team' + side]) || null;
+    const c = (t && t.colors) || {};
+    const color = /^#[0-9a-f]{6}$/i.test(c.primary || '') ? c.primary : (side === 'A' ? '#e11d48' : '#ff9f0a');
+    const name = (t && t.name) || (O.match && O.match.source && O.match.source[side] && O.match.source[side].label) || 'To be decided';
+    return { side, name, short: (t && t.shortName) || VB.initials(name), color, txt: c.text || VB.onColor(color), sec: c.secondary || '#0a1136', logo: t && t.logo ? t.logo : '' };
+  }
+  const shown = (t) => (O.shortNames || t.name.length > 16 ? t.short : t.name);
+  function crestHtml(t, cls) {
+    return `<span class="crestx ${cls || ''}">${t.logo ? `<img src="${esc(t.logo)}" alt="">` : esc(t.short)}</span>`;
+  }
+  function player(side, id) {
+    const sq = (O.match && O.match.squads && O.match.squads[side]) || [];
+    return sq.find((p) => p.playerId === id) || null;
+  }
+  function sideOfPlayer(id) { return player('A', id) ? 'A' : player('B', id) ? 'B' : null; }
+  const live = (e) => e && !e.voided && !e.invalid;
+  const surname = (n) => { const w = String(n || '').trim().split(/\s+/); return w.length > 1 ? w[w.length - 1] : w[0] || ''; };
+
+  /* ---------- number roll: the old figure leaves, the new one arrives ---------- */
+  function roll(el, v, anim) {
+    v = String(v);
+    const all = [...el.children], cur = all[all.length - 1];
+    if (cur && cur.textContent === v) return false;
+    all.slice(0, -1).forEach((x) => x.remove());
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = v;
+    if (!cur || !anim) { el.replaceChildren(n); return true; }
+    el.appendChild(n);
+    const d = +v > +cur.textContent ? 1 : -1;
+    n.animate([{ transform: `translateY(${60 * d}%) scale(.8)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 700, easing: 'cubic-bezier(.16,1,.3,1)' });
+    cur.animate([{ transform: 'none', opacity: 1 }, { transform: `translateY(${-60 * d}%) scale(.8)`, opacity: 0 }], { duration: 420, easing: 'ease-in', fill: 'forwards' }).onfinish = () => cur.remove();
+    return true;
+  }
+  function fadeSwap(el, fn) {
+    el._fn = fn; if (el._busy) return; el._busy = true;
+    const a = el.animate([{ opacity: 1 }, { opacity: 0, transform: 'translateY(6px)' }], { duration: 160, fill: 'forwards' });
+    a.onfinish = () => { a.cancel(); el._busy = false; el._fn(); el.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.16,1,.3,1)' }); };
+  }
+  function hit(i, col) {
+    const h = $('#h' + 'AB'[i]), bw = $('.bw'), rg = $('.ring');
+    h.animate([{ opacity: 0, transform: 'scaleY(.15)' }, { opacity: .75, transform: 'scaleY(1)', offset: .3 }, { opacity: 0, transform: 'scaleY(1)' }], { duration: 1200, easing: 'ease-out' });
+    bw.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.25)', offset: .3 }, { transform: 'scale(1)' }], { duration: 800, easing: 'cubic-bezier(.16,1,.3,1)' });
+    rg.style.borderColor = col;
+    rg.animate([{ transform: 'scale(.9)', opacity: .9 }, { transform: 'scale(2.4)', opacity: 0 }], { duration: 1000, easing: 'ease-out' });
+  }
+  function setPop(el) {
+    el.animate([{ opacity: .55 }, { opacity: 1 }], { duration: 900, easing: 'ease-out' });
+    el.querySelector('.roll').animate([{ transform: 'scale(1.7)' }, { transform: 'scale(1)' }], { duration: 1000, easing: 'cubic-bezier(.16,1,.3,1)' });
+  }
+  function introBall() {
+    $('.bw').animate([{ transform: 'translateY(-110px) scale(.3) rotate(-220deg)', opacity: 0 }, { transform: 'translateY(0) scale(1.18) rotate(0)', opacity: 1, offset: .55 },
+      { transform: 'translateY(-16px) scale(1)', offset: .75 }, { transform: 'none' }], { duration: 1400, delay: 750, easing: 'cubic-bezier(.3,.7,.2,1)', fill: 'backwards' });
+  }
+
+  /* ---------- the score bar + the corner bug ---------- */
+  function paint() {
+    if (!O.match || !O.summary) return;
+    const s = O.summary;
+    const Ls = O.follow && s.leftSide === 'B' ? 'B' : 'A', Rs = other(Ls);
+    O.sides = [Ls, Rs];
+    const A = teamOf(Ls), B = teamOf(Rs), anim = !O.first;
+    const r = document.documentElement.style;
+    r.setProperty('--ca', A.color); r.setProperty('--cb', B.color); r.setProperty('--ta', A.txt); r.setProperty('--tb', B.txt);
+    r.setProperty('--sa', A.sec); r.setProperty('--sb', B.sec);
+    $('#sa').style.color = A.txt; $('#sb').style.color = B.txt;
+    $('#na').style.color = VB.lum(A.sec) > .6 ? '#111' : '#fff'; $('#nb').style.color = VB.lum(B.sec) > .6 ? '#111' : '#fff';
+    [['#na', A], ['#nb', B]].forEach(([id, t]) => {
+      const el = $(id), txt = shown(t), sp = el.firstElementChild;
+      el.style.fontSize = (txt.length <= 3 ? 60 : txt.length <= 8 ? 48 : txt.length <= 13 ? 38 : 30) + 'px';
+      if (sp.textContent !== txt) { if (anim) fadeSwap(sp, () => { sp.textContent = txt; }); else sp.textContent = txt; }
+    });
+    [['#ia', A], ['#ib', B]].forEach(([id, t]) => {
+      const el = $(id), k = t.logo || t.short;
+      if (el.dataset.k === k) return;
+      el.dataset.k = k;
+      el.innerHTML = t.logo ? `<img src="${esc(t.logo)}" alt="">` : esc(t.short);
+    });
+    const over = s.status === 'completed' || s.status === 'abandoned';
+    const sets = [s.setsWon[Ls], s.setsWon[Rs]], pts = [s.points[Ls], s.points[Rs]];
+    [['#sa', 0], ['#sb', 1]].forEach(([id, i]) => {
+      const key = 'set' + O.sides[i];
+      if (roll($(id + ' .roll'), sets[i], anim) && anim && sets[i] > (O.prev[key] || 0)) setPop($(id));
+      O.prev[key] = sets[i];
+    });
+    [['#pa', 0], ['#pb', 1]].forEach(([id, i]) => {
+      const key = 'pt' + O.sides[i] + ':' + s.set;
+      const changed = roll($(id + ' .roll'), pts[i], anim);
+      if (changed && anim && O.prev[key] !== undefined && pts[i] > O.prev[key]) hit(i, i ? B.color : A.color);
+      O.prev[key] = pts[i];
+    });
+    const sv = $('#sv'), servingIdx = s.serving ? O.sides.indexOf(s.serving) : -1;
+    sv.style.transform = `translateX(${servingIdx === 1 ? 222 : 0}px)`;
+    sv.style.opacity = servingIdx < 0 || over ? 0 : 1;
+    // set label + the sets already played
+    const label = over ? 'Final' : s.status === 'pregame' ? 'Set 1' : 'Set ' + s.set + (s.deciding ? ' · Deciding set' : '');
+    const nm = $('#setname');
+    if (nm.textContent !== label) { if (anim) fadeSwap(nm, () => { nm.textContent = label; }); else nm.textContent = label; }
+    const done = (s.sets || []).filter((x) => x.status === 'completed' && (over || x.set !== s.set || s.status === 'set_break'));
+    $('#hist').innerHTML = done.map((x) => `<span>${x.winner === Ls ? `<b>${x[Ls]}</b>` : x[Ls]}<i>–</i>${x.winner === Rs ? `<b>${x[Rs]}</b>` : x[Rs]}</span>`).join('');
+    paintCorner(A, B, sets, pts, servingIdx, over, done);
+    paintPill();
+    applyVisibility();
+    if (O.first) {
+      O.first = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => { document.body.classList.add('ready'); if (O.layout === 'bar') introBall(); }));
+    }
+  }
+  function paintCorner(A, B, sets, pts, servingIdx, over, done) {
+    if (O.layout !== 'compact') return;
+    const anim = !O.first;
+    // the name column shrinks as sets are played: the same rule for both rows
+    const room = Math.max(6, 12 - done.length * 2);
+    const cornerShort = O.shortNames || A.name.length > room || B.name.length > room;
+    [A, B].forEach((t, i) => {
+      const row = $('#cr' + i);
+      row.style.setProperty('--c', t.color); row.style.setProperty('--tx', t.txt);
+      const cl = row.querySelector('.cl'), k = t.logo || t.short;
+      if (cl.dataset.k !== k) { cl.dataset.k = k; cl.innerHTML = t.logo ? `<img src="${esc(t.logo)}" alt="">` : esc(t.short); }
+      const cn = row.querySelector('.cn'), want = cornerShort ? t.short : t.name;
+      if (cn.dataset.full !== want) { cn.dataset.full = want; cn.dataset.fit = '32'; cn.dataset.min = '22'; cn.dataset.alt = t.short; fitOne(cn); }
+      row.querySelector('.csv').classList.toggle('on', servingIdx === i && !over);
+      row.querySelector('.ch').innerHTML = done.map((x) => `<i class="${x.winner === t.side ? 'w' : ''}">${x[t.side]}</i>`).join('');
+      roll(row.querySelector('.cs .roll'), sets[i], anim);
+      roll(row.querySelector('.cp .roll'), pts[i], anim);
+    });
+    const s = O.summary;
+    $('#cset').textContent = over ? 'Final' : 'Set ' + Math.max(1, s.set) + (s.deciding ? ' · Decider' : '');
+  }
+
+  /* ---------- the status pill ---------- */
+  function flash(text, who, kind, ms) { O.flash = { text, who: who || '', k: kind || '', until: Date.now() + ms }; }
+  function onLiveEntry(e) {
+    // play moved on: whatever was said about the last moment gives way
+    if (live(e) && (e.type === 'RALLY' || e.type === 'SET_START')) O.flash = null;
+    const eff = e.effects || [];
+    const has = (t) => eff.find((x) => x.type === t);
+    const T = (side) => shown(teamOf(side));
+    if (has('MATCH_WON')) O.flash = null;
+    else if (has('SET_WON')) flash('Set ' + has('SET_WON').set, T(has('SET_WON').team), 'win', 9000);
+    else if (has('CHANGE_COURTS')) flash('Change of courts', '', 'tt', 9000);
+    else if (has('TECHNICAL_TIMEOUT')) flash('Technical time-out', '', 'tt', 60000);
+    else if (e.type === 'SUBSTITUTION' && live(e)) {
+      const p = (e.pairs || [])[0] || {};
+      const pin = player(e.team, p.in), pout = player(e.team, p.out);
+      flash('Substitution', `${T(e.team)} · #${pin ? pin.number : '?'} ${surname(pin && pin.name)} in, #${pout ? pout.number : '?'} out`, 'tt', 7000);
+    } else if (e.type === 'SANCTION' && live(e)) {
+      const p = e.playerId ? player(e.team, e.playerId) : null;
+      const lbl = { WARNING: 'Yellow card', PENALTY: 'Red card', EXPULSION: 'Expulsion', DISQUALIFICATION: 'Disqualification', DELAY_WARNING: 'Delay warning', DELAY_PENALTY: 'Delay penalty' }[e.kind] || 'Sanction';
+      flash(lbl, p ? `#${p.number} ${surname(p.name)} · ${T(e.team)}` : T(e.team), e.kind === 'WARNING' || e.kind === 'DELAY_WARNING' ? 'card' : 'red', 7000);
+    } else if (e.type === 'REPLAY' && live(e)) flash('Replay the rally', '', 'tt', 4000);
+  }
+  // The latest time-out, if it is still running (and no rally came after it).
+  function activeTimeout() {
+    if (!O.summary || O.summary.status !== 'in_set') return null;
+    for (let i = O.timeline.length - 1; i >= 0; i--) {
+      const e = O.timeline[i];
+      if (!live(e)) continue;
+      if (e.type === 'RALLY' || e.type === 'SET_START') return null;
+      if (e.type === 'TIMEOUT') {
+        const secs = (O.match.rules && O.match.rules.timeoutSeconds) || 30;
+        const startLocal = e._recv || (e.at ? e.at - O.offset : 0);
+        const left = Math.ceil((startLocal + secs * 1000 - Date.now()) / 1000);
+        return left > 0 && left <= secs + 5 ? { team: e.team, left: Math.min(left, secs) } : null;
+      }
+    }
+    return null;
+  }
+  function pillState() {
+    const s = O.summary;
+    if (!s) return null;
+    if (s.status === 'completed' && s.winner) {
+      const w = s.winner;
+      return { t: shown(teamOf(w)) + (s.forfeit ? ' win by forfeit' : ' win'), who: `${s.setsWon[w]}–${s.setsWon[other(w)]}`, k: 'win' };
+    }
+    if (s.status === 'abandoned') return { t: 'Match abandoned', k: 'red' };
+    if (O.flash && O.flash.until > Date.now()) return { t: O.flash.text, who: O.flash.who, k: O.flash.k };
+    O.flash = null;
+    const to = activeTimeout();
+    if (to) return { t: 'Time-out · ' + shown(teamOf(to.team)), who: '0:' + String(to.left).padStart(2, '0'), k: 'tt' };
+    if (s.matchPoint) return { t: 'Match point', who: shown(teamOf(s.matchPoint)), k: 'mp' };
+    if (s.setPoint) return { t: 'Set point', who: shown(teamOf(s.setPoint)), k: 'sp' };
+    if (s.status === 'set_break' && s.sets.length) {
+      const last = s.sets[s.sets.length - 1];
+      return { t: 'Set ' + last.set + ' · ' + shown(teamOf(last.winner)), who: last[last.winner] + '–' + last[other(last.winner)], k: 'win' };
+    }
+    return null;
+  }
+  let lastPill = null;
+  function paintPill() {
+    const st = pillState(), pill = $('#pill'), cst = $('#cstat');
+    const html = st ? esc(st.t) + (st.who ? `<b>${esc(st.who)}</b>` : '') : null;
+    if (cst) cst.textContent = st ? st.t + (st.who ? ' ' + st.who : '') : '';
+    if (html === lastPill) return;
+    const was = pill.classList.contains('show');
+    if (st) {
+      if (!was && !O.first) pill.animate([{ letterSpacing: '16px' }, { letterSpacing: '3px' }], { duration: 1000, easing: 'cubic-bezier(.16,1,.3,1)' });
+      // a running count-down changes in place; a new message swaps in
+      const sameKind = lastPill && st && lastPill.split('<b>')[0] === html.split('<b>')[0];
+      if (was && !sameKind) fadeSwap(pill, () => { pill.innerHTML = html; }); else pill.innerHTML = html;
+      pill.className = 'show ' + (st.k || '');
+    } else pill.classList.remove('show');
+    lastPill = html;
+  }
+  function tick() {
+    if (!O.summary) return;
+    paintPill();
+    // a graphic shown for a set time goes away by itself
+    if (O.graphic && O.graphic.durationSec && !O.graphic.expired && serverNow() > O.graphic.at + O.graphic.durationSec * 1000) {
+      O.graphic = Object.assign({}, O.graphic, { expired: true });
+      applyVisibility();
+      showScene(null);
+    }
+  }
+
+  /* ---------- on-air graphics ---------- */
+  function applyVisibility() {
+    const sc = O.graphic && !O.graphic.expired ? O.graphic.scene : 'scorebug';
+    document.body.classList.toggle('hide-bar', sc === 'intro' || sc === 'none');
+  }
+  function setGraphic(g) {
+    O.graphic = g || null;
+    if (g && g.durationSec && serverNow() > g.at + g.durationSec * 1000) O.graphic = Object.assign({}, g, { expired: true });
+    applyVisibility();
+    const sc = O.graphic && !O.graphic.expired ? O.graphic.scene : null;
+    showScene(sc && sc !== 'scorebug' && sc !== 'none' ? O.graphic : null);
+  }
+  let gTok = 0;
+  async function showScene(g) {
+    const tok = ++gTok;
+    const host = $('#gfx'), cur = host.firstElementChild;
+    if (g && g.scene === 'standings') await loadStandings();
+    if (g && ['setSummary', 'final', 'playerStat'].includes(g.scene)) await loadStats(true);
+    if (tok !== gTok) return;
+    const built = g ? build(g) : null;
+    if (cur) { cur.classList.remove('on'); setTimeout(() => cur.remove(), 650); }
+    O.onAir = built ? g : null;
+    O.sceneKey = built ? built.key : null;
+    // the Live Output window softens the camera behind a graphic
+    try { if (window.parent !== window) window.parent.postMessage({ type: 'allsportslive-graphic', on: !!built }, location.origin); } catch (e) { /* not framed */ }
+    if (!built) return;
+    const mount = () => {
+      if (tok !== gTok) return;
+      const el = document.createElement('div');
+      el.className = 'scene ' + built.cls;
+      el.innerHTML = built.html;
+      host.appendChild(el);
+      fitAll(el);
+      void el.offsetWidth;
+      el.classList.add('on');
+    };
+    if (cur) setTimeout(mount, 520); else mount();
+  }
+  // The graphic on air follows the data (a corrected line-up, a new point).
+  let refreshTimer = null;
+  function refreshScene() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      const g = O.onAir, el = $('#gfx').firstElementChild;
+      if (!g || !el || !el.classList.contains('on')) return;
+      if (['setSummary', 'final', 'playerStat'].includes(g.scene)) await loadStats(false);
+      if (g !== O.onAir) return;
+      const b = build(g);
+      if (!b) return showScene(null);
+      if (b.key !== O.sceneKey) { O.sceneKey = b.key; el.innerHTML = b.html; fitAll(el); }
+    }, 250);
+  }
+  async function loadStats(force) {
+    if (O.stats && O.statsSeq === O.seq) return;
+    if (!force && Date.now() - O.statsAt < 3000) return;
+    O.statsAt = Date.now();
+    try {
+      const r = await fetch(`/api/volleyball/matches/${encodeURIComponent(O.matchId)}/stats${O.key ? '?key=' + encodeURIComponent(O.key) : ''}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (j && j.success) { O.stats = j.stats; O.statsSeq = O.seq; }
+    } catch (e) { /* the graphic says what it can */ }
+  }
+  async function loadStandings() {
+    if (O.standings && Date.now() - O.standingsAt < 20000) return;
+    try {
+      const r = await fetch(`/api/volleyball/matches/${encodeURIComponent(O.matchId)}/standings${O.key ? '?key=' + encodeURIComponent(O.key) : ''}`, { cache: 'no-store' });
+      const j = await r.json();
+      if (j && j.success) { O.standings = j.standings; O.standingsAt = Date.now(); }
+    } catch (e) { /* nothing to show */ }
+  }
+  function teamVars(t) { return `--c:${esc(t.color)};--tx:${esc(t.txt)}`; }
+  function build(g) {
+    if (!O.match || !O.summary) return null;
+    const f = { intro: sceneIntro, lineup: sceneLineup, toss: sceneToss, setSummary: sceneSet, final: sceneFinal, playerStat: scenePlayer, standings: sceneStandings }[g.scene];
+    const out = f ? f(g.data || {}) : null;
+    if (!out) return null;
+    out.key = g.scene + ':' + out.html.length + ':' + hashStr(out.html);
+    return out;
+  }
+  // A name shrinks until it fits its box — the PC running OBS may not have
+  // the overlay's condensed font — and at the smallest size a long name
+  // gives way to its short form (V. RAGHUNATHAN, MTV). Never an ellipsis
+  // where it can be helped.
+  // The text is measured off-screen at the box's own font: a box's width is
+  // fractional and scrollWidth is not, so a name 0.4 px too wide would still
+  // be cut. Every [data-fit] box takes the width its container gives it.
+  const meter = document.createElement('span');
+  meter.setAttribute('aria-hidden', 'true');
+  meter.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap';
+  function textWidth(el, text, px) {
+    if (!meter.isConnected) document.body.appendChild(meter);
+    const cs = getComputedStyle(el);
+    ['fontFamily', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant', 'letterSpacing', 'textTransform'].forEach((k) => { meter.style[k] = cs[k]; });
+    meter.style.fontSize = px + 'px';
+    meter.textContent = text;
+    return meter.getBoundingClientRect().width;
+  }
+  function fitOne(el) {
+    if (!el || !el.isConnected) return;
+    const max = Number(el.dataset.fit) || 30, min = Number(el.dataset.min) || Math.round(max * 0.6);
+    if (el.dataset.full == null) el.dataset.full = el.textContent;
+    const box = el.clientWidth;
+    if (!box) return;
+    const fits = (text, px) => textWidth(el, text, px) <= box - 3;
+    let text = el.dataset.full, px = max;
+    while (!fits(text, px) && px > min) px -= 2;
+    if (!fits(text, px) && el.dataset.alt) { text = el.dataset.alt; px = max; while (!fits(text, px) && px > min) px -= 2; }
+    el.textContent = text;
+    el.style.fontSize = px + 'px';
+  }
+  function fitAll(root) { if (root) root.querySelectorAll('[data-fit]').forEach(fitOne); }
+  function refitOnAir() { fitAll($('#gfx')); fitAll($('#corner')); }
+  if (document.fonts) {
+    document.fonts.ready.then(refitOnAir);
+    if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', refitOnAir);
+  }
+  // "Venkatasubramanian Raghunathan" → "V. Raghunathan"
+  function abbrName(n) { const w = String(n || '').trim().split(/\s+/); return w.length > 1 ? w[0][0] + '. ' + w[w.length - 1] : w[0] || ''; }
+  const fitAttrs = (max, min, alt) => `data-fit="${max}" data-min="${min}"${alt ? ` data-alt="${esc(alt)}"` : ''}`;
+  // The font size that lets a name fit its box: [[max length, size], …], else the last size.
+  function fitSize(text, steps, smallest) { const n = String(text || '').length; for (const [len, px] of steps) if (n <= len) return px; return smallest; }
+  function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+
+  function sceneIntro() {
+    const [L, R] = O.sides.map(teamOf), m = O.match, t = O.tournament, ru = m.rules || {};
+    const tl = t && t.logo ? `${t.logo}&match=${encodeURIComponent(O.matchId)}${O.key ? '&key=' + encodeURIComponent(O.key) : ''}` : '';
+    const stage = m.stage ? [m.stage.group ? 'Group ' + m.stage.group : '', m.stage.round || ''].filter(Boolean).join(' · ') : '';
+    const sub = [stage, m.matchNo ? 'Match ' + m.matchNo : ''].filter(Boolean).join(' · ');
+    const foot = [m.venue, m.scheduledAt ? VB.fmtDate(m.scheduledAt) : '', ru.bestOf > 1 ? `Best of ${ru.bestOf}` : 'One set'].filter(Boolean);
+    return { cls: 'intro', html:
+      `<div class="ih">${tl ? `<span class="crestx"><img src="${esc(tl)}" alt=""></span>` : ''}<div><b>${esc(t ? t.name : 'Volleyball')}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div></div>
+      <div class="iv"><div class="it L" style="${teamVars(L)}">${crestHtml(L)}<b>${esc(L.name)}</b></div><div class="vs">VS</div><div class="it R" style="${teamVars(R)}">${crestHtml(R)}<b>${esc(R.name)}</b></div></div>
+      <div class="if">${foot.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` };
+  }
+  // The starting six of a set, from the line-up actually submitted for it.
+  function lineupOf(side, set) {
+    let pos = null;
+    O.timeline.forEach((e) => { if (live(e) && e.type === 'LINEUP' && e.team === side && (e.set || 0) === set && Array.isArray(e.positions)) pos = e.positions; });
+    return pos;
+  }
+  function sceneLineup(d) {
+    const s = O.summary;
+    const set = Number(d.set) || (s.status === 'in_set' ? s.set : (s.nextSet || 1));
+    const sides = d.team === 'A' || d.team === 'B' ? [d.team] : O.sides;
+    const card = (side) => {
+      const t = teamOf(side), pos = lineupOf(side, set);
+      const sq = (O.match.squads && O.match.squads[side]) || [];
+      const libs = sq.filter((p) => p.libero && !(pos || []).includes(p.playerId));
+      let k = 0;
+      const row = (p, ps, lib) => `<div class="row pr ${lib ? 'lib' : ''}" style="--k:${k++}"><span class="ps">${esc(ps)}</span><b class="pn">${esc(p ? p.number : '–')}</b><span class="pnm" ${fitAttrs(30, 20, p ? abbrName(p.name) : '')}>${esc(p ? p.name : 'To be named')}</span>${p && p.role && !lib ? `<em>${esc(p.role)}</em>` : ''}${p && p.captain ? '<u>C</u>' : ''}${lib ? '<u>L</u>' : ''}</div>`;
+      const rows = pos ? pos.map((id, i) => row(player(side, id), VB.POS[i], false)).join('') + libs.map((p) => row(p, '', true)).join('')
+        : `<div class="row pr" style="--k:0"><span class="pnm">Line-up to come</span></div>`;
+      return `<div class="lc panel" style="${teamVars(t)}"><div class="lh">${crestHtml(t)}<div class="lt"><b ${fitAttrs(fitSize(shown(t), [[12, 40], [16, 34]], 30), 24, t.short)}>${esc(shown(t))}</b><small>Set ${set} · Starting six</small></div></div>${rows}</div>`;
+    };
+    return { cls: 'lineup', html: sides.map(card).join('') };
+  }
+  function sceneToss(d) {
+    const s = O.summary;
+    const deciding = Number(d.set) > 1 || (!d.set && s.decidingToss && s.status !== 'pregame');
+    const toss = deciding ? s.decidingToss : s.toss;
+    if (!toss) return null;
+    const w = teamOf(toss.winner), fs = teamOf(toss.firstServe);
+    const choice = toss.choice === 'serve' ? 'and chose to serve' : toss.choice === 'receive' ? 'and chose to receive' : 'and chose the side of the court';
+    return { cls: 'toss', html:
+      `<div class="kick">${deciding ? 'Deciding set' : 'Coin toss'}</div>
+      <div class="panel"><div class="tb" style="${teamVars(w)}">${crestHtml(w)}<div class="tt"><b>${esc(w.name)}</b><span>won the toss ${esc(choice)}</span></div></div>
+      <div class="tf"><span>First serve <b>${esc(shown(fs))}</b></span><span>Left court <b>${esc(shown(teamOf(toss.leftSide || 'A')))}</b></span></div></div>` };
+  }
+  function setsStrip(highlight) {
+    const s = O.summary, [Ls, Rs] = O.sides;
+    const done = s.sets.filter((x) => x.status === 'completed' || x.set === s.set);
+    if (!done.length) return '';
+    return `<div class="rsets">${done.map((x) => `<div class="${x.set === highlight ? 'cur' : ''}"><small>Set ${x.set}</small><span>${x.winner === Ls ? `<em>${x[Ls]}</em>` : x[Ls]}–${x.winner === Rs ? `<em>${x[Rs]}</em>` : x[Rs]}</span></div>`).join('')}</div>`;
+  }
+  function compareRows(rows) {
+    const [Ls, Rs] = O.sides, A = teamOf(Ls), B = teamOf(Rs);
+    return `<div class="cmp">${rows.map(([lbl, a, b], k) => {
+      const mx = Math.max(a, b, 1);
+      return `<div class="row cr" style="--k:${k}"><span class="v">${a}</span><span class="bar l"><i style="--c:${esc(A.color)};--o:100%;width:${Math.round(a / mx * 100)}%"></i></span><span class="lbl">${esc(lbl)}</span><span class="bar"><i style="--c:${esc(B.color)};--o:0%;width:${Math.round(b / mx * 100)}%"></i></span><span class="v">${b}</span></div>`;
+    }).join('')}</div>`;
+  }
+  function resultHead(scoreA, scoreB, winner) {
+    const [Ls, Rs] = O.sides, A = teamOf(Ls), B = teamOf(Rs);
+    const nm = (t) => { const v = shown(t); return `<b ${fitAttrs(fitSize(v, [[9, 46], [12, 40], [16, 34]], 30), 24, t.short)}>${esc(v)}</b>`; };
+    return `<div class="rt"><div class="rteam L" style="${teamVars(A)}">${crestHtml(A)}${nm(A)}</div><div class="rs ${winner === Ls ? 'w' : ''}">${scoreA}</div><div class="rs ${winner === Rs ? 'w' : ''}">${scoreB}</div><div class="rteam R" style="${teamVars(B)}">${crestHtml(B)}${nm(B)}</div></div>`;
+  }
+  function sceneSet(d) {
+    const s = O.summary, [Ls, Rs] = O.sides;
+    const done = s.sets.filter((x) => x.status === 'completed');
+    const set = Number(d.set) ? s.sets.find((x) => x.set === Number(d.set)) : done[done.length - 1];
+    if (!set) return null;
+    const bs = O.stats && O.stats.bySet ? O.stats.bySet.find((x) => x.set === set.set) : null;
+    const cat = (side, k) => (bs ? bs[side].byCategory[k] : 0);
+    const rows = bs ? [['Attack points', cat(Ls, 'attack'), cat(Rs, 'attack')], ['Block points', cat(Ls, 'block'), cat(Rs, 'block')], ['Serve points', cat(Ls, 'serve'), cat(Rs, 'serve')], ['Opponent errors', cat(Ls, 'opponentError'), cat(Rs, 'opponentError')]] : [];
+    return { cls: 'res', html: `<div class="kick">${set.status === 'completed' ? 'End of set' : 'Set'} <b>${set.set}</b></div><div class="panel">${resultHead(set[Ls], set[Rs], set.winner)}
+      <div class="rsets"><div><small>Sets</small><span>${s.setsWon[Ls]}–${s.setsWon[Rs]}</span></div></div>${rows.length ? compareRows(rows) : ''}<div style="height:16px"></div></div>` };
+  }
+  function topScorer(side) {
+    if (!O.stats) return null;
+    const list = Object.values(O.stats.players).filter((p) => p.team === side && p.points > 0).sort((a, b) => b.points - a.points);
+    return list[0] || null;
+  }
+  function sceneFinal() {
+    const s = O.summary, [Ls, Rs] = O.sides;
+    const over = s.status === 'completed';
+    const T = O.stats && O.stats.teams;
+    const cat = (side, k) => (T ? T[side].byCategory[k] : 0);
+    const rows = T ? [['Attack points', cat(Ls, 'attack'), cat(Rs, 'attack')], ['Block points', cat(Ls, 'block'), cat(Rs, 'block')], ['Serve points', cat(Ls, 'serve'), cat(Rs, 'serve')], ['Opponent errors', cat(Ls, 'opponentError'), cat(Rs, 'opponentError')], ['Total points', T[Ls].points, T[Rs].points]] : [];
+    const top = [Ls, Rs].map((side) => { const p = topScorer(side); return p ? `<div><small>Top scorer · ${esc(shown(teamOf(side)))}</small><span class="ts" ${fitAttrs(26, 18, '#' + p.number + ' ' + abbrName(p.name))}>#${esc(p.number)} ${esc(p.name)}</span><b>${fmt(p.points)}</b></div>` : '<div></div>'; });
+    const head = over ? (s.forfeit ? 'Final · by forfeit' : 'Final result') : s.status === 'abandoned' ? 'Match abandoned' : 'Match score';
+    return { cls: 'res', html: `<div class="kick">${esc(head)}</div><div class="panel">${resultHead(s.setsWon[Ls], s.setsWon[Rs], s.winner)}${setsStrip(0)}${rows.length ? compareRows(rows) : ''}${O.stats ? `<div class="top">${top.join('')}</div>` : '<div style="height:16px"></div>'}</div>` };
+  }
+  function scenePlayer(d) {
+    const side = sideOfPlayer(d.playerId);
+    if (!side) return null;
+    const p = player(side, d.playerId), t = teamOf(side);
+    const st = O.stats && O.stats.players ? O.stats.players[d.playerId] : null;
+    const role = p.libero ? 'Libero' : (VB.ROLES[p.role] || '');
+    const eff = st && st.attack.attempts ? Math.round(st.attack.efficiency * 100) + '%' : '–';
+    const tiles = st ? [[fmt(st.points), 'Points'], [st.attack.kills, 'Kills'], [fmt(st.block.points), 'Blocks'], [st.serve.aces, 'Aces'], [p.libero ? st.digs : eff, p.libero ? 'Digs' : 'Attack eff.']] : [];
+    return { cls: 'pcard', html: `<div class="panel" style="${teamVars(t)}"><div class="ph"><span class="big">${esc(p.number || '')}</span><div class="who"><b ${fitAttrs(58, 34, abbrName(p.name))}>${esc(p.name)}</b><small>${esc([shown(t), role, p.captain ? 'Captain' : ''].filter(Boolean).join(' · '))}</small></div>${crestHtml(t)}</div>
+      ${st ? `<div class="tiles">${tiles.map(([v, l], k) => `<div class="tile row" style="--k:${k}"><b>${esc(v)}</b><small>${esc(l)}</small></div>`).join('')}</div><div class="pf">This match · ${st.setsPlayed} set${st.setsPlayed === 1 ? '' : 's'} played${st.digs && !p.libero ? ` · ${st.digs} digs` : ''}${st.assists ? ` · ${st.assists} assists` : ''}</div>` : '<div class="pf">Statistics appear as the points are scored</div>'}</div>` };
+  }
+  function fmt(v) { return Math.round(v * 10) / 10; }
+  function sceneStandings(d) {
+    const st = O.standings;
+    if (!st || !st.groups || !st.groups.length) return null;
+    const mine = [O.match.teamA && O.match.teamA.teamId, O.match.teamB && O.match.teamB.teamId];
+    const g = st.groups.find((x) => x.name && x.name === d.group) || st.groups.find((x) => x.rows.some((r) => mine.includes(r.teamId))) || st.groups[0];
+    const ratio = (v, w) => (v == null ? (w > 0 ? 'MAX' : '–') : (Math.round(v * 1000) / 1000).toFixed(3));
+    const rows = g.rows.slice(0, 10).map((r, k) => {
+      const c = (r.colors && r.colors.primary) || '#888';
+      return `<tr class="row ${mine.includes(r.teamId) ? 'me' : ''}" style="--k:${k}"><td class="pos">${r.position}</td><td class="t"><span><i style="--c:${esc(c)}"></i><b class="tn" ${fitAttrs(30, 20, r.shortName || '')}>${esc(r.name)}</b></span></td><td>${r.played}</td><td>${r.won}</td><td>${r.lost}</td><td>${r.setsWon}:${r.setsLost}</td><td>${ratio(r.setRatio, r.setsWon)}</td><td class="pts">${fmt(r.matchPoints)}</td></tr>`;
+    }).join('');
+    return { cls: 'stand', html: `<div class="kick">Points table${g.name ? ' · Group <b>' + esc(g.name) + '</b>' : ''}</div><div class="panel"><table><colgroup><col style="width:70px"><col><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:110px"><col style="width:160px"><col style="width:96px"></colgroup><thead><tr><th>#</th><th class="t">Team</th><th>P</th><th>W</th><th>L</th><th>Sets</th><th>Set ratio</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table>
+      ${g.rows.length > 10 ? `<div class="foot">Top 10 of ${g.rows.length}</div>` : ''}</div>` };
+  }
+
+  /* ---------- fit 1920 × 1080 into whatever size the source is ---------- */
+  function fit() { const k = Math.min(innerWidth / 1920, innerHeight / 1080); $('#fit').style.transform = `translate(${(innerWidth - 1920 * k) / 2}px,${(innerHeight - 1080 * k) / 2}px) scale(${k})`; }
+  addEventListener('resize', fit); fit();
+  // test hook: the browser checks read what is on air
+  window.__vbOverlay = O;
+  start();
+})();
+</script></body></html>

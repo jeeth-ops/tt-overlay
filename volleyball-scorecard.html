@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Volleyball scorecard · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/volleyball-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🏐 The public volleyball scorecard — /volleyball/match/:matchId.
+  Everything here is derived from the match's saved event ledger on the
+  server (scores, sets, per-player statistics, point-by-point), live over
+  the /volleyball socket while the match is on. A player's 🎬 icon opens
+  the clips of the points that player is part of — the same point event
+  id that scored the point, credited the statistic and cut the clip.
+-->
+<style>
+  main { padding: 16px 0 60px; }
+  .hero { padding: 20px; }
+  .hero .meta { color: var(--mute); font-size: 13px; text-align: center; }
+  .vs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; margin-top: 14px; }
+  .side { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .side.r { flex-direction: row-reverse; text-align: right; }
+  .side .nm { font-size: clamp(17px, 2.6vw, 24px); font-weight: 800; letter-spacing: -.02em; min-width: 0; }
+  .side .nm small { display: block; font-size: 12.5px; font-weight: 600; color: var(--mute); letter-spacing: 0; }
+  .score { display: flex; align-items: center; gap: 10px; font-size: clamp(34px, 6vw, 54px); font-weight: 800; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+  .score i { font-style: normal; color: var(--mute); font-weight: 600; font-size: .6em; }
+  .score .w { color: var(--ink); } .score .l { color: var(--mute); }
+  @media (max-width: 600px) {
+    .vs { gap: 8px; }
+    .side, .side.r { flex-direction: column; text-align: center; gap: 6px; }
+    .side .nm { font-size: 15px; }
+    .side .nm.ellipsis { white-space: normal; overflow-wrap: anywhere; }
+    .side .nm small { display: none; }
+    .side .logo.lg { width: 48px; height: 48px; border-radius: 14px; font-size: 15px; }
+  }
+  .live-now { margin-top: 12px; text-align: center; font-weight: 700; }
+  .live-now b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .setchips { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .setchips span { padding: 4px 10px; border-radius: 99px; background: var(--fill); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tabs { display: flex; justify-content: center; margin: 16px 0 6px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 860px) { .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+  .cmp-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) minmax(110px, 170px) minmax(0, 1fr) 54px; gap: 10px; align-items: center; padding: 7px 0; font-variant-numeric: tabular-nums; }
+  .cmp-row .lbl { text-align: center; font-size: 12.5px; color: var(--mute); font-weight: 600; }
+  .cmp-row .v { text-align: center; font-weight: 800; }
+  .cmp-row .bar { height: 8px; border-radius: 99px; background: var(--fill); overflow: hidden; display: flex; }
+  .cmp-row .bar.l { justify-content: flex-end; }
+  .cmp-row .bar i { display: block; height: 100%; border-radius: 99px; }
+  /* a team's own colour, lifted on a dark page so a navy team stays readable */
+  .tcol { color: var(--tc); } .tfill { background: var(--tc); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tcol { color: color-mix(in srgb, var(--tc) 50%, #fff); } :root:not([data-theme="light"]) .tfill { background: color-mix(in srgb, var(--tc) 70%, #fff); } }
+  :root[data-theme="dark"] .tcol { color: color-mix(in srgb, var(--tc) 50%, #fff); } :root[data-theme="dark"] .tfill { background: color-mix(in srgb, var(--tc) 70%, #fff); }
+  .vid { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border-radius: 8px; background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); font-weight: 700; font-size: 12.5px; }
+  .vid:hover { background: color-mix(in srgb, var(--blue) 22%, transparent); }
+  .pname { font-weight: 600; text-align: left; }
+  .pname:hover { color: var(--blue); }
+  .pts-set { margin-top: 10px; }
+  .rally { display: grid; grid-template-columns: 62px 18px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 14px; font-size: 13.5px; }
+  .rally .sc { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rally .tm { width: 12px; height: 12px; border-radius: 4px; }
+  .rally.void { opacity: .5; text-decoration: line-through; }
+  .rally.ev { color: var(--mute); grid-template-columns: 62px 18px minmax(0, 1fr); }
+  .cliplist { display: grid; gap: 14px; margin-top: 12px; }
+  .cliplist video { width: 100%; border-radius: 12px; background: #000; aspect-ratio: 16 / 9; }
+  .cliphead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 6px; }
+  .wait-clip { aspect-ratio: 16 / 9; border-radius: 12px; background: var(--fill); display: grid; place-items: center; color: var(--mute); font-weight: 600; text-align: center; padding: 10px; }
+  .form { display: inline-flex; gap: 3px; }
+  .form i { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 800; color: #fff; }
+  .form i.W { background: var(--green); } .form i.L { background: var(--red); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/volleyball"><span class="ball">🏐</span><span>Volleyball</span></a>
+  <div class="grow ellipsis small" id="crumb"></div>
+  <button class="btn sm ghost" id="theme" title="Light / dark / automatic theme" aria-label="Theme"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg></button>
+</header>
+<main class="wrap" id="main"><div class="skel" style="height:220px"></div></main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/volleyball-common.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, api } = VB;
+  const matchId = decodeURIComponent((location.pathname.match(/\/volleyball\/match\/([^/?#]+)/) || [])[1] || new URLSearchParams(location.search).get('match') || '');
+  const key = new URLSearchParams(location.search).get('key') || '';
+  const S = { match: null, tournament: null, timeline: [], summary: null, stats: null, clipCounts: {}, clips: [], tab: VB.store.get('vb_sc_tab', 'card'), h2h: null, hist: {} };
+  const OUT = { GENERAL: 'Point', ATTACK_KILL: 'Attack kill', BLOCK: 'Block point', ACE: 'Ace', RECEPTION_ERROR: 'Reception error', SERVICE_ERROR: 'Service error', ATTACK_ERROR: 'Attack error', OPP_ERROR: 'Opponent error', NET_FAULT: 'Net fault', FOUR_HITS: 'Four hits', DOUBLE_CONTACT: 'Double contact', BALL_OUT: 'Ball out', BALL_IN: 'Ball in', ROTATION_FAULT: 'Rotation fault', PENALTY: 'Penalty' };
+  const q = key ? '?key=' + encodeURIComponent(key) : '';
+  const qa = key ? '&key=' + encodeURIComponent(key) : '';
+  // Videos and the PDF are opened without the sign-in header: a private
+  // match's own account uses the match key it was given.
+  const mq = () => { const k = key || (S.match && S.match.overlayKey) || ''; return k ? '?key=' + encodeURIComponent(k) : ''; };
+
+  $('#theme').onclick = () => { const order = ['auto', 'light', 'dark']; const cur = VB.store.get('vb_theme', 'auto'); VB.store.set('vb_theme', order[(order.indexOf(cur) + 1) % 3]); VB.applyTheme(); };
+
+  async function load() {
+    const [m, st, cl] = await Promise.all([
+      api('GET', `/api/volleyball/matches/${encodeURIComponent(matchId)}?timeline=1${qa}`),
+      api('GET', `/api/volleyball/matches/${encodeURIComponent(matchId)}/stats${q}`),
+      api('GET', `/api/volleyball/matches/${encodeURIComponent(matchId)}/clips${q}`)
+    ]);
+    if (!m.ok) return notFound(m.status);
+    S.match = m.json.match; S.tournament = m.json.tournament; S.timeline = m.json.timeline || []; S.summary = m.json.summary;
+    if (st.ok) { S.stats = st.json.stats; S.clipCounts = st.json.clipCounts || {}; }
+    if (cl.ok) S.clips = cl.json.clips || [];
+    render();
+  }
+  function notFound(status) {
+    VB.authReady.then((u) => {
+      $('#main').innerHTML = `<div class="card" style="max-width:520px;margin:30px auto;text-align:center"><div style="font-size:40px">🏐</div><h2 style="margin:6px 0">${status === 0 ? 'No connection' : 'Match not found'}</h2>
+        <p class="muted">${status === 0 ? 'Check the connection and try again.' : 'It may be part of a private tournament.'}</p>
+        ${!u && status ? '<button class="btn primary" style="margin-top:14px" id="gsi">Sign in</button>' : '<a class="btn" style="margin-top:14px" href="/volleyball">All volleyball</a>'}</div>`;
+      if ($('#gsi')) $('#gsi').onclick = () => VB.signIn().then(() => location.reload());
+    });
+  }
+  let reloadTimer = null;
+  function reloadSoon(ms) { clearTimeout(reloadTimer); reloadTimer = setTimeout(load, ms || 1200); }
+
+  /* ---------- helpers ---------- */
+  const team = (s) => S.match['team' + s] || { name: 'To be decided', shortName: 'TBD', colors: {} };
+  const color = (s) => VB.teamColor(team(s), s === 'A' ? '#0a84ff' : '#ff9f0a');
+  function player(id) {
+    for (const s of ['A', 'B']) { const p = ((S.match.squads || {})[s] || []).find((x) => x.playerId === id); if (p) return Object.assign({ team: s }, p); }
+    return null;
+  }
+  const pn = (id) => { const p = player(id); return p ? `#${p.number} ${p.name}` : ''; };
+  const pct = (v) => (v == null ? '–' : Math.round(v * 100) + '%');
+  const r1 = (v) => Math.round(v * 10) / 10;
+
+  /* ---------- render ---------- */
+  function render() {
+    const m = S.match, s = S.summary || m.summary || {}, t = S.tournament;
+    $('#crumb').innerHTML = t ? `<a href="/volleyball/tournament/${esc(t.tournamentId)}">${esc(t.name)}</a>` : '';
+    document.title = `${team('A').name} v ${team('B').name} · Volleyball`;
+    const live = m.status === 'live', done = m.status === 'completed';
+    const badge = live ? '<span class="badge live">LIVE</span>' : done ? '<span class="badge done">Final</span>' : m.status === 'abandoned' ? '<span class="badge warn">Abandoned</span>' : '<span class="badge">Scheduled</span>';
+    const sets = s.setsWon || { A: 0, B: 0 };
+    const w = s.winner || (m.result && m.result.winner);
+    const stage = m.stage ? [m.stage.group ? 'Group ' + m.stage.group : '', m.stage.round].filter(Boolean).join(' · ') : '';
+    const setChips = (s.sets || []).filter((x) => x.status === 'completed').map((x) => `<span title="Set ${x.set}">${x.A}–${x.B}${x.forfeit ? ' (forfeit)' : ''}</span>`).join('');
+    const nowLine = live && s.status === 'in_set' ? `<div class="live-now">Set ${s.set}${s.deciding ? ' (deciding)' : ''} · <b>${s.points.A}–${s.points.B}</b>${s.serving ? ` · ${esc(team(s.serving).shortName || team(s.serving).name)} serving` : ''}${s.matchPoint ? ' · <span class="badge live">Match point</span>' : s.setPoint ? ' · <span class="badge warn">Set point</span>' : ''}</div>`
+      : live && s.status === 'set_break' ? '<div class="live-now muted">Between sets</div>' : '';
+    const resultLine = done && w ? `<div class="live-now">${esc(team(w).name)} won ${Math.max(sets.A, sets.B)}–${Math.min(sets.A, sets.B)}${s.forfeit ? ' (forfeit)' : ''}</div>` : '';
+    $('#main').innerHTML = `
+      <div class="card hero">
+        <div class="meta">${badge} ${esc([stage, m.matchNo ? 'Match ' + m.matchNo : '', m.venue, m.scheduledAt ? VB.fmtDate(m.scheduledAt) : ''].filter(Boolean).join(' · '))}</div>
+        <div class="vs">
+          <div class="side">${VB.logoHtml(team('A'), 'lg')}<div class="nm ellipsis">${esc(team('A').name)}<small>${esc(team('A').city || '')}</small></div></div>
+          <div class="score"><span class="${w === 'A' ? 'w' : w ? 'l' : ''}">${sets.A}</span><i>–</i><span class="${w === 'B' ? 'w' : w ? 'l' : ''}">${sets.B}</span></div>
+          <div class="side r">${VB.logoHtml(team('B'), 'lg')}<div class="nm ellipsis">${esc(team('B').name)}<small>${esc(team('B').city || '')}</small></div></div>
+        </div>
+        ${setChips ? `<div class="setchips">${setChips}</div>` : ''}${nowLine}${resultLine}
+        <div class="row wrapr" style="justify-content:center;margin-top:14px;gap:8px">${reportHtml()}</div>
+      </div>
+      <div class="tabs"><div class="seg" id="tabs">${[['card', 'Scorecard'], ['points', 'Point by point'], ['teams', 'Teams']].map(([k, l]) => `<button data-t="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join('')}</div></div>
+      <div id="tab"></div>`;
+    $$('#tabs button').forEach((b) => b.onclick = () => { S.tab = b.dataset.t; VB.store.set('vb_sc_tab', S.tab); render(); });
+    if (S.tab === 'points') renderPoints(); else if (S.tab === 'teams') renderTeams(); else renderCard();
+  }
+  // The PDF link only exists when there is a PDF.
+  function reportHtml() {
+    const r = S.match.report;
+    if (S.match.status !== 'completed') return '';
+    if (r && r.url && (r.status === 'ready' || r.version)) return `<a class="btn primary sm" href="${esc(r.url)}${mq()}" target="_blank" rel="noopener">Match report (PDF${r.version ? ' v' + r.version : ''})</a>${r.stale || r.status === 'generating' ? '<span class="badge warn">Updating after a correction…</span>' : ''}`;
+    if (r && r.status === 'failed') return '<span class="badge warn">The PDF report could not be made yet — it is retried automatically</span>';
+    return '<span class="badge">Preparing the PDF report…</span>';
+  }
+
+  function renderCard() {
+    const st = S.stats, s = S.summary || {};
+    if (!st) { $('#tab').innerHTML = '<div class="card empty"><b>No statistics yet</b>They appear as soon as the first point is scored.</div>'; return; }
+    const doneSets = (s.sets || []);
+    const setTable = doneSets.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Team</th>${doneSets.map((x) => `<th class="c">Set ${x.set}</th>`).join('')}<th class="c">Sets</th><th class="c">Points</th></tr></thead><tbody>
+      ${['A', 'B'].map((t) => `<tr><td><b>${esc(team(t).name)}</b></td>${doneSets.map((x) => `<td class="c" style="${x.winner === t ? 'font-weight:800' : 'color:var(--mute)'}">${x[t]}${x.status !== 'completed' ? '*' : ''}</td>`).join('')}<td class="c"><b>${s.setsWon ? s.setsWon[t] : 0}</b></td><td class="c">${st.teams[t].points}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const T = st.teams;
+    const rows = [['Attack points', T.A.byCategory.attack, T.B.byCategory.attack], ['Block points', T.A.byCategory.block, T.B.byCategory.block], ['Serve points', T.A.byCategory.serve, T.B.byCategory.serve],
+      ['Opponent errors', T.A.byCategory.opponentError, T.B.byCategory.opponentError], ['Side-out points', T.A.sideOutPoints, T.B.sideOutPoints], ['Break points', T.A.breakPoints, T.B.breakPoints],
+      ['Longest run', T.A.longestRun, T.B.longestRun], ['Errors made', T.A.errorsCommitted, T.B.errorsCommitted], ['Time-outs', T.A.timeouts, T.B.timeouts], ['Substitutions', T.A.substitutions, T.B.substitutions]];
+    const cmp = `<div class="card"><div class="row"><b class="grow tcol" style="--tc:${esc(color('A'))}">${esc(team('A').shortName || team('A').name)}</b><h3>Team comparison</h3><b class="grow tcol" style="text-align:right;--tc:${esc(color('B'))}">${esc(team('B').shortName || team('B').name)}</b></div>
+      ${rows.map(([l, a, b]) => { const mx = Math.max(a, b, 1); return `<div class="cmp-row"><span class="v">${a}</span><span class="bar l"><i class="tfill" style="width:${a / mx * 100}%;--tc:${esc(color('A'))}"></i></span><span class="lbl">${esc(l)}</span><span class="bar"><i class="tfill" style="width:${b / mx * 100}%;--tc:${esc(color('B'))}"></i></span><span class="v">${b}</span></div>`; }).join('')}</div>`;
+    $('#tab').innerHTML = `<div class="stack">${setTable}${cmp}<div class="grid-2">${['A', 'B'].map(playerTable).join('')}</div>
+      <p class="tiny muted">Statistics are derived from the saved points. A kill, block or ace is only credited when the scorer recorded who made it; 🎬 opens the clips of the points a player is part of.</p></div>`;
+    $$('[data-clips]').forEach((b) => b.onclick = () => playerClips(b.dataset.clips));
+    $$('[data-player]').forEach((b) => b.onclick = () => playerHistory(b.dataset.player));
+  }
+  function playerTable(side) {
+    const st = S.stats;
+    const list = Object.values(st.players).filter((p) => p.team === side).sort((a, b) => (b.setsPlayed > 0) - (a.setsPlayed > 0) || b.points - a.points || (parseInt(a.number, 10) || 99) - (parseInt(b.number, 10) || 99));
+    return `<div class="card" style="padding:0;overflow:hidden"><div class="row" style="padding:12px 14px">${VB.logoHtml(team(side), 'sm')}<h3 class="grow ellipsis">${esc(team(side).name)}</h3></div>
+      <div class="tbl-wrap" style="border-radius:0;box-shadow:none"><table class="tbl"><thead><tr><th>#</th><th>Player</th><th class="c" title="Sets played">Sets</th><th class="c" title="Points">Pts</th><th class="c" title="Attack kills">K</th><th class="c" title="Attack errors (incl. blocked)">AE</th><th class="c" title="Attack efficiency (kills − errors) / attempts">Eff</th><th class="c" title="Service aces">Ace</th><th class="c" title="Service errors">SE</th><th class="c" title="Block points (solo + share of assists)">Blk</th><th class="c" title="Digs">Dig</th><th class="c" title="Reception errors">RE</th><th class="c">Clips</th></tr></thead><tbody>
+      ${list.map((p) => { const n = S.clipCounts[p.playerId] || 0; return `<tr class="${p.setsPlayed ? '' : 'dim'}"><td>${esc(p.number)}</td><td><button class="pname" data-player="${esc(p.playerId)}">${esc(p.name)}</button>${p.captain ? ' <span class="badge">C</span>' : ''}${p.libero ? ' <span class="badge">L</span>' : ''}${p.sanctions.length ? ` <span class="badge warn" title="${esc(p.sanctions.join(', '))}">${p.sanctions.length}🟨</span>` : ''}</td>
+        <td class="c">${p.setsPlayed}</td><td class="c"><b>${r1(p.points)}</b></td><td class="c">${p.attack.kills}</td><td class="c">${p.attack.errors}</td><td class="c">${p.attack.attempts ? pct(p.attack.efficiency) : '–'}</td><td class="c">${p.serve.aces}</td><td class="c">${p.serve.errors}</td><td class="c">${r1(p.block.points)}</td><td class="c">${p.digs}</td><td class="c">${p.reception.errors}</td>
+        <td class="c">${n ? `<button class="vid" data-clips="${esc(p.playerId)}" title="${n} clip${n === 1 ? '' : 's'} of ${esc(p.name)}">🎬 ${n}</button>` : '<span class="muted">–</span>'}</td></tr>`; }).join('')}
+      </tbody></table></div></div>`;
+  }
+
+  // 🎬 A player's clips — the points that player is part of, from the server.
+  async function playerClips(pid) {
+    const p = player(pid);
+    const sh = VB.sheet(`<div class="row"><h3 class="grow">${esc(p ? `#${p.number} ${p.name}` : 'Player')} · clips</h3><button class="btn sm" data-close>Close</button></div><div class="cliplist" id="cl"><div class="skel" style="height:200px"></div></div>`, { wide: true });
+    const r = await api('GET', `/api/volleyball/matches/${encodeURIComponent(matchId)}/clips?playerId=${encodeURIComponent(pid)}${qa}`);
+    const el = $('#cl', sh.el);
+    if (!r.ok) { el.innerHTML = `<div class="empty"><b>Could not load the clips</b>${esc(r.json.error || '')}</div>`; return; }
+    const list = (r.json.clips || []).slice().sort((a, b) => (a.set || 0) - (b.set || 0) || (a.pointNo || 0) - (b.pointNo || 0));
+    if (!list.length) { el.innerHTML = '<div class="empty"><b>No clips for this player</b>Their points did not get a clip (no recording at the time).</div>'; return; }
+    el.innerHTML = list.map((c) => {
+      const role = (c.players.find((x) => x.playerId === pid) || {}).role || '';
+      const sc = c.scoreNow || c.scoreAtTrigger;
+      const head = `<div class="cliphead"><b>Set ${esc(c.set || '?')}${sc ? ` · ${sc.A}–${sc.B}` : ''}</b><span class="badge">${esc(OUT[c.outcome] || 'Point')}</span>${c.team ? `<span class="small">to ${esc(team(c.team).shortName || team(c.team).name)}</span>` : ''}<span class="small muted">${esc(role)}</span>${c.actual && c.actual.partialPreRoll ? `<span class="badge warn">${esc(c.actual.preRollSec)} s before the point</span>` : ''}</div>`;
+      return `<div>${head}${c.watchUrl ? `<video controls playsinline preload="none" ${c.posterUrl ? `poster="${esc(c.posterUrl)}"` : ''} src="${esc(c.watchUrl)}${mq()}"></video>` : `<div class="wait-clip">${esc(c.displayStatus)}${c.status === 'UNAVAILABLE' ? '' : ' — the clip is on its way'}</div>`}</div>`;
+    }).join('');
+    // one plays at a time
+    $$('video', el).forEach((v) => v.addEventListener('play', () => $$('video', el).forEach((o) => { if (o !== v) o.pause(); })));
+  }
+  async function playerHistory(pid) {
+    const p = player(pid);
+    const sh = VB.sheet(`<div class="row"><h3 class="grow">${esc(p ? p.name : 'Player')}</h3><button class="btn sm" data-close>Close</button></div><div id="ph" style="margin-top:12px"><div class="skel" style="height:120px"></div></div>`, { wide: true });
+    const r = await api('GET', `/api/volleyball/players/${encodeURIComponent(pid)}/history`);
+    const el = $('#ph', sh.el);
+    if (!r.ok) { el.innerHTML = '<div class="empty">Could not load the history</div>'; return; }
+    const rows = r.json.matches || [];
+    if (!rows.length) { el.innerHTML = '<div class="empty">No other matches yet</div>'; return; }
+    const tot = rows.reduce((a, x) => { a.m += 1; a.p += x.stats.points; a.k += x.stats.attack.kills; a.b += x.stats.block.points; a.a += x.stats.serve.aces; a.d += x.stats.digs; return a; }, { m: 0, p: 0, k: 0, b: 0, a: 0, d: 0 });
+    el.innerHTML = `<div class="row wrapr" style="gap:8px;margin-bottom:12px"><span class="chip">${tot.m} match${tot.m === 1 ? '' : 'es'}</span><span class="chip">${r1(tot.p)} points</span><span class="chip">${tot.k} kills</span><span class="chip">${r1(tot.b)} blocks</span><span class="chip">${tot.a} aces</span><span class="chip">${tot.d} digs</span></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Match</th><th>Tournament</th><th class="c">Pts</th><th class="c">K</th><th class="c">Blk</th><th class="c">Ace</th><th class="c">Dig</th></tr></thead><tbody>
+      ${rows.map((x) => `<tr><td><a href="/volleyball/match/${esc(x.match.matchId)}">${esc(x.match.teamA ? x.match.teamA.shortName || x.match.teamA.name : '')} v ${esc(x.match.teamB ? x.match.teamB.shortName || x.match.teamB.name : '')}</a> ${x.match.status === 'live' ? '<span class="badge live">LIVE</span>' : ''}</td><td class="muted">${esc(x.tournamentName)}</td><td class="c"><b>${r1(x.stats.points)}</b></td><td class="c">${x.stats.attack.kills}</td><td class="c">${r1(x.stats.block.points)}</td><td class="c">${x.stats.serve.aces}</td><td class="c">${x.stats.digs}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+
+  function renderPoints() {
+    const tl = S.timeline;
+    if (!tl.length) { $('#tab').innerHTML = '<div class="card empty"><b>No points yet</b></div>'; return; }
+    const clipByEvent = new Map(S.clips.map((c) => [c.eventId, c]));
+    const bySet = new Map();
+    tl.forEach((e) => {
+      const n = e.after ? e.after.set : 0;
+      if (!n || !['RALLY', 'TIMEOUT', 'SUBSTITUTION', 'SANCTION', 'REPLAY', 'SET_START'].includes(e.type)) return;
+      if (!bySet.has(n)) bySet.set(n, []);
+      bySet.get(n).push(e);
+    });
+    const sets = [...bySet.keys()].sort((a, b) => b - a);
+    $('#tab').innerHTML = sets.map((n) => {
+      const items = bySet.get(n).slice().reverse();
+      return `<div class="section-title">Set ${n}</div><div class="list">${items.map((e) => line(e, clipByEvent.get(e.eventId))).join('')}</div>`;
+    }).join('') + '<p class="tiny muted" style="margin-top:10px">Newest first. A struck-through point was taken back by the scorer.</p>';
+    $$('[data-play]').forEach((b) => b.onclick = () => {
+      const c = S.clips.find((x) => x.clipId === b.dataset.play);
+      if (c) VB.sheet(`<div class="row"><h3 class="grow">Set ${esc(c.set)} · ${c.scoreNow ? `${c.scoreNow.A}–${c.scoreNow.B}` : ''}</h3><button class="btn sm" data-close>Close</button></div><video controls autoplay playsinline src="${esc(c.watchUrl)}${mq()}" style="width:100%;border-radius:12px;background:#000;margin-top:12px"></video>`, { wide: true });
+    });
+  }
+  function line(e, clip) {
+    const sc = e.after ? `${e.after.score.A}–${e.after.score.B}` : '';
+    if (e.type === 'RALLY') {
+      const p = e.players || {};
+      const who = [p.attacker && pn(p.attacker), (p.blockers || []).map(pn).join(' + '), p.errorBy && pn(p.errorBy), p.receiver && pn(p.receiver)].filter(Boolean).join(' · ');
+      const srv = e.outcome === 'ACE' && e.rallyServer ? pn(e.rallyServer.playerId) : '';
+      return `<div class="rally ${e.voided ? 'void' : ''}"><span class="sc">${sc}</span><span class="tm" style="background:${esc(color(e.team))}"></span><span class="ellipsis"><b>${esc(OUT[e.outcome] || 'Point')}</b> · ${esc(team(e.team).shortName || team(e.team).name)}${who || srv ? ` <span class="muted">— ${esc(who || srv)}</span>` : ''}</span>
+        ${clip && clip.watchUrl && !e.voided ? `<button class="vid" data-play="${esc(clip.clipId)}">▶</button>` : clip && !e.voided ? `<span class="tiny muted">${esc(clip.displayStatus)}</span>` : '<span></span>'}</div>`;
+    }
+    const txt = e.type === 'TIMEOUT' ? `Time-out · ${team(e.team).name}` : e.type === 'SUBSTITUTION' ? `Substitution · ${team(e.team).shortName || team(e.team).name}: ${(e.pairs || []).map((x) => `${pn(x.in)} for ${pn(x.out)}`).join(', ')}`
+      : e.type === 'SANCTION' ? `Sanction (${e.kind}) · ${e.playerId ? pn(e.playerId) : team(e.team).name}` : e.type === 'REPLAY' ? 'Rally replayed' : `Set ${e.after.set} starts`;
+    return `<div class="rally ev ${e.voided ? 'void' : ''}"><span class="sc">${sc}</span><span></span><span class="ellipsis small">${esc(txt)}</span></div>`;
+  }
+
+  async function renderTeams() {
+    const A = team('A'), B = team('B');
+    $('#tab').innerHTML = `<div class="grid-2"><div class="card" id="h2h"><h3>Head to head</h3><div class="skel" style="height:80px;margin-top:10px"></div></div><div class="stack" id="hist"></div></div>`;
+    if (!A.teamId || !B.teamId) { $('#h2h').innerHTML = '<h3>Head to head</h3><p class="muted small" style="margin-top:8px">Both teams are not known yet.</p>'; return; }
+    // history changes only when a match ends — no need to fetch it on every point
+    if (!S.teamsData || Date.now() - S.teamsData.at > 60000) {
+      const got = await Promise.all([
+        api('GET', `/api/volleyball/h2h?teamA=${encodeURIComponent(A.teamId)}&teamB=${encodeURIComponent(B.teamId)}`),
+        api('GET', `/api/volleyball/teams/${encodeURIComponent(A.teamId)}/history?tournamentId=${encodeURIComponent(S.match.tournamentId)}`),
+        api('GET', `/api/volleyball/teams/${encodeURIComponent(B.teamId)}/history?tournamentId=${encodeURIComponent(S.match.tournamentId)}`)
+      ]);
+      S.teamsData = { at: Date.now(), got };
+    }
+    const [h, ha, hb] = S.teamsData.got;
+    if (S.tab !== 'teams' || !$('#h2h')) return;
+    if (h.ok) {
+      const j = h.json;
+      $('#h2h').innerHTML = `<h3>Head to head</h3><div class="vs" style="margin-top:12px"><div class="side">${VB.logoHtml(A, 'sm')}<b class="ellipsis">${esc(A.shortName || A.name)}</b></div><div class="score" style="font-size:34px">${j.wins[A.teamId] || 0}<i>–</i>${j.wins[B.teamId] || 0}</div><div class="side r">${VB.logoHtml(B, 'sm')}<b class="ellipsis">${esc(B.shortName || B.name)}</b></div></div>
+        <p class="small muted" style="text-align:center;margin-top:6px">Sets ${j.sets[A.teamId] || 0}–${j.sets[B.teamId] || 0} · points ${j.points[A.teamId] || 0}–${j.points[B.teamId] || 0} · ${j.matches.length} completed match${j.matches.length === 1 ? '' : 'es'}</p>
+        <div class="list" style="margin-top:10px">${j.matches.slice(0, 8).map((x) => `<a class="li small" href="/volleyball/match/${esc(x.matchId)}"><span class="grow ellipsis">${esc(x.tournamentName)}</span><b>${x.result ? `${x.result.sets[x.teamA.teamId === A.teamId ? 'A' : 'B']}–${x.result.sets[x.teamA.teamId === A.teamId ? 'B' : 'A']}` : ''}</b><span class="muted">${esc(VB.fmtDate(x.completedAt, { weekday: undefined, hour: undefined, minute: undefined }))}</span></a>`).join('') || '<div class="empty small">They have not met yet</div>'}</div>`;
+    }
+    const histCard = (t, r) => {
+      if (!r.ok) return '';
+      const j = r.json, a = j.allTime, form = j.matches.slice(0, 5).map((x) => { const sd = x.teamA.teamId === t.teamId ? 'A' : 'B'; return x.result && x.result.winner === sd ? 'W' : 'L'; }).reverse();
+      return `<div class="card"><div class="row">${VB.logoHtml(t, 'sm')}<h3 class="grow ellipsis">${esc(t.name)}</h3><span class="form">${form.map((f) => `<i class="${f}">${f}</i>`).join('')}</span></div>
+        <p class="small muted" style="margin-top:8px">All competitions: ${a.played} played · ${a.won} won · sets ${a.setsWon}–${a.setsLost}${j.tournament ? ` · this tournament: ${j.tournament.won}–${j.tournament.lost}` : ''}</p>
+        <div class="list" style="margin-top:10px">${j.matches.slice(0, 6).map((x) => { const sd = x.teamA.teamId === t.teamId ? 'A' : 'B', op = sd === 'A' ? x.teamB : x.teamA; return `<a class="li small" href="/volleyball/match/${esc(x.matchId)}"><span class="badge ${x.result && x.result.winner === sd ? 'done' : 'live'}" style="${x.result && x.result.winner === sd ? '' : 'animation:none'}">${x.result && x.result.winner === sd ? 'W' : 'L'}</span><span class="grow ellipsis">v ${esc(op ? op.name : '')}</span><b>${x.result ? `${x.result.sets[sd]}–${x.result.sets[sd === 'A' ? 'B' : 'A']}` : ''}</b></a>`; }).join('') || '<div class="empty small">No completed matches yet</div>'}</div></div>`;
+    };
+    $('#hist').innerHTML = histCard(A, ha) + histCard(B, hb);
+  }
+
+  /* ---------- live ---------- */
+  async function live() {
+    const s = await VB.connect();
+    s.on('connect', async () => { const r = await VB.ack(s, 'vb:join', { matchId, key: key || undefined }); if (r.ok && S.match && r.seq !== S.match.eventSeq) reloadSoon(200); });
+    s.on('vb:update', (d) => { if (d.matchId !== matchId || !S.match) return; S.summary = d.summary; S.match.status = d.status; render(); reloadSoon(1500); });
+    s.on('vb:clip', (d) => { if (d.matchId === matchId) reloadSoon(2000); });
+    s.on('vb:report', (d) => { if (d.matchId === matchId) reloadSoon(500); });
+    s.on('vb:match', (d) => { if (d.matchId === matchId) reloadSoon(500); });
+  }
+  if (!matchId) { notFound(404); return; }
+  load().then(live);
+})();
+</script>
+</body>
+</html>

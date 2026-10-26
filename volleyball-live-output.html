@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Live Output</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<style>
+  /* ============================================================
+     🏐 VOLLEYBALL LIVE OUTPUT — camera + the volleyball overlay = the
+     program picture the Stream Engine records (and cuts every point's
+     7 s + 3 s clip from). The volleyball twin of live-output.html: the
+     same window-title contract with the engine's native capture (gdigrab
+     finds this window by its title), the same camera handling, but the
+     volleyball overlay on top — a volleyball match never shows the
+     cricket overlay, and cricket's page is left exactly as it is.
+     Opened by the Stream Engine (POST /capture-window/launch with
+     sport: 'volleyball') or by the Volleyball Clipper as a popup.
+     Do not close or minimise it while recording.
+     ============================================================ */
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ width:100%; height:100%; background:#000; overflow:hidden; }
+  #stage{ position:relative; width:100vw; height:100vh; }
+  #camera-video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#000; transition:filter .6s ease, transform .6s ease; }
+  #overlay-frame{ position:absolute; inset:0; width:100%; height:100%; border:0; background:transparent; }
+  #stage.gfx-blur #camera-video{ filter:blur(0.45vh); transform:scale(1.02); }
+  #lo-status{ position:absolute; top:10px; left:10px; z-index:50; font:600 12px/1.4 system-ui, sans-serif; color:#fff; background:rgba(0,0,0,.55); padding:6px 10px; border-radius:6px; }
+  #lo-status.hidden{ display:none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="camera-video" autoplay playsinline muted></video>
+  <iframe id="overlay-frame" title="Volleyball overlay"></iframe>
+  <div id="lo-status">Starting camera…</div>
+</div>
+<script>
+  // ?match=<volleyball match id>&video=<deviceId>&videoLabel=<name>[&key=<overlay key>]
+  const params = new URLSearchParams(location.search);
+  const match = (params.get('match') || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const videoDeviceId = params.get('video') || '';
+  const videoLabel = params.get('videoLabel') || '';
+  const key = (params.get('key') || '').replace(/[^a-fA-F0-9]/g, '');
+  const statusEl = document.getElementById('lo-status');
+  const STREAM_ENGINE_URL = 'http://127.0.0.1:5006';
+
+  // The engine's camera reports name the window's match as `room` — the
+  // same field live-output.html sends.
+  function reportToEngine(reason){
+    try {
+      fetch(`${STREAM_ENGINE_URL}/capture-window/camera-ended`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, room: match })
+      }).catch(() => {});
+    } catch (e) { /* the engine's own health checks still catch a dead feed */ }
+    try { window.opener && window.opener.postMessage({ type: 'allsportslive-camera-ended', room: match, reason }, location.origin); } catch (e) {}
+  }
+
+  // Must match windowTitleFor(matchId) in stream-engine/server.js exactly.
+  document.title = `AllSportsLive-LiveOutput-${match}`;
+  if (!match) { statusEl.textContent = '⚠️ No match in the link'; }
+  document.getElementById('overlay-frame').src = `${location.origin}/volleyball-overlay?match=${encodeURIComponent(match)}${key ? '&key=' + key : ''}`;
+
+  // The overlay says when a full-screen graphic is on air; the camera goes
+  // a little soft behind it. Only our own overlay frame is listened to.
+  window.addEventListener('message', (e) => {
+    const frame = document.getElementById('overlay-frame');
+    if (e.origin !== location.origin || e.source !== frame.contentWindow || !e.data || e.data.type !== 'allsportslive-graphic') return;
+    document.getElementById('stage').classList.toggle('gfx-blur', e.data.on === true);
+  });
+
+  // Device ids are salted per browser profile; the engine's dedicated
+  // capture window has its own profile, so the camera is found by its
+  // LABEL there (see live-output.html for the field history).
+  async function getCameraStream(){
+    if (videoDeviceId) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: videoDeviceId }, width: 1920, height: 1080 }, audio: false });
+      } catch (e) { /* a cross-profile deviceId — fall through to the label */ }
+    }
+    let stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1920, height: 1080 }, audio: false });
+    if (videoLabel) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const found = devices.find(d => d.kind === 'videoinput' && d.label === videoLabel);
+      const current = stream.getVideoTracks()[0];
+      if (found && current.label !== videoLabel) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: found.deviceId }, width: 1920, height: 1080 }, audio: false });
+      }
+    }
+    return stream;
+  }
+
+  async function startCamera(){
+    try {
+      const stream = await getCameraStream();
+      document.getElementById('camera-video').srcObject = stream;
+      statusEl.classList.add('hidden');
+      const videoTrack = stream.getVideoTracks()[0];
+      videoTrack.addEventListener('ended', () => {
+        statusEl.textContent = '⚠️ Camera disconnected';
+        statusEl.classList.remove('hidden');
+        reportToEngine('Camera disconnected (track ended)');
+      });
+      // the mode actually negotiated, so a silent downgrade (a capture card
+      // opened at 640×480) is visible before the match starts
+      try {
+        const st = videoTrack.getSettings ? videoTrack.getSettings() : {};
+        fetch(`${STREAM_ENGINE_URL}/capture-window/camera-info`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+          body: JSON.stringify({ room: match, label: videoTrack.label || null, width: st.width || null, height: st.height || null,
+            frameRate: st.frameRate ? Math.round(st.frameRate) : null, requestedWidth: 1920, requestedHeight: 1080 })
+        }).catch(() => {});
+      } catch (e) { /* getSettings unsupported */ }
+      if (videoTrack.muted) { statusEl.textContent = '⚠️ No video signal from camera/capture card'; statusEl.classList.remove('hidden'); }
+      videoTrack.addEventListener('mute', () => { statusEl.textContent = '⚠️ No video signal from camera/capture card (input connected but not sending frames)'; statusEl.classList.remove('hidden'); });
+      videoTrack.addEventListener('unmute', () => { statusEl.classList.add('hidden'); });
+    } catch (e) {
+      const detail = [e.name, e.message, e.constraint ? `(constraint: ${e.constraint})` : ''].filter(Boolean).join(' — ') || 'unknown error';
+      statusEl.textContent = '⚠️ Could not open camera: ' + detail;
+      statusEl.classList.remove('hidden');
+    }
+  }
+  startCamera();
+</script>
+</body>
+</html>

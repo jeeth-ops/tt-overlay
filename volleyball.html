@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Volleyball · AllSportsLive</title>
+<meta name="description" content="Volleyball tournaments, teams, fixtures and live scoring on AllSportsLive.">
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/volleyball-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<style>
+  .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 22px 0 14px; flex-wrap: wrap; }
+  .hero h1 { font-size: clamp(26px, 4vw, 34px); letter-spacing: -.03em; }
+  .tcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .tcard { text-align: left; display: grid; gap: 10px; padding: 16px; border-radius: var(--r); background: var(--card); box-shadow: var(--shadow), 0 0 0 1px var(--line); transition: transform .3s var(--spring), box-shadow .3s; }
+  .tcard:hover { transform: translateY(-2px); box-shadow: 0 18px 40px -22px rgba(0,0,0,.4), 0 0 0 1px var(--line2); }
+  .tcard h3 { font-size: 17px; letter-spacing: -.01em; }
+  .mrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 14px; }
+  .mteams { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; }
+  .mteams .side { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .mteams .side.b { flex-direction: row-reverse; text-align: right; }
+  .mscore { font-weight: 800; font-size: 18px; min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
+  .mmeta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .mact { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  @media (max-width: 760px) { .mrow { grid-template-columns: minmax(0, 1fr); } .mact { justify-content: flex-start; } }
+  .roster { display: grid; gap: 6px; }
+  .rrow { display: grid; grid-template-columns: 54px minmax(0, 1fr) 150px auto auto auto 32px; gap: 6px; align-items: center; }
+  .rrow .input { height: 36px; border-radius: 10px; }
+  .rrow .tog { height: 32px; min-width: 34px; border-radius: 9px; background: var(--fill); font-weight: 700; font-size: 12.5px; }
+  .rrow .tog[aria-pressed="true"] { background: var(--blue); color: #fff; }
+  @media (max-width: 640px) { .rrow { grid-template-columns: 48px minmax(0, 1fr) auto auto auto 28px; } .rrow select { display: none; } }
+  .logo-pick { width: 72px; height: 72px; border-radius: 18px; background: var(--fill) center/contain no-repeat; display: grid; place-items: center; font-size: 26px; cursor: pointer; flex: none; border: 2px dashed var(--line2); }
+  .pick-list { max-height: 280px; overflow: auto; }
+  .gate { max-width: 520px; margin: 40px auto; text-align: center; }
+  .gate .ball { font-size: 46px; }
+  .ruleschip { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .group-box { padding: 10px; border-radius: 14px; background: var(--card2); box-shadow: 0 0 0 1px var(--line); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/volleyball" style="color:inherit"><span class="ball">🏐</span>Volleyball</a>
+  <nav class="row" id="nav" style="margin-left:8px">
+    <a class="chip" href="#/" data-nav="t">Tournaments</a>
+    <a class="chip" href="#/teams" data-nav="teams">Teams</a>
+  </nav>
+  <div class="grow"></div>
+  <a class="btn sm ghost" href="/">Home</a>
+  <span id="who" class="row small"></span>
+</header>
+<main class="wrap" id="app" style="padding-bottom:60px"><div class="skel" style="height:120px;margin-top:24px"></div></main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/volleyball-common.js"></script>
+<script src="/volleyball-engine.js"></script>
+<script src="/volleyball-standings.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, api, toast } = VB;
+  const E = window.VolleyballEngine, S = window.VolleyballStandings;
+  const app = $('#app');
+  let me = null, mine = { tournaments: [], teams: [] }, config = null;
+
+  /* ------------------------------------------------ sign-in gate */
+  async function boot() {
+    const [user, cfg] = await Promise.all([VB.authReady, fetch('/api/volleyball/config').then((r) => r.json()).catch(() => null)]);
+    config = cfg;
+    renderWho(user);
+    if (!user) return gate('Sign in to manage volleyball', 'Tournaments, teams, fixtures and live scoring are for authorised AllSportsLive accounts. Anyone can follow public tournaments.');
+    const r = await api('GET', '/api/volleyball/mine');
+    if (r.status === 403) return gate('This account cannot manage tournaments', `${user.email} is not one of the authorised AllSportsLive creator accounts. Public tournaments are below.`, true);
+    if (!r.ok) return gate('Could not load your volleyball data', (r.json && r.json.error) || 'Try again in a moment.', true);
+    me = r.json.user; mine = r.json;
+    route();
+  }
+  function renderWho(user) {
+    $('#who').innerHTML = user
+      ? `<span class="muted ellipsis" style="max-width:220px">${esc(user.email)}</span><button class="btn sm" id="so">Sign out</button>`
+      : `<button class="btn sm primary" id="si">Sign in</button>`;
+    const si = $('#si'), so = $('#so');
+    if (si) si.onclick = () => VB.signIn();
+    if (so) so.onclick = () => VB.signOut().then(() => location.reload());
+  }
+  VB.on('auth', (u) => { renderWho(u); if (u && !me) boot(); });
+  async function gate(title, text, signedIn) {
+    $('#nav').classList.add('hide');
+    app.innerHTML = `<div class="gate card"><div class="ball">🏐</div><h2 style="margin:8px 0">${esc(title)}</h2><p class="muted">${esc(text)}</p>
+      ${signedIn ? '' : '<div class="row" style="justify-content:center;margin-top:16px"><button class="btn primary" id="gsi">Sign in with Google</button></div>'}</div>
+      <div class="section-title">Public volleyball tournaments</div><div id="publist" class="tcards"><div class="skel" style="height:110px"></div></div>`;
+    if ($('#gsi')) $('#gsi').onclick = () => VB.signIn();
+    const p = await fetch('/api/volleyball/public/tournaments').then((r) => r.json()).catch(() => ({ tournaments: [] }));
+    $('#publist').innerHTML = (p.tournaments || []).map((t) => `<a class="tcard" href="${esc(t.url)}"><div class="row">${t.logo ? `<span class="logo"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo">🏐</span>'}<div class="grow"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small ellipsis">${esc([t.venue, t.city].filter(Boolean).join(' · '))}</div></div>${statusBadge(t.status)}</div></a>`).join('')
+      || '<div class="empty"><b>No public tournaments yet</b></div>';
+  }
+  function statusBadge(s) {
+    return s === 'live' ? '<span class="badge live">LIVE</span>' : s === 'completed' ? '<span class="badge done">Completed</span>' : s === 'ongoing' ? '<span class="badge warn">Ongoing</span>' : '<span class="badge">Upcoming</span>';
+  }
+
+  /* ------------------------------------------------ routing */
+  window.addEventListener('hashchange', () => { if (me) route(); });
+  function route() {
+    $('#nav').classList.remove('hide');
+    const h = location.hash.replace(/^#\/?/, '');
+    $$('[data-nav]').forEach((a) => a.classList.toggle('on', (h.startsWith('teams') ? 'teams' : 't') === a.dataset.nav));
+    if (h.startsWith('teams')) return viewTeams();
+    const m = /^t\/([\w-]+)/.exec(h);
+    if (m) return viewTournament(m[1]);
+    return viewTournaments();
+  }
+  async function refreshMine() { const r = await api('GET', '/api/volleyball/mine'); if (r.ok) mine = r.json; }
+
+  /* ------------------------------------------------ tournaments list */
+  function viewTournaments() {
+    const list = mine.tournaments.filter((t) => !t.archived);
+    app.innerHTML = `<div class="hero"><div><div class="muted small">Sports → Volleyball</div><h1>Tournaments</h1></div>
+      <div class="row"><button class="btn" id="newteam">New team</button><button class="btn primary" id="newt">New tournament</button></div></div>
+      ${mine.teams.length ? '' : '<div class="banner info" style="margin-bottom:14px">Start by creating the teams (logo, colours, players) — then a tournament that uses them.</div>'}
+      <div class="tcards">${list.map(tcard).join('') || '<div class="empty card"><b>No tournaments yet</b>Create your first volleyball tournament.</div>'}</div>
+      ${mine.tournaments.some((t) => t.archived) ? `<div class="section-title">Archived</div><div class="tcards">${mine.tournaments.filter((t) => t.archived).map(tcard).join('')}</div>` : ''}`;
+    $('#newt').onclick = () => editTournament(null);
+    $('#newteam').onclick = () => editTeam(null);
+  }
+  function tcard(t) {
+    const dates = [t.startDate, t.endDate].filter(Boolean).join(' → ');
+    return `<a class="tcard" href="#/t/${esc(t.tournamentId)}"><div class="row">${t.logo ? `<span class="logo"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo">🏐</span>'}
+      <div class="grow"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small ellipsis">${esc([t.venue, t.city].filter(Boolean).join(' · ') || 'Venue not set')}</div></div></div>
+      <div class="row wrapr small"><span class="badge">${(t.teamIds || []).length} teams</span>${statusBadge(t.status)}<span class="badge ${t.visibility === 'private' ? 'lock' : ''}">${t.visibility === 'private' ? 'Private' : 'Public'}</span>${dates ? `<span class="muted tiny">${esc(dates)}</span>` : ''}</div></a>`;
+  }
+
+  /* ------------------------------------------------ tournament editor */
+  const PRESETS = {
+    fivb: { label: 'FIVB · best of 5', rules: {} },
+    bo3: { label: 'Best of 3 (25, decider 15)', rules: { bestOf: 3 } },
+    custom: { label: 'Custom', rules: null }
+  };
+  function presetOf(rules) {
+    const r = E.normalizeRules(rules);
+    if (r.official) return 'fivb';
+    if (JSON.stringify(r.custom) === '["bestOf"]' && r.bestOf === 3) return 'bo3';
+    return 'custom';
+  }
+  function editTournament(t) {
+    const isNew = !t;
+    t = t || { name: '', visibility: '', format: { type: 'league', groups: [], double: false, thirdPlace: false, qualifiersPerGroup: 2 }, rules: E.normalizeRules({}), pointsPolicy: { key: '3-2-1-0' }, tiebreakers: S.DEFAULT_TIEBREAKERS, teamIds: [] };
+    const locked = !!t.rulesLocked;
+    let logo, rules = Object.assign({}, t.rules), format = JSON.parse(JSON.stringify(t.format || { type: 'league', groups: [] }));
+    let teamIds = (t.teamIds || []).slice(), policy = t.pointsPolicy && t.pointsPolicy.key ? t.pointsPolicy : { key: '3-2-1-0' };
+    const sh = VB.sheet(`<h3>${isNew ? 'New tournament' : 'Edit tournament'}</h3>
+      <div class="stack" style="margin-top:14px">
+        <div class="row" style="align-items:flex-start;gap:14px">
+          <label class="logo-pick" id="tlogo" title="Tournament logo" style="${t.logo ? `background-image:url('${esc(t.logo)}');border-style:solid` : ''}">${t.logo ? '' : '🏆'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+          <div class="grow stack" style="gap:10px">
+            <label class="field"><span>Tournament name</span><input class="input" id="tname" maxlength="80" value="${esc(t.name)}" autofocus></label>
+            <div class="grid2"><label class="field"><span>Venue</span><input class="input" id="tvenue" maxlength="120" value="${esc(t.venue || '')}"></label><label class="field"><span>City</span><input class="input" id="tcity" maxlength="60" value="${esc(t.city || '')}"></label></div>
+          </div>
+        </div>
+        <div class="grid3"><label class="field"><span>Starts</span><input class="input" type="date" id="tstart" value="${esc(t.startDate || '')}"></label><label class="field"><span>Ends</span><input class="input" type="date" id="tend" value="${esc(t.endDate || '')}"></label><label class="field"><span>Organiser</span><input class="input" id="torg" maxlength="80" value="${esc(t.organizer || '')}"></label></div>
+        <label class="field"><span>Description</span><textarea class="input" id="tdesc" maxlength="600">${esc(t.description || '')}</textarea></label>
+        <div class="row wrapr"><span class="small muted" style="min-width:90px">Visibility</span><div class="seg" id="tvis"><button data-v="public">Public</button><button data-v="private">Private</button></div>
+          <span class="tiny muted">Private: only you (and the site owner) can see it.</span></div>
+        <div class="section-title" style="margin:6px 0 0">Teams</div>
+        <div id="tteams" class="row wrapr"></div>
+        <div class="section-title" style="margin:6px 0 0">Format</div>
+        <div class="row wrapr"><div class="seg" id="tfmt"><button data-v="league">League</button><button data-v="groups">Groups</button><button data-v="knockout">Knockout</button><button data-v="groups_knockout">Groups → Knockout</button></div></div>
+        <div id="tfmtx"></div>
+        <div class="section-title" style="margin:6px 0 0">Scoring rules ${locked ? '<span class="badge lock">Fixed — matches have started</span>' : ''}</div>
+        <div class="row wrapr"><div class="seg" id="tpre">${Object.keys(PRESETS).map((k) => `<button data-v="${k}" ${locked ? 'disabled' : ''}>${PRESETS[k].label}</button>`).join('')}</div><span id="trulesbadge"></span></div>
+        <div id="trules"></div>
+        <div class="section-title" style="margin:6px 0 0">Standings</div>
+        <div class="grid2"><label class="field"><span>Match points</span><select class="input" id="tpol">${Object.keys(S.POLICIES).map((k) => `<option value="${k}">${esc(S.POLICIES[k].label)}</option>`).join('')}</select></label>
+          <label class="field"><span>Tie-breaks</span><select class="input" id="ttb">${Object.keys(S.TIEBREAK_PRESETS).map((k) => `<option value="${k}">${esc(S.TIEBREAK_PRESETS[k].label)}</option>`).join('')}</select></label></div>
+        <label class="field"><span>Google Drive folder for clips (optional — share it with the site's service account)</span><input class="input" id="tdrive" placeholder="https://drive.google.com/drive/folders/…" value="${esc(t.driveFolderId ? 'https://drive.google.com/drive/folders/' + t.driveFolderId : '')}"></label>
+      </div>
+      <div class="foot">${!isNew ? `<button class="btn danger" id="tarch">${t.archived ? 'Restore' : 'Archive'}</button><span class="grow"></span>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" id="tsave">${isNew ? 'Create tournament' : 'Save'}</button></div>`, { wide: true, sticky: true });
+    const el = sh.el;
+    const vis = t.visibility || (me && me.isOwner ? 'private' : 'public');
+    const segSet = (id, v) => $$(`#${id} button`, el).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+    segSet('tvis', vis);
+    let visibility = vis;
+    $$('#tvis button', el).forEach((b) => b.onclick = () => { visibility = b.dataset.v; segSet('tvis', visibility); });
+    $('#tpol', el).value = policy.key && S.POLICIES[policy.key] ? policy.key : '3-2-1-0';
+    $('#ttb', el).value = JSON.stringify(t.tiebreakers) === JSON.stringify(S.TIEBREAK_PRESETS.points.list) ? 'points' : 'fivb';
+    $('#tlogo input', el).onchange = async (e) => {
+      try { logo = await VB.readLogo(e.target.files[0]); const lp = $('#tlogo', el); lp.style.backgroundImage = `url('${logo}')`; lp.style.borderStyle = 'solid'; lp.firstChild.nodeType === 3 && (lp.firstChild.textContent = ''); }
+      catch (err) { toast(err.message, 'err'); }
+    };
+    const drawTeams = () => {
+      $('#tteams', el).innerHTML = mine.teams.map((tm) => `<button class="chip ${teamIds.includes(tm.teamId) ? 'on' : ''}" data-tm="${esc(tm.teamId)}">${esc(tm.name)}</button>`).join('')
+        + `<button class="chip" id="addteam">＋ New team</button>`;
+      $$('[data-tm]', el).forEach((b) => b.onclick = () => { const id = b.dataset.tm; teamIds = teamIds.includes(id) ? teamIds.filter((x) => x !== id) : teamIds.concat(id); drawTeams(); drawFmt(); });
+      $('#addteam', el).onclick = () => editTeam(null, async (tm) => { teamIds.push(tm.teamId); drawTeams(); drawFmt(); });
+    };
+    const drawFmt = () => {
+      segSet('tfmt', format.type);
+      const groups = format.type === 'groups' || format.type === 'groups_knockout';
+      let h = '<div class="row wrapr" style="margin-top:8px">';
+      if (format.type !== 'knockout') h += `<label class="row small"><button class="switch" id="fdbl" role="switch" aria-checked="${!!format.double}"></button>Double round robin (home and away)</label>`;
+      if (format.type !== 'league' && format.type !== 'groups') h += `<label class="row small"><button class="switch" id="f3rd" role="switch" aria-checked="${!!format.thirdPlace}"></button>Third-place match</label>`;
+      if (format.type === 'groups_knockout') h += `<label class="row small">Teams through per group <input class="input" id="fq" type="number" min="1" max="8" style="width:70px;height:34px" value="${format.qualifiersPerGroup || 2}"></label>`;
+      h += '</div>';
+      if (groups) {
+        const n = Math.max(2, (format.groups || []).length || 2);
+        h += `<div class="row" style="margin-top:10px"><span class="small muted">Groups</span><input class="input" id="fgn" type="number" min="2" max="8" style="width:70px;height:34px" value="${n}"></div>
+          <div class="grid2" style="margin-top:10px">${Array.from({ length: n }, (_, i) => { const g = (format.groups || [])[i] || { name: String.fromCharCode(65 + i), teamIds: [] }; return `<div class="group-box"><b>Group ${esc(g.name)}</b><div class="row wrapr" style="margin-top:8px">${teamIds.map((id) => { const tm = mine.teams.find((x) => x.teamId === id); const inG = (format.groups || []).findIndex((gg) => (gg.teamIds || []).includes(id)); return `<button class="chip ${inG === i ? 'on' : ''}" data-g="${i}" data-gt="${esc(id)}">${esc(tm ? tm.name : id)}</button>`; }).join('')}</div></div>`; }).join('')}</div>`;
+      }
+      $('#tfmtx', el).innerHTML = h;
+      const fd = $('#fdbl', el), f3 = $('#f3rd', el), fq = $('#fq', el), fgn = $('#fgn', el);
+      if (fd) fd.onclick = () => { format.double = !format.double; drawFmt(); };
+      if (f3) f3.onclick = () => { format.thirdPlace = !format.thirdPlace; drawFmt(); };
+      if (fq) fq.onchange = () => { format.qualifiersPerGroup = Number(fq.value) || 2; };
+      if (fgn) fgn.onchange = () => { const n = Math.max(2, Math.min(8, Number(fgn.value) || 2)); format.groups = Array.from({ length: n }, (_, i) => (format.groups || [])[i] || { name: String.fromCharCode(65 + i), teamIds: [] }); drawFmt(); };
+      $$('[data-g]', el).forEach((b) => b.onclick = () => {
+        const gi = Number(b.dataset.g), id = b.dataset.gt;
+        const n = Math.max(2, (format.groups || []).length || 2);
+        format.groups = Array.from({ length: n }, (_, i) => (format.groups || [])[i] || { name: String.fromCharCode(65 + i), teamIds: [] });
+        format.groups.forEach((g, i) => { g.teamIds = (g.teamIds || []).filter((x) => x !== id); if (i === gi) g.teamIds.push(id); });
+        drawFmt();
+      });
+    };
+    $$('#tfmt button', el).forEach((b) => b.onclick = () => { format.type = b.dataset.v; drawFmt(); });
+    const drawRules = () => {
+      const p = presetOf(rules), n = E.normalizeRules(rules);
+      segSet('tpre', p);
+      $('#trulesbadge', el).innerHTML = n.official ? '<span class="badge done">Official FIVB rules</span>' : `<span class="badge warn">Competition rules: ${esc(n.custom.join(', '))}</span>`;
+      if (p !== 'custom') { $('#trules', el).innerHTML = `<p class="muted small" style="margin-top:8px">Best of ${n.bestOf} · sets to ${n.setPoints}${n.bestOf >= 3 ? `, deciding set to ${n.decidingSetPoints}` : ''} · win by ${n.winBy}, no ceiling · ${n.timeoutsPerSet} time-outs and ${n.substitutionsPerSet} substitutions per set · liberos ${n.liberoEnabled ? 'on' : 'off'} · deciding-set courts change at ${n.decidingSetSwitchAt || '—'}</p>`; return; }
+      const f = (k, label, min, max) => `<label class="field"><span>${label}</span><input class="input" type="number" data-r="${k}" min="${min}" max="${max}" value="${n[k] == null ? '' : n[k]}" ${locked ? 'disabled' : ''}></label>`;
+      $('#trules', el).innerHTML = `<div class="grid3" style="margin-top:10px">${f('bestOf', 'Best of (sets)', 1, 7)}${f('setPoints', 'Set points', 5, 99)}${f('decidingSetPoints', 'Deciding set points', 5, 99)}${f('winBy', 'Win by', 1, 5)}${f('pointCap', 'Point cap (blank = none)', 0, 199)}${f('decidingSetSwitchAt', 'Deciding set: change courts at', 0, 98)}${f('timeoutsPerSet', 'Time-outs per set', 0, 6)}${f('timeoutSeconds', 'Time-out seconds', 10, 180)}${f('substitutionsPerSet', 'Substitutions per set', 0, 18)}${f('maxLiberos', 'Liberos per team', 0, 2)}</div>`;
+      $$('[data-r]', el).forEach((i) => i.onchange = () => { rules[i.dataset.r] = i.value === '' ? null : Number(i.value); drawRules(); });
+    };
+    $$('#tpre button', el).forEach((b) => b.onclick = () => { if (b.dataset.v !== 'custom') rules = Object.assign({}, PRESETS[b.dataset.v].rules); else rules = Object.assign({}, E.normalizeRules(rules), { ruleset: 'Custom' }); if (b.dataset.v === 'custom') rules.bestOf = rules.bestOf; drawRules(); if (b.dataset.v === 'custom' && E.normalizeRules(rules).official) { $('#trules', el).innerHTML = ''; presetCustom(); } });
+    function presetCustom() {
+      // show the fields even while they still equal the FIVB defaults
+      const n = E.normalizeRules(rules);
+      segSet('tpre', 'custom');
+      const f = (k, label, min, max) => `<label class="field"><span>${label}</span><input class="input" type="number" data-r="${k}" min="${min}" max="${max}" value="${n[k] == null ? '' : n[k]}"></label>`;
+      $('#trules', el).innerHTML = `<div class="grid3" style="margin-top:10px">${f('bestOf', 'Best of (sets)', 1, 7)}${f('setPoints', 'Set points', 5, 99)}${f('decidingSetPoints', 'Deciding set points', 5, 99)}${f('winBy', 'Win by', 1, 5)}${f('pointCap', 'Point cap (blank = none)', 0, 199)}${f('decidingSetSwitchAt', 'Deciding set: change courts at', 0, 98)}${f('timeoutsPerSet', 'Time-outs per set', 0, 6)}${f('timeoutSeconds', 'Time-out seconds', 10, 180)}${f('substitutionsPerSet', 'Substitutions per set', 0, 18)}${f('maxLiberos', 'Liberos per team', 0, 2)}</div>`;
+      $$('[data-r]', el).forEach((i) => i.onchange = () => { rules[i.dataset.r] = i.value === '' ? null : Number(i.value); drawRules(); });
+    }
+    drawTeams(); drawFmt(); drawRules();
+    if ($('#tarch', el)) $('#tarch', el).onclick = async () => {
+      const r = await api('PUT', `/api/volleyball/tournaments/${t.tournamentId}`, { archived: !t.archived });
+      if (!r.ok) return toast(r.json.error || 'Could not save', 'err');
+      sh.close(); await refreshMine(); location.hash = '#/';
+    };
+    $('#tsave', el).onclick = async () => {
+      const name = $('#tname', el).value.trim();
+      if (!name) { $('#tname', el).focus(); return toast('Give the tournament a name', 'err'); }
+      if (format.type === 'groups' || format.type === 'groups_knockout') {
+        const assigned = new Set((format.groups || []).flatMap((g) => g.teamIds || []));
+        if (teamIds.some((id) => !assigned.has(id))) return toast('Put every team in a group', 'err');
+      }
+      const body = {
+        name, venue: $('#tvenue', el).value, city: $('#tcity', el).value, startDate: $('#tstart', el).value, endDate: $('#tend', el).value,
+        organizer: $('#torg', el).value, description: $('#tdesc', el).value, visibility, teamIds, format,
+        pointsPolicy: $('#tpol', el).value, tiebreakers: S.TIEBREAK_PRESETS[$('#ttb', el).value].list, driveFolder: $('#tdrive', el).value
+      };
+      if (!locked) body.rules = rules;
+      if (logo !== undefined) body.logo = logo;
+      const btn = $('#tsave', el); btn.disabled = true;
+      const r = isNew ? await api('POST', '/api/volleyball/tournaments', body) : await api('PUT', `/api/volleyball/tournaments/${t.tournamentId}`, body);
+      btn.disabled = false;
+      if (!r.ok) return toast(r.json.error || 'Could not save', 'err');
+      sh.close(); toast(isNew ? 'Tournament created' : 'Saved');
+      await refreshMine();
+      if (isNew) location.hash = '#/t/' + r.json.tournament.tournamentId; else route();
+    };
+  }
+
+  /* ------------------------------------------------ team editor */
+  function editTeam(team, onSaved) {
+    const isNew = !team;
+    team = team || { name: '', shortName: '', city: '', colors: { primary: '#1f3a8a', secondary: '#0a1136', text: '#ffffff' }, players: [] };
+    let logo, players = (team.players || []).map((p) => Object.assign({}, p));
+    if (isNew && !players.length) for (let i = 1; i <= 12; i++) players.push({ name: '', number: String(i), role: i === 12 ? 'L' : '', libero: i === 12, captain: false, active: true });
+    const sh = VB.sheet(`<h3>${isNew ? 'New team' : 'Edit team'}</h3>
+      <div class="stack" style="margin-top:14px">
+        <div class="row" style="align-items:flex-start;gap:14px">
+          <label class="logo-pick" id="lp" title="Team logo" style="${team.logo ? `background-image:url('${esc(team.logo)}');border-style:solid` : ''}">${team.logo ? '' : '＋'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+          <div class="grow stack" style="gap:10px">
+            <div class="grid2"><label class="field"><span>Team name</span><input class="input" id="nm" maxlength="60" value="${esc(team.name)}" autofocus></label>
+            <div class="grid2"><label class="field"><span>Short (3)</span><input class="input" id="sn" maxlength="4" value="${esc(team.shortName || '')}" style="text-transform:uppercase"></label><label class="field"><span>City</span><input class="input" id="cy" maxlength="60" value="${esc(team.city || '')}"></label></div></div>
+            <div class="row wrapr"><label class="row small">Primary <input type="color" class="swatch" id="c1" value="${esc(team.colors.primary)}"></label><label class="row small">Secondary <input type="color" class="swatch" id="c2" value="${esc(team.colors.secondary)}"></label><label class="row small">Text <input type="color" class="swatch" id="c3" value="${esc(team.colors.text)}"></label>
+            ${team.logo ? '<button class="btn sm" id="rmlogo">Remove logo</button>' : ''}</div>
+          </div>
+        </div>
+        <div class="row"><div class="section-title grow" style="margin:6px 0 0">Players <span class="tiny">(# · name · role · L = libero · C = captain · active)</span></div><button class="btn sm" id="addex">Add existing player</button><button class="btn sm" id="addp">＋ Player</button></div>
+        <div class="roster" id="roster"></div>
+        <p class="tiny muted">A player keeps the same identity (and statistics) through renames and team changes. Removing someone who has played only makes them inactive.</p>
+      </div>
+      <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="tsv">${isNew ? 'Create team' : 'Save team'}</button></div>`, { wide: true, sticky: true });
+    const el = sh.el;
+    const draw = () => {
+      $('#roster', el).innerHTML = players.map((p, i) => `<div class="rrow" data-i="${i}" style="${p.active === false ? 'opacity:.5' : ''}">
+        <input class="input num" data-f="number" maxlength="3" value="${esc(p.number || '')}" placeholder="#" inputmode="numeric">
+        <input class="input" data-f="name" maxlength="60" value="${esc(p.name || '')}" placeholder="Player name">
+        <select class="input" data-f="role"><option value="">Role…</option>${Object.keys(VB.ROLES).map((k) => `<option value="${k}" ${p.role === k ? 'selected' : ''}>${VB.ROLES[k]}</option>`).join('')}</select>
+        <button class="tog" data-t="libero" aria-pressed="${!!p.libero}" title="Libero">L</button>
+        <button class="tog" data-t="captain" aria-pressed="${!!p.captain}" title="Captain">C</button>
+        <button class="tog" data-t="active" aria-pressed="${p.active !== false}" title="Active in the roster">✓</button>
+        <button class="icon-btn" data-del title="Remove" style="width:32px;height:32px">×</button></div>`).join('') || '<div class="empty small">No players yet</div>';
+      $$('.rrow', el).forEach((row) => {
+        const i = Number(row.dataset.i);
+        $$('[data-f]', row).forEach((inp) => inp.oninput = inp.onchange = () => { players[i][inp.dataset.f] = inp.dataset.f === 'number' ? inp.value.replace(/\D/g, '') : inp.value; if (inp.dataset.f === 'role' && inp.value === 'L') { players[i].libero = true; draw(); } });
+        $$('[data-t]', row).forEach((b) => b.onclick = () => {
+          const k = b.dataset.t;
+          if (k === 'captain') { const v = !players[i].captain; players.forEach((p) => { p.captain = false; }); players[i].captain = v; }
+          else if (k === 'active') players[i].active = players[i].active === false;
+          else players[i][k] = !players[i][k];
+          draw();
+        });
+        $('[data-del]', row).onclick = () => { players.splice(i, 1); draw(); };
+      });
+    };
+    draw();
+    $('#addp', el).onclick = () => { const used = new Set(players.map((p) => p.number)); let n = 1; while (used.has(String(n))) n++; players.push({ name: '', number: String(n), role: '', libero: false, captain: false, active: true }); draw(); const last = $$('.rrow', el).pop(); if (last) last.querySelector('[data-f="name"]').focus(); };
+    $('#addex', el).onclick = async () => {
+      const r = await api('GET', '/api/volleyball/players/search?q=');
+      if (!r.ok) return toast('Could not load your players', 'err');
+      const have = new Set(players.map((p) => p.playerId).filter(Boolean));
+      const list = r.json.players.filter((p) => !have.has(p.playerId));
+      const s2 = VB.sheet(`<h3>Add an existing player</h3><input class="input" id="q" placeholder="Search by name" style="margin:12px 0" autofocus><div class="list pick-list" id="pl"></div><div class="foot"><button class="btn" data-close>Done</button></div>`);
+      const fill = (q) => { $('#pl', s2.el).innerHTML = list.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())).map((p) => `<button class="li" data-p="${esc(p.playerId)}">${esc(p.name)}</button>`).join('') || '<div class="empty small">Nobody found</div>'; $$('[data-p]', s2.el).forEach((b) => b.onclick = () => { const p = list.find((x) => x.playerId === b.dataset.p); players.push({ playerId: p.playerId, name: p.name, number: '', role: '', active: true }); b.remove(); draw(); }); };
+      fill('');
+      $('#q', s2.el).oninput = (e) => fill(e.target.value);
+    };
+    $('#lp input', el).onchange = async (e) => { try { logo = await VB.readLogo(e.target.files[0]); const lp = $('#lp', el); lp.style.backgroundImage = `url('${logo}')`; lp.style.borderStyle = 'solid'; lp.childNodes[0].textContent = ''; } catch (err) { toast(err.message, 'err'); } };
+    if ($('#rmlogo', el)) $('#rmlogo', el).onclick = () => { logo = null; const lp = $('#lp', el); lp.style.backgroundImage = ''; lp.style.borderStyle = 'dashed'; };
+    $('#tsv', el).onclick = async () => {
+      const name = $('#nm', el).value.trim();
+      if (!name) return toast('Give the team a name', 'err');
+      const list = players.filter((p) => (p.name || '').trim());
+      const libs = list.filter((p) => p.libero && p.active !== false).length;
+      if (libs > 2) return toast('At most two liberos', 'err');
+      const body = { name, shortName: $('#sn', el).value, city: $('#cy', el).value, colors: { primary: $('#c1', el).value, secondary: $('#c2', el).value, text: $('#c3', el).value }, players: list };
+      if (logo !== undefined) body.logo = logo;
+      const btn = $('#tsv', el); btn.disabled = true;
+      const r = isNew ? await api('POST', '/api/volleyball/teams', body) : await api('PUT', `/api/volleyball/teams/${team.teamId}`, body);
+      btn.disabled = false;
+      if (!r.ok) return toast(r.json.error || 'Could not save the team', 'err');
+      sh.close(); toast(isNew ? 'Team created' : 'Team saved');
+      await refreshMine();
+      if (onSaved) onSaved(r.json.team); else route();
+    };
+  }
+
+  /* ------------------------------------------------ teams list */
+  function viewTeams() {
+    app.innerHTML = `<div class="hero"><div><div class="muted small">Sports → Volleyball</div><h1>Teams</h1></div><button class="btn primary" id="nt">New team</button></div>
+      <div class="tcards">${mine.teams.map((t) => `<button class="tcard" data-team="${esc(t.teamId)}"><div class="row">${VB.logoHtml(t)}<div class="grow"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small">${t.players.filter((p) => p.active !== false).length} players · ${t.players.filter((p) => p.libero && p.active !== false).length} libero(s)</div></div>
+        <span style="width:22px;height:22px;border-radius:7px;background:${esc(VB.teamColor(t))};box-shadow:inset 0 0 0 1px var(--line2)"></span></div></button>`).join('') || '<div class="empty card"><b>No teams yet</b>Create a team with its logo, colours and players.</div>'}</div>`;
+    $('#nt').onclick = () => editTeam(null);
+    $$('[data-team]').forEach((b) => b.onclick = () => editTeam(mine.teams.find((t) => t.teamId === b.dataset.team)));
+  }
+
+  /* ------------------------------------------------ one tournament */
+  let tState = null;
+  async function viewTournament(tid) {
+    if (!tState || tState.tournament.tournamentId !== tid) app.innerHTML = '<div class="skel" style="height:140px;margin-top:24px"></div>';
+    const r = await api('GET', `/api/volleyball/tournaments/${tid}`);
+    if (!r.ok) { app.innerHTML = `<div class="empty card" style="margin-top:24px"><b>Tournament not found</b><a href="#/">Back to tournaments</a></div>`; return; }
+    tState = r.json;
+    const t = tState.tournament, teams = tState.teams;
+    const byTeam = new Map(teams.map((x) => [x.teamId, x]));
+    const ms = tState.matches;
+    const live = ms.filter((m) => m.status === 'live'), up = ms.filter((m) => m.status === 'scheduled'), done = ms.filter((m) => m.status === 'completed' || m.status === 'abandoned');
+    app.innerHTML = `<div class="hero"><div class="row" style="gap:14px">${t.logo ? `<span class="logo lg"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo lg">🏆</span>'}
+        <div><a href="#/" class="small">← Tournaments</a><h1>${esc(t.name)}</h1><div class="muted small">${esc([t.venue, t.city, [t.startDate, t.endDate].filter(Boolean).join(' → ')].filter(Boolean).join(' · '))}</div>
+        <div class="row wrapr" style="margin-top:6px">${statusBadge(t.status)}<span class="badge ${t.visibility === 'private' ? 'lock' : ''}">${t.visibility === 'private' ? 'Private' : 'Public'}</span>${t.rules.official ? '<span class="badge done">FIVB rules</span>' : `<span class="badge warn">Competition rules</span>`}<span class="badge">${esc(fmtFormat(t.format))}</span></div></div></div>
+      <div class="row wrapr"><a class="btn" href="/volleyball/tournament/${esc(t.tournamentId)}" target="_blank" rel="noopener">Public page ↗</a><button class="btn" id="edt">Edit</button></div></div>
+      <div class="card" style="margin-bottom:14px"><div class="row wrapr"><h3 class="grow">Fixtures</h3>
+        ${t.format.type === 'knockout' ? '<button class="btn sm" data-gen="knockout">Generate knockout bracket</button>' : t.format.type === 'groups_knockout' ? '<button class="btn sm" data-gen="groups">Generate group matches</button><button class="btn sm" data-gen="ko-standings">Knockout from standings</button>' : `<button class="btn sm" data-gen="${t.format.type === 'groups' ? 'groups' : 'league'}">Generate ${t.format.double ? 'double ' : ''}round robin</button>`}
+        <button class="btn sm primary" id="addm">＋ Match</button></div>
+        <p class="tiny muted" style="margin-top:6px">Generating again never duplicates a fixture. Teams: ${teams.map((x) => esc(x.name)).join(', ') || '— add teams in Edit'}</p></div>
+      ${section('Live now', live, byTeam)}${section('Upcoming', up, byTeam)}${section('Completed', done, byTeam)}
+      ${standingsHtml(tState.standings)}`;
+    $('#edt').onclick = () => editTournament(Object.assign({}, t, { teamIds: t.teamIds }));
+    $('#addm').onclick = () => editMatch(null);
+    $$('[data-gen]').forEach((b) => b.onclick = () => generate(b.dataset.gen));
+    wireMatchRows();
+  }
+  function fmtFormat(f) { return { league: 'League', groups: 'Groups', knockout: 'Knockout', groups_knockout: 'Groups → Knockout', custom: 'Custom' }[f && f.type] || 'League'; }
+  function section(title, list, byTeam) {
+    if (!list.length) return '';
+    return `<div class="section-title">${esc(title)} · ${list.length}</div><div class="list" style="margin-bottom:6px">${list.map((m) => matchRow(m, byTeam)).join('')}</div>`;
+  }
+  function matchRow(m) {
+    const s = m.summary, res = m.result;
+    const score = m.status === 'completed' && res ? `${res.sets.A} – ${res.sets.B}` : m.status === 'live' && s ? `${s.setsWon.A} – ${s.setsWon.B}` : 'vs';
+    const side = (t, cls) => t ? `<div class="side ${cls}">${VB.logoHtml(t, 'sm')}<b class="ellipsis">${esc(t.name)}</b></div>` : `<div class="side ${cls}"><span class="logo sm">?</span><span class="muted ellipsis">${esc(sourceLabel(m, cls === 'b' ? 'B' : 'A'))}</span></div>`;
+    const stage = [m.stage && m.stage.group ? 'Group ' + m.stage.group : '', m.stage && m.stage.round].filter(Boolean).join(' · ');
+    const ready = m.teamA && m.teamB;
+    return `<div class="mrow" data-m="${esc(m.matchId)}"><div><div class="mteams">${side(m.teamA, 'a')}<div class="mscore">${score}</div>${side(m.teamB, 'b')}</div>
+      <div class="mmeta small muted"><span>#${m.matchNo || ''}</span>${stage ? `<span>${esc(stage)}</span>` : ''}${m.scheduledAt ? `<span>${esc(VB.fmtDate(m.scheduledAt))}</span>` : ''}${m.status === 'live' ? '<span class="badge live">LIVE</span>' : ''}${m.locked ? '<span class="badge lock">🔒 Locked</span>' : ''}
+      ${m.status === 'live' && s ? `<span class="num">Set ${s.set}: ${s.points.A}-${s.points.B}</span>` : ''}${res && res.setScores ? `<span class="num">${res.setScores.map((x) => x.A + '-' + x.B).join(', ')}</span>` : ''}${m.report && m.report.status === 'ready' ? `<a href="${esc(m.report.url)}?key=${esc(m.overlayKey || '')}" target="_blank" rel="noopener">PDF v${m.report.version}</a>` : m.status === 'completed' ? '<span class="badge">PDF: preparing</span>' : ''}</div></div>
+      <div class="mact">${ready ? `<a class="btn sm primary" href="/volleyball-panel?match=${esc(m.matchId)}">${m.status === 'completed' ? 'Review' : m.status === 'live' ? 'Score' : 'Open panel'}</a>
+        <button class="btn sm" data-ov="${esc(m.matchId)}">Overlay</button><a class="btn sm" href="/volleyball-clipper?match=${esc(m.matchId)}">Clipper</a><a class="btn sm" href="/volleyball/match/${esc(m.matchId)}" target="_blank" rel="noopener">Scorecard</a>` : ''}
+        <button class="btn sm" data-edit="${esc(m.matchId)}">Edit</button><button class="btn sm" data-lock="${esc(m.matchId)}">${m.locked ? 'Unlock' : 'Lock'}</button></div></div>`;
+  }
+  function sourceLabel(m, side) {
+    const src = m.source && m.source[side];
+    if (!src) return 'To be decided';
+    const key = src.winnerOf || src.loserOf;
+    const from = tState.matches.find((x) => x.fixtureKey === key);
+    return `${src.winnerOf ? 'Winner' : 'Loser'} of ${from ? '#' + from.matchNo : key}`;
+  }
+  function wireMatchRows() {
+    $$('[data-ov]').forEach((b) => b.onclick = () => overlayLinks(tState.matches.find((m) => m.matchId === b.dataset.ov)));
+    $$('[data-edit]').forEach((b) => b.onclick = () => editMatch(tState.matches.find((m) => m.matchId === b.dataset.edit)));
+    $$('[data-lock]').forEach((b) => b.onclick = async () => {
+      const m = tState.matches.find((x) => x.matchId === b.dataset.lock);
+      let reason = '';
+      if (!m.locked) { reason = await VB.prompt('Lock this match', 'No one can score or edit it until it is unlocked. The public scorecard stays visible.', 'Reason (e.g. not before 6 pm)', 'Lock'); if (reason == null) return; }
+      const r = await api('POST', `/api/volleyball/matches/${m.matchId}/lock`, { locked: !m.locked, reason });
+      if (!r.ok) return toast(r.json.error || 'Could not change the lock', 'err');
+      toast(m.locked ? 'Unlocked' : 'Locked'); viewTournament(tState.tournament.tournamentId);
+    });
+  }
+  function overlayLinks(m) {
+    const base = `${location.origin}/volleyball-overlay?match=${m.matchId}${tState.tournament.visibility === 'private' ? '&key=' + m.overlayKey : ''}`;
+    const items = [['Scoreboard', base], ['Compact scoreboard', base + '&layout=compact'], ['Graphics only (intro, line-ups…)', base + '&layout=graphics']];
+    const s = VB.sheet(`<h3>Overlay links</h3><p class="muted small" style="margin:6px 0 12px">Add as a <b>Browser source</b> in OBS / vMix at 1920 × 1080. The background is transparent.</p>
+      <div class="stack">${items.map(([l, u]) => `<div class="row"><div class="grow"><b class="small">${esc(l)}</b><div class="tiny muted ellipsis">${esc(u)}</div></div><button class="btn sm" data-copy="${esc(u)}">Copy</button><a class="btn sm" href="${esc(u)}" target="_blank" rel="noopener">Open</a></div>`).join('')}</div>
+      <div class="foot"><button class="btn" data-close>Done</button></div>`);
+    $$('[data-copy]', s.el).forEach((b) => b.onclick = () => VB.copy(b.dataset.copy).then((ok) => toast(ok ? 'Copied' : b.dataset.copy)));
+  }
+  async function generate(kind) {
+    const t = tState.tournament;
+    const body = kind === 'ko-standings' ? { kind: 'knockout', fromStandings: true } : { kind };
+    const start = await chooseStart();
+    if (start === false) return;
+    if (start) Object.assign(body, start);
+    const r = await api('POST', `/api/volleyball/tournaments/${t.tournamentId}/fixtures`, body);
+    if (!r.ok) return toast(r.json.error || 'Could not generate fixtures', 'err');
+    toast(`${r.json.created} fixture(s) created${r.json.existing ? `, ${r.json.existing} already there` : ''}`);
+    viewTournament(t.tournamentId);
+  }
+  function chooseStart() {
+    return new Promise((resolve) => {
+      let done = false;
+      const s = VB.sheet(`<h3>Schedule the new fixtures</h3><p class="muted small" style="margin:6px 0 12px">Optional — times can be edited per match later.</p>
+        <div class="grid3"><label class="field"><span>First match</span><input class="input" type="datetime-local" id="st"></label><label class="field"><span>Minutes apart</span><input class="input" type="number" id="gap" value="90" min="0"></label><label class="field"><span>Matches per day</span><input class="input" type="number" id="pd" value="6" min="1"></label></div>
+        <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn" id="nos">No times</button><button class="btn primary" id="go">Generate</button></div>`, { onClose: () => { if (!done) resolve(false); } });
+      $('#nos', s.el).onclick = () => { done = true; resolve(null); s.close(); };
+      $('#go', s.el).onclick = () => { const v = $('#st', s.el).value; done = true; resolve(v ? { startAt: new Date(v).getTime(), gapMinutes: Number($('#gap', s.el).value) || 90, matchesPerDay: Number($('#pd', s.el).value) || 6 } : null); s.close(); };
+    });
+  }
+
+  /* ------------------------------------------------ match editor */
+  function editMatch(m) {
+    const t = tState.tournament, teams = tState.teams;
+    const isNew = !m;
+    m = m || { teamA: null, teamB: null, stage: { type: t.format.type === 'knockout' ? 'knockout' : 'league' }, squads: { A: [], B: [] } };
+    const opts = (sel) => teams.map((x) => `<option value="${esc(x.teamId)}" ${sel === x.teamId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+    const dt = m.scheduledAt ? new Date(m.scheduledAt - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+    const started = m.status && m.status !== 'scheduled';
+    const s = VB.sheet(`<h3>${isNew ? 'New match' : `Match #${m.matchNo}`}</h3>
+      <div class="stack" style="margin-top:14px">
+        <div class="grid2"><label class="field"><span>Home (A)</span><select class="input" id="ta" ${started ? 'disabled' : ''}><option value="">Choose…</option>${opts(m.teamA && m.teamA.teamId)}</select></label>
+        <label class="field"><span>Away (B)</span><select class="input" id="tb" ${started ? 'disabled' : ''}><option value="">Choose…</option>${opts(m.teamB && m.teamB.teamId)}</select></label></div>
+        <div class="grid3"><label class="field"><span>Stage</span><select class="input" id="stg">${['league', 'group', 'knockout', 'friendly'].map((k) => `<option value="${k}" ${m.stage && m.stage.type === k ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></label>
+          <label class="field"><span>Group</span><input class="input" id="grp" maxlength="12" value="${esc((m.stage && m.stage.group) || '')}"></label>
+          <label class="field"><span>Round</span><input class="input" id="rnd" maxlength="40" placeholder="e.g. Semi-final" value="${esc((m.stage && m.stage.round) || '')}"></label></div>
+        <div class="grid2"><label class="field"><span>Date &amp; time</span><input class="input" type="datetime-local" id="when" value="${esc(dt)}"></label><label class="field"><span>Venue</span><input class="input" id="ven" maxlength="120" value="${esc(m.venue || t.venue || '')}"></label></div>
+        <label class="field"><span>Notes</span><input class="input" id="nts" maxlength="400" value="${esc(m.notes || '')}"></label>
+        ${!isNew && m.teamA && m.teamB ? `<div class="section-title" style="margin:6px 0 0">Squads for this match ${started ? '<span class="tiny">(started: players can be added, not removed)</span>' : ''}</div><div class="grid2" id="sq"></div>` : ''}
+      </div>
+      <div class="foot">${!isNew && !started ? '<button class="btn danger" id="del">Delete</button><span class="grow"></span>' : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" id="sv">${isNew ? 'Create match' : 'Save'}</button></div>`, { wide: true, sticky: true });
+    const el = s.el;
+    let squads = { A: (m.squads && m.squads.A || []).map((p) => Object.assign({}, p)), B: (m.squads && m.squads.B || []).map((p) => Object.assign({}, p)) };
+    const drawSquad = () => {
+      if (!$('#sq', el)) return;
+      $('#sq', el).innerHTML = ['A', 'B'].map((side) => {
+        const tm = teams.find((x) => x.teamId === m['team' + side].teamId);
+        const roster = tm ? tm.players.filter((p) => p.active !== false) : [];
+        return `<div class="group-box"><b>${esc(m['team' + side].name)}</b><div class="stack" style="gap:4px;margin-top:8px">${roster.map((p) => {
+          const inS = squads[side].find((x) => x.playerId === p.playerId);
+          return `<div class="row small"><button class="switch" style="transform:scale(.8)" role="switch" aria-checked="${!!inS}" data-sq="${side}|${esc(p.playerId)}"></button><span class="num muted" style="width:24px">#${esc(p.number)}</span><span class="grow ellipsis">${esc(p.name)}</span>
+            ${inS ? `<button class="chip ${inS.libero ? 'on' : ''}" style="height:24px" data-lib="${side}|${esc(p.playerId)}">L</button><button class="chip ${inS.captain ? 'on' : ''}" style="height:24px" data-cap="${side}|${esc(p.playerId)}">C</button>` : ''}</div>`;
+        }).join('') || '<span class="muted small">No players in the roster</span>'}</div></div>`;
+      }).join('');
+      $$('[data-sq]', el).forEach((b) => b.onclick = () => {
+        const [side, id] = b.dataset.sq.split('|');
+        const tm = teams.find((x) => x.teamId === m['team' + side].teamId);
+        const p = tm.players.find((x) => x.playerId === id);
+        if (squads[side].some((x) => x.playerId === id)) squads[side] = squads[side].filter((x) => x.playerId !== id);
+        else squads[side].push({ playerId: id, number: p.number, name: p.name, role: p.role, libero: !!p.libero, captain: !!p.captain });
+        drawSquad();
+      });
+      $$('[data-lib]', el).forEach((b) => b.onclick = () => { const [side, id] = b.dataset.lib.split('|'); const x = squads[side].find((p) => p.playerId === id); x.libero = !x.libero; drawSquad(); });
+      $$('[data-cap]', el).forEach((b) => b.onclick = () => { const [side, id] = b.dataset.cap.split('|'); squads[side].forEach((p) => { p.captain = p.playerId === id ? !p.captain : false; }); drawSquad(); });
+    };
+    drawSquad();
+    if ($('#del', el)) $('#del', el).onclick = async () => {
+      if (!await VB.confirm('Delete this match?', 'Only a match that has not started can be deleted.', 'Delete', true)) return;
+      const r = await api('DELETE', `/api/volleyball/matches/${m.matchId}`);
+      if (!r.ok) return toast(r.json.error || 'Could not delete', 'err');
+      s.close(); toast('Match deleted'); viewTournament(t.tournamentId);
+    };
+    $('#sv', el).onclick = async () => {
+      const body = { stage: { type: $('#stg', el).value, group: $('#grp', el).value, round: $('#rnd', el).value }, venue: $('#ven', el).value, notes: $('#nts', el).value, scheduledAt: $('#when', el).value ? new Date($('#when', el).value).getTime() : null };
+      let r;
+      if (isNew) {
+        body.teamA = $('#ta', el).value; body.teamB = $('#tb', el).value;
+        if (!body.teamA || !body.teamB) return toast('Choose both teams', 'err');
+        if (body.teamA === body.teamB) return toast('Choose two different teams', 'err');
+        r = await api('POST', `/api/volleyball/tournaments/${t.tournamentId}/matches`, body);
+      } else {
+        if (!started) { if ($('#ta', el).value) body.teamA = $('#ta', el).value; if ($('#tb', el).value) body.teamB = $('#tb', el).value; }
+        if ($('#sq', el)) {
+          const libs = (side) => squads[side].filter((p) => p.libero).length;
+          if (libs('A') > 2 || libs('B') > 2) return toast('At most two liberos per team', 'err');
+          body.squads = squads;
+        }
+        r = await api('PUT', `/api/volleyball/matches/${m.matchId}`, body);
+      }
+      if (!r.ok) return toast(r.json.error || 'Could not save', 'err');
+      s.close(); toast(isNew ? 'Match created' : 'Saved'); viewTournament(t.tournamentId);
+    };
+  }
+
+  /* ------------------------------------------------ standings */
+  function standingsHtml(st) {
+    if (!st || !st.groups || !st.groups.length) return '';
+    return st.groups.map((g) => `<div class="section-title">${g.name ? 'Group ' + esc(g.name) : 'Standings'}</div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>Team</th><th class="c">P</th><th class="c">W</th><th class="c">L</th><th class="c">Pts</th><th class="c">Sets</th><th class="c">Set ratio</th><th class="c">Points</th><th class="c">Point ratio</th></tr></thead><tbody>
+      ${g.rows.map((r) => `<tr><td>${r.position}</td><td><div class="row">${VB.logoHtml(r, 'sm')}<b>${esc(r.name)}</b>${r.decidedBy ? `<span class="tiny muted" title="Tie broken by ${esc(S.CRITERIA[r.decidedBy] || r.decidedBy)}">↕ ${esc(S.CRITERIA[r.decidedBy] || r.decidedBy)}</span>` : ''}</div></td><td class="c">${r.played}</td><td class="c">${r.won}</td><td class="c">${r.lost}</td><td class="c"><b>${r.matchPoints}</b></td><td class="c">${r.setsWon}-${r.setsLost}</td><td class="c">${S.fmtRatio(r.setRatio)}</td><td class="c">${r.pointsWon}-${r.pointsLost}</td><td class="c">${S.fmtRatio(r.pointRatio)}</td></tr>`).join('')}
+      </tbody></table></div>`).join('') + `<p class="tiny muted" style="margin-top:6px">${esc(st.policy.label)} · tie-breaks: ${st.tiebreakers.map((k) => esc(S.CRITERIA[k])).join(' → ')}. Only completed matches count.</p>`;
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

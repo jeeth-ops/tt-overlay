@@ -727,6 +727,8 @@ app.use('/api/league/:name/info', express.json({ limit: '3mb' }));
 // than the default 100kb (the photos themselves go up one by one as raw
 // images, see the import router).
 app.use('/api/scorecard-import', express.json({ limit: '2mb' }));
+// 🏐 Volleyball: a team or tournament carries its logo (see volleyball-server.js).
+app.use('/api/volleyball', express.json({ limit: '2mb' }));
 app.use(express.json());
 
 // 👥 Player Helper — phone picks player names for the operator (see player-helper.js).
@@ -13292,6 +13294,33 @@ io.on('connection', async (socket) => {
     });
 
     socket.on('disconnect', () => {});
+});
+
+// ================================================================
+// 🏐 VOLLEYBALL — its own collections, Socket.IO namespace (/volleyball),
+// routes and clip pipeline (see volleyball-server.js). It only borrows
+// the plumbing below; nothing in it reads or writes any cricket data.
+// ================================================================
+const volleyball = require('./volleyball-server')({
+    app, io, express,
+    getDb: () => mongoDb,
+    whenMongoReady: () => whenMongoReady(),
+    auth: {
+        extractIdToken,
+        verifyIdTokenFull,
+        ownerEmail: () => OWNER_EMAIL,
+        isCreatorEmail: (email) => isAuthorizedCreatorEmail(email),
+        isPrivateCreatorEmail: (email) => isPrivateCreatorEmail(email),
+    },
+    r2: () => (r2Client && R2_BUCKET_NAME
+        ? { client: r2Client, bucket: R2_BUCKET_NAME, publicUrl: R2_PUBLIC_URL, PutObjectCommand, GetObjectCommand, DeleteObjectCommand }
+        : null),
+    drive: () => driveClient,
+    clipMedia,
+    ffmpegPath: ffmpegInstallerPath,
+    clipsDir: CLIPS_DIR,
+    rootDir: __dirname,
+    sendHtmlNoCache,
 });
 
 const PORT = process.env.PORT || 3000;
