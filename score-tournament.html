@@ -1431,6 +1431,8 @@ async function showOwnerLockCodes(){
   await authReady;
   if(!isOwner) return;
   showOwnerImportLink();
+  // Owner-only TEAM PERFORMANCE PDF buttons on the Points Table (team-report block at the end of this file).
+  try{ if(window.TeamReport) window.TeamReport.mountButtons(); }catch(e){ console.warn('[team-report] mount failed', e); }
   try{
     if(!ownerLocks || Date.now() - ownerLocksAt > 20000){
       const res = await apiFetch('/api/admin/match-locks', { cache: 'no-store' });
@@ -2861,6 +2863,952 @@ window.addEventListener('load', () => {
   document.addEventListener('visibilitychange', sync, { passive: true });
   sync();
 })();
+</script>
+<script>
+/* =====================================================================
+   TEAM PERFORMANCE PDF  (owner-only)
+   ---------------------------------------------------------------------
+   Builds a multi-page A4 team dossier from the tournament record that
+   the page has ALREADY loaded (tournamentDataCache: matches with
+   teamA/teamB, scoreA/scoreB, winningTeam, battingCard/bowlingCard,
+   pointsTable). Nothing is invented: a figure the record does not hold
+   is printed as "—" / "Not recorded", never as 0.
+
+   Part 1  – pure report builder (no DOM)  -> window.TeamReport.build
+   Part 2  – owner-only UI (button on each Points Table row + modal)
+   ===================================================================== */
+(function (root) {
+'use strict';
+
+/* ------------------------------ constants ------------------------------ */
+var OWNER = 'chhayajeeth@gmail.com';
+var JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+var AUTOTABLE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+
+var NAVY = [14, 30, 62], INK = [28, 35, 51], DIM = [96, 106, 124], FAINT = [150, 158, 172];
+var RULE = [222, 227, 234], SOFT = [243, 245, 249], WHITE = [255, 255, 255];
+var GREEN = [20, 128, 72], RED = [196, 48, 48], AMBER = [176, 122, 16], BLUE = [37, 99, 235];
+var PW = 210, PH = 297, L = 15, R = 195, CW = 180, TOP = 25, BOT = 276;
+
+/* ------------------------------ utilities ------------------------------ */
+var norm = function (s) { return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' '); };
+var num = function (v) { return Number(v) || 0; };
+var known = function (v) { return v !== null && v !== undefined && v !== '' && isFinite(Number(v)); };
+var DASH = '\u2014';
+function clean(s) {
+  return String(s == null ? '' : s)
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+    .replace(/[^\n\x20-\x7E\u00A0-\u00FF\u2013\u2014\u2022\u2026]/g, '?');
+}
+function f1(v) { return v == null || !isFinite(v) ? DASH : v.toFixed(1); }
+function f2(v) { return v == null || !isFinite(v) ? DASH : v.toFixed(2); }
+function oversToBalls(o) {
+  if (o == null || o === '') return null;
+  var m = /^(\d+)(?:\.(\d))?$/.exec(String(o).trim());
+  if (!m) return null;
+  var b = +(m[2] || 0);
+  return b > 5 ? null : (+m[1]) * 6 + b;
+}
+function ballsToOvers(b) { return Math.floor(b / 6) + '.' + (b % 6); }
+function safePart(s) { return String(s || '').trim().replace(/[^A-Za-z0-9\-]+/g, '_').replace(/^_+|_+$/g, ''); }
+function hexRgb(c, fb) {
+  var m = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(String(c || '').trim());
+  if (!m) return fb;
+  var h = m[1].length === 3 ? m[1].replace(/./g, '$&$&') : m[1];
+  return [0, 2, 4].map(function (k) { return parseInt(h.slice(k, k + 2), 16); });
+}
+function darken(rgb, k) { return rgb.map(function (v) { return Math.round(v * k); }); }
+function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
+
+/* ----------------------- match / team helpers (same rules as the page) --------------------- */
+function statusOf(m) {
+  var w = m.winningTeam;
+  if (!w) return 'progress';
+  if (w === 'ABANDONED' || w === 'NR' || w === 'NO_RESULT') return 'abandoned';
+  return 'done';
+}
+function winnerSide(m) {
+  var w = m && m.winningTeam;
+  if (w === 'A' || w === 'B') return w;
+  if (!norm(w)) return null;
+  var nw = norm(w);
+  if (m.teamA && (nw === norm(m.teamA.short) || nw === norm(m.teamA.name))) return 'A';
+  if (m.teamB && (nw === norm(m.teamB.short) || nw === norm(m.teamB.name))) return 'B';
+  return null;
+}
+function sideOfTeam(m, key) {
+  var has = function (t) { return !!t && (norm(t.name) === key || norm(t.short) === key); };
+  var a = has(m.teamA), b = has(m.teamB);
+  return a && !b ? 'A' : b && !a ? 'B' : null;
+}
+function teamName(t) { return (t && (t.name || t.short)) || 'Team'; }
+function teamShort(t) { return (t && (t.short || t.name)) || 'Team'; }
+function hasBatted(sc) {
+  if (!sc) return false;
+  if (sc.overs != null && String(sc.overs) !== '0.0' && String(sc.overs) !== '0' && String(sc.overs) !== '') return true;
+  return num(sc.runs) > 0 || num(sc.wickets) > 0;
+}
+function resultText(m) {
+  var w = m.winningTeam;
+  if (!w) return 'In progress';
+  if (w === 'TIE') return 'Match tied';
+  if (w === 'DRAW') return 'Match drawn';
+  if (w === 'ABANDONED') return 'Match abandoned';
+  if (w === 'NR' || w === 'NO_RESULT') return 'No result';
+  var s = winnerSide(m);
+  if (s && m.superOver && m.superOver.count > 0) return teamShort(s === 'A' ? m.teamA : m.teamB) + ' won the Super Over';
+  return s ? teamShort(s === 'A' ? m.teamA : m.teamB) + ' won' : 'Completed';
+}
+function fmtDate(ts) {
+  if (!ts) return '';
+  var d = new Date(ts);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+var STAGE = { qualifier1: 'Qualifier 1', eliminator: 'Eliminator', qualifier2: 'Qualifier 2', quarter: 'Quarter Final', semi: 'Semi Final', final: 'Final', friendly: 'Friendly' };
+function formatLabel(m) {
+  if (!m || !m.format) return '';
+  if (m.format === 'Custom') { var ov = Math.floor(Number(m.customOvers)); return ov > 0 ? ov + ' overs' : 'Custom'; }
+  return String(m.format);
+}
+var isTest = function (m) { return /test/i.test(String((m && m.format) || '')); };
+function matchKey(m, i) { return String(m.roomId || m.matchId || ('i' + i)); }
+function rowsOf(card, side) { return (card && card[side]) ? card[side].filter(Boolean) : []; }
+function rate(runs, balls) { return balls > 0 ? runs * 6 / balls : null; }
+
+/* ------------------------------ data model ------------------------------ */
+// Every non-upcoming match this team played in (any status), oldest first.
+function teamMatches(data, name) {
+  var key = norm(name), out = [];
+  (data.matches || []).forEach(function (m, i) {
+    if (!m || m.upcoming === true) return;
+    var side = sideOfTeam(m, key);
+    if (!side) return;
+    out.push({ m: m, i: i, side: side, status: statusOf(m), key: matchKey(m, i), t: m.savedAt ? (new Date(m.savedAt).getTime() || 0) : 0 });
+  });
+  out.sort(function (a, b) { return (a.t - b.t) || (a.i - b.i); });
+  out.forEach(function (e, k) {
+    var o = e.side === 'A' ? 'B' : 'A';
+    e.n = k + 1;
+    e.no = (e.m.matchNo != null && e.m.matchNo !== '') ? String(e.m.matchNo) : String(k + 1);
+    e.label = 'M' + e.no;
+    e.team = e.side === 'A' ? e.m.teamA : e.m.teamB;
+    e.opp = o === 'A' ? e.m.teamA : e.m.teamB;
+    e.own = e.side === 'A' ? e.m.scoreA : e.m.scoreB;
+    e.oth = o === 'A' ? e.m.scoreA : e.m.scoreB;
+    e.oSide = o;
+    var w = e.m.winningTeam, ws = winnerSide(e.m);
+    e.outcome = e.status !== 'done' ? 'nr' : w === 'TIE' ? 'tied' : w === 'DRAW' ? 'drawn' : ws ? (ws === e.side ? 'won' : 'lost') : 'unknown';
+  });
+  return out;
+}
+function selectEntries(all, o) {
+  var keys = o && o.matchKeys ? new Set(o.matchKeys) : null;
+  return all.filter(function (e) { return e.status === 'done' && (!keys || keys.has(e.key)); });
+}
+
+function teamStats(sel, all) {
+  var s = { played: sel.length, won: 0, lost: 0, tied: 0, drawn: 0, runsFor: 0, runsAgainst: 0, wktsLost: 0, wktsTaken: 0,
+    inns: 0, high: null, low: null, ballsFaced: 0, runsFacedKnown: 0, ballsBowled: 0, runsBowledKnown: 0, innsBowled: 0 };
+  sel.forEach(function (e) {
+    if (s[e.outcome] !== undefined) s[e.outcome]++;
+    if (hasBatted(e.own)) {
+      var r = num(e.own.runs);
+      s.runsFor += r; s.wktsLost += num(e.own.wickets); s.inns++;
+      s.high = s.high == null ? r : Math.max(s.high, r);
+      s.low = s.low == null ? r : Math.min(s.low, r);
+      var b = oversToBalls(e.own.overs);
+      if (b && !isTest(e.m)) { s.ballsFaced += b; s.runsFacedKnown += r; }
+    }
+    if (hasBatted(e.oth)) {
+      s.runsAgainst += num(e.oth.runs); s.wktsTaken += num(e.oth.wickets); s.innsBowled++;
+      var ob = oversToBalls(e.oth.overs);
+      if (ob && !isTest(e.m)) { s.ballsBowled += ob; s.runsBowledKnown += num(e.oth.runs); }
+    }
+  });
+  s.avgRuns = s.inns ? s.runsFor / s.inns : null;
+  s.runRate = rate(s.runsFacedKnown, s.ballsFaced);
+  s.econ = rate(s.runsBowledKnown, s.ballsBowled);
+  var done = all.filter(function (e) { return e.status === 'done'; });
+  s.allCompleted = done.length;
+  s.allWon = done.filter(function (e) { return e.outcome === 'won'; }).length;
+  s.allLost = done.filter(function (e) { return e.outcome === 'lost'; }).length;
+  s.allTied = done.filter(function (e) { return e.outcome === 'tied' || e.outcome === 'drawn'; }).length;
+  s.winPct = s.allCompleted ? s.allWon * 100 / s.allCompleted : null;
+  return s;
+}
+
+// Players are grouped by the same name key the page's own player view uses
+// (the tournament record carries no player IDs).
+function playerKey(n) { return norm(n) || null; }
+function aggregatePlayers(sel) {
+  var map = new Map();
+  function get(name) {
+    var k = playerKey(name);
+    if (!k) return null;
+    if (!map.has(k)) map.set(k, { key: k, name: String(name).trim(), matches: new Set(), bat: [], bowl: [] });
+    return map.get(k);
+  }
+  sel.forEach(function (e) {
+    rowsOf(e.m.battingCard, e.side).forEach(function (r) {
+      var p = get(r.name); if (!p) return;
+      p.matches.add(e.key);
+      p.bat.push({ e: e, runs: num(r.runs), balls: known(r.balls) ? num(r.balls) : null, fours: num(r.fours), sixes: num(r.sixes), notOut: r.out === false, outKnown: r.out === true || r.out === false });
+    });
+    rowsOf(e.m.bowlingCard, e.side).forEach(function (r) {
+      var p = get(r.name); if (!p) return;
+      p.matches.add(e.key);
+      p.bowl.push({ e: e, balls: num(r.overs) * 6 + num(r.balls), maidens: num(r.maidens), runs: num(r.runs), wkts: num(r.wickets) });
+    });
+  });
+  var list = [];
+  map.forEach(function (p) {
+    var b = { inns: p.bat.length, no: 0, runs: 0, balls: 0, srRuns: 0, fours: 0, sixes: 0, hs: null, hsNo: false, f50: 0, f100: 0 };
+    p.bat.forEach(function (x) {
+      if (x.notOut) b.no++;
+      b.runs += x.runs; b.fours += x.fours; b.sixes += x.sixes;
+      if (x.balls != null) { b.balls += x.balls; b.srRuns += x.runs; }
+      if (b.hs == null || x.runs > b.hs || (x.runs === b.hs && x.notOut)) { b.hs = x.runs; b.hsNo = x.notOut; }
+      if (x.runs >= 100) b.f100++; else if (x.runs >= 50) b.f50++;
+    });
+    b.dismissals = b.inns - b.no;
+    b.avg = b.dismissals > 0 ? b.runs / b.dismissals : null;
+    b.sr = b.balls > 0 ? b.srRuns * 100 / b.balls : null;
+    var w = { inns: p.bowl.length, balls: 0, runs: 0, wkts: 0, maidens: 0, best: null };
+    p.bowl.forEach(function (x) {
+      w.balls += x.balls; w.runs += x.runs; w.wkts += x.wkts; w.maidens += x.maidens;
+      if (!w.best || x.wkts > w.best.wkts || (x.wkts === w.best.wkts && x.runs < w.best.runs)) w.best = x;
+    });
+    w.avg = w.wkts > 0 ? w.runs / w.wkts : null;
+    w.econ = rate(w.runs, w.balls);
+    w.sr = w.wkts > 0 ? w.balls / w.wkts : null;
+    list.push({ key: p.key, name: p.name, matches: p.matches, played: p.matches.size, batRows: p.bat, bowlRows: p.bowl, b: b, w: w });
+  });
+  return list;
+}
+function topBat(rows) {
+  var best = null;
+  rows.forEach(function (r) { if (!best || num(r.runs) > num(best.runs) || (num(r.runs) === num(best.runs) && known(r.balls) && known(best.balls) && num(r.balls) < num(best.balls))) best = r; });
+  return best && num(best.runs) > 0 ? best : null;
+}
+function topBowl(rows) {
+  var best = null;
+  rows.forEach(function (r) { if (!best || num(r.wickets) > num(best.wickets) || (num(r.wickets) === num(best.wickets) && num(r.runs) < num(best.runs))) best = r; });
+  return best && num(best.wickets) > 0 ? best : null;
+}
+function bowlLine(r) { return num(r.wickets) + '/' + num(r.runs) + ' (' + (num(r.overs) + '.' + num(r.balls)) + ' ov)'; }
+function batLine(r) { return num(r.runs) + (r.out === false ? '*' : '') + (known(r.balls) ? ' (' + num(r.balls) + ')' : ''); }
+
+/* ------------------------------ PDF builder ------------------------------ */
+async function build(jsPDF, data, opts) {
+  opts = opts || {};
+  var progress = opts.onProgress || function () {};
+  var teamNameStr = opts.teamName;
+  var all = teamMatches(data, teamNameStr);
+  var sel = selectEntries(all, opts);
+  if (!sel.length) throw new Error('No completed matches are selected for this team.');
+  var full = opts.detail !== 'summary';
+  var tName = opts.tournamentName || data.displayName || 'Tournament';
+  var logos = opts.logos || {};
+  var first = sel[0], me = first.team;
+  var key = norm(teamNameStr);
+  var ptIdx = (data.pointsTable || []).findIndex(function (r) { return norm(r.team) === key; });
+  var ptRow = ptIdx >= 0 ? data.pointsTable[ptIdx] : null;
+  var accent = hexRgb(me && me.color, BLUE);
+  if (accent[0] + accent[1] + accent[2] > 600) accent = BLUE; // a near-white team colour is unreadable as an accent
+  var stats = teamStats(sel, all);
+  var players = aggregatePlayers(sel);
+  var excluded = {
+    live: all.filter(function (e) { return e.status === 'progress'; }).length,
+    abandoned: all.filter(function (e) { return e.status === 'abandoned'; }).length,
+    notSelected: all.filter(function (e) { return e.status === 'done'; }).length - sel.length
+  };
+  var scopeLabel = opts.scopeLabel || (sel.length === stats.allCompleted ? 'All completed matches (' + sel.length + ')' : sel.length + ' of ' + stats.allCompleted + ' completed matches');
+  var generated = (opts.generatedAt ? new Date(opts.generatedAt) : new Date());
+  var generatedStr = generated.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  var doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+  doc.setProperties({ title: clean(tName + ' - ' + teamName(me) + ' Team Performance Report'), subject: 'Team Performance Report', author: 'AllSportsLive', creator: 'AllSportsLive' });
+  var y = TOP;
+
+  /* ---- primitives ---- */
+  function setFont(size, bold, color) { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor.apply(doc, color || INK); }
+  function text(s, x, yy, o) { o = o || {}; setFont(o.size || 9, o.bold, o.color); doc.text(clean(s), x, yy, { align: o.align || 'left', maxWidth: o.maxW }); }
+  function wrap(s, w, size, bold) { setFont(size, bold); return doc.splitTextToSize(clean(s), w); }
+  function ensure(h) { if (y + h > BOT) { doc.addPage(); y = TOP; } }
+  function newPage() { doc.addPage(); y = TOP; }
+  function line(x1, y1, x2, y2, c, w) { doc.setDrawColor.apply(doc, c || RULE); doc.setLineWidth(w || 0.25); doc.line(x1, y1, x2, y2); }
+  function rect(x, yy, w, h, fill, r) { doc.setFillColor.apply(doc, fill); if (r) doc.roundedRect(x, yy, w, h, r, r, 'F'); else doc.rect(x, yy, w, h, 'F'); }
+  function paragraph(s, size, color, w) { var ls = wrap(s, w || CW, size); var lh = size * 0.46; ensure(ls.length * lh + 2); text(ls.join('\n'), L, y + lh * 0.8, { size: size, color: color || INK }); y += ls.length * lh + 2; }
+  function heading(title, sub) {
+    ensure(sub ? 30 : 24);
+    text(title, L, y + 6, { size: 16, bold: true, color: NAVY });
+    rect(L, y + 8.6, 18, 0.9, accent);
+    y += 13;
+    if (sub) { var ls = wrap(sub, CW, 8.5); text(ls.join('\n'), L, y + 3, { size: 8.5, color: DIM }); y += ls.length * 4 + 2; }
+    y += 2;
+  }
+  function subhead(title, note, rowsNeeded) {
+    ensure(rowsNeeded ? Math.min(rowsNeeded * 7.3 + 16, 215) : 34);
+    text(title, L, y + 4, { size: 10.5, bold: true, color: NAVY });
+    if (note) text(note, R, y + 4, { size: 8, color: DIM, align: 'right' });
+    y += 7;
+  }
+  function logo(team, x, yy, size) {
+    var u = logos[norm(teamName(team))];
+    if (u) { try { doc.addImage(u, 'PNG', x, yy, size, size); return; } catch (e) { /* fall through to the initials tile */ } }
+    var c = hexRgb(team && team.color, [70, 84, 110]);
+    rect(x, yy, size, size, c, 2);
+    var t = String((team && team.short) || teamName(team)).replace(/[^A-Za-z0-9 ]/g, '').trim().split(/\s+/).map(function (w) { return w[0]; }).join('').slice(0, 3).toUpperCase() || '?';
+    var lum = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+    text(t, x + size / 2, yy + size / 2 + size * 0.11, { size: size * 0.9, bold: true, color: lum > 0.62 ? INK : WHITE, align: 'center' });
+  }
+  function table(head, body, o) {
+    o = o || {};
+    var widths = o.widths, total = widths ? widths.reduce(function (a, b) { return a + b; }, 0) : 0;
+    var cs = {};
+    (widths || []).forEach(function (w, i) { cs[i] = { cellWidth: w * CW / total, halign: (o.aligns && o.aligns[i]) || 'left' }; });
+    var fs = o.fs || 8.5;
+    doc.autoTable({
+      startY: y, head: head ? [head] : undefined, body: body, foot: o.foot ? [o.foot] : undefined,
+      margin: { left: L, right: PW - R, top: TOP, bottom: PH - BOT },
+      theme: 'plain', tableWidth: CW, rowPageBreak: 'avoid', showHead: 'everyPage',
+      styles: { font: 'helvetica', fontSize: fs, cellPadding: { top: 1.9, bottom: 1.9, left: 1.7, right: 1.7 }, textColor: INK, overflow: 'linebreak', valign: 'middle', lineWidth: 0 },
+      headStyles: { fillColor: NAVY, textColor: WHITE, fontStyle: 'bold', fontSize: fs - 0.5 },
+      footStyles: { fillColor: SOFT, textColor: NAVY, fontStyle: 'bold', fontSize: fs },
+      alternateRowStyles: { fillColor: SOFT },
+      columnStyles: cs,
+      didParseCell: function (d) {
+        d.cell.text = d.cell.text.map(clean);
+        if ((d.section === 'head' || d.section === 'foot') && o.aligns && o.aligns[d.column.index] && !(d.cell.colSpan > 1)) d.cell.styles.halign = o.aligns[d.column.index];
+      }
+    });
+    y = doc.lastAutoTable.finalY + 5;
+  }
+  var cell = function (content, color, bold) { return { content: content, styles: { textColor: color, fontStyle: bold ? 'bold' : 'normal' } }; };
+  var outcomeCell = function (e) {
+    var o = e.outcome;
+    return o === 'won' ? cell('Won', GREEN, true) : o === 'lost' ? cell('Lost', RED, true) : o === 'tied' ? cell('Tied', AMBER, true) : o === 'drawn' ? cell('Drawn', AMBER, true) : cell(DASH, DIM);
+  };
+  var scoreStr = function (sc) { return hasBatted(sc) ? num(sc.runs) + '/' + num(sc.wickets) : 'Did not bat'; };
+  var oversStr = function (sc) { return hasBatted(sc) && sc.overs != null && sc.overs !== '' ? String(sc.overs) : DASH; };
+
+  /* ---- charts (vector, labelled, axes start at zero) ---- */
+  // Axis with 3-5 equal, round steps that always starts at zero.
+  function niceScale(v, forcedMax) {
+    if (forcedMax) { var fs = forcedMax / 5; return { max: forcedMax, n: 5, step: fs }; }
+    if (!(v > 0)) return { max: 4, n: 4, step: 1 };
+    var p = Math.pow(10, Math.floor(Math.log10(v)) - 1), mult = [1, 2, 2.5, 5, 10, 20, 25, 50, 100];
+    for (var i = 0; i < mult.length; i++) { var st = mult[i] * p, n = Math.ceil(v / st - 1e-9); if (n >= 3 && n <= 5) return { max: n * st, n: n, step: st }; if (n < 3 && st * 3 >= v) return { max: 3 * st, n: 3, step: st }; }
+    return { max: Math.ceil(v), n: 4, step: Math.ceil(v) / 4 };
+  }
+  var tickTxt = function (v) { return String(Math.round(v * 100) / 100); };
+  function hbarChart(title, cats, series, o) {
+    o = o || {};
+    var CH = 10, chunks = [];
+    for (var i = 0; i < cats.length; i += CH) chunks.push(cats.slice(i, i + CH).map(function (c, k) { return { cat: c, idx: i + k }; }));
+    chunks.forEach(function (chunk, ci) {
+      var rowH = Math.max(series.length * 4.6 + 3.2, 10);
+      var h = 8 + 6 + chunk.length * rowH + 8;
+      ensure(h + 2);
+      text(title + (chunks.length > 1 ? ' (' + (ci + 1) + '/' + chunks.length + ')' : ''), L, y + 4, { size: 10, bold: true, color: NAVY });
+      var lx = R;
+      for (var s = series.length - 1; s >= 0; s--) {
+        setFont(8, false); var tw = doc.getTextWidth(clean(series[s].name));
+        lx -= tw; text(series[s].name, lx, y + 4, { size: 8, color: DIM }); lx -= 4.2; rect(lx, y + 1.6, 3, 3, series[s].color); lx -= 5;
+      }
+      y += 8;
+      var labelW = 54, valW = 13, x0 = L + labelW, bw = CW - labelW - valW;
+      var max = 0; series.forEach(function (s) { s.values.forEach(function (v) { if (v != null && v > max) max = v; }); });
+      var sc = niceScale(max, o.max); max = sc.max;
+      var top = y, gh = chunk.length * rowH;
+      for (var g = 0; g <= sc.n; g++) {
+        var gx = x0 + bw * g / sc.n;
+        line(gx, top, gx, top + gh, g === 0 ? FAINT : RULE, g === 0 ? 0.35 : 0.2);
+        text(tickTxt(sc.step * g), gx, top + gh + 4, { size: 7.5, color: DIM, align: 'center' });
+      }
+      chunk.forEach(function (c, r) {
+        var ry = top + r * rowH;
+        var ls = wrap(c.cat.label, labelW - 3, 8, true).slice(0, 2);
+        var sub = c.cat.sub ? wrap(c.cat.sub, labelW - 3, 7.2).slice(0, 1) : [];
+        text(ls.join('\n'), L, ry + 3.6, { size: 8, bold: true });
+        if (sub.length) text(sub[0], L, ry + 3.6 + ls.length * 3.6, { size: 7.2, color: DIM });
+        series.forEach(function (s, si) {
+          var v = s.values[c.idx], by = ry + 1.4 + si * 4.6;
+          if (v == null) { text('n/a', x0 + 1, by + 3, { size: 7.5, color: FAINT }); return; }
+          var w = Math.max(v / max * bw, v > 0 ? 0.6 : 0);
+          rect(x0, by, w, 3.8, s.color);
+          text(String(v), x0 + w + 1.5, by + 3, { size: 7.8, bold: true });
+        });
+      });
+      y = top + gh + 8;
+    });
+    y += 2;
+  }
+  function vbarChart(title, labels, values, color, o) {
+    o = o || {};
+    var h = 46; ensure(h + 8);
+    text(title, L, y + 4, { size: 10, bold: true, color: NAVY });
+    if (o.note) text(o.note, R, y + 4, { size: 8, color: DIM, align: 'right' });
+    y += 8;
+    var ax = L + 10, aw = CW - 12, ay = y, ah = h - 16;
+    var sc = niceScale(Math.max.apply(null, values.map(function (v) { return v || 0; }))), max = sc.max;
+    for (var g = 0; g <= sc.n; g++) {
+      var gy = ay + ah - ah * g / sc.n;
+      line(ax, gy, ax + aw, gy, g === 0 ? FAINT : RULE, g === 0 ? 0.35 : 0.2);
+      text(tickTxt(sc.step * g), ax - 1.8, gy + 1, { size: 7.5, color: DIM, align: 'right' });
+    }
+    var slot = aw / values.length, bwid = Math.min(slot * 0.55, 14);
+    values.forEach(function (v, i) {
+      var cx = ax + slot * (i + 0.5);
+      if (v != null) {
+        var bh = v / max * ah;
+        rect(cx - bwid / 2, ay + ah - bh, bwid, Math.max(bh, v > 0 ? 0.5 : 0), color);
+        text(String(v), cx, ay + ah - bh - 1.2, { size: 8, bold: true, align: 'center' });
+      }
+      text(labels[i][0], cx, ay + ah + 4.2, { size: 7.8, bold: true, align: 'center' });
+      if (labels[i][1]) text(labels[i][1], cx, ay + ah + 7.8, { size: 7, color: DIM, align: 'center' });
+    });
+    y = ay + ah + 11;
+  }
+  var catOf = function (e) { return { label: e.label + ' vs ' + teamName(e.opp), sub: [fmtDate(e.m.savedAt), resultText(e.m)].filter(Boolean).join(' \u2022 ') }; };
+
+  /* =============================== COVER =============================== */
+  progress(5, 'Building cover page\u2026');
+  rect(0, 0, PW, 70, NAVY);
+  rect(0, 70, PW, 1.6, accent);
+  text('TEAM PERFORMANCE DOSSIER', L, 20, { size: 9.5, bold: true, color: [150, 175, 225] });
+  var tl = wrap(tName, 150, 22, true).slice(0, 3);
+  text(tl.join('\n'), L, 32, { size: 22, bold: true, color: WHITE });
+  text('Reporting scope: ' + scopeLabel, L, 60, { size: 9.5, color: [200, 212, 235] });
+  logo(me, L, 82, 32);
+  var nl = wrap(teamName(me), 135, 22, true).slice(0, 2);
+  text(nl.join('\n'), L + 38, 93, { size: 22, bold: true, color: NAVY });
+  var sub1 = [];
+  if (ptIdx >= 0) sub1.push('Points table position: ' + (ptIdx + 1) + ' of ' + data.pointsTable.length);
+  if (ptRow && known(ptRow.points)) sub1.push(num(ptRow.points) + ' points');
+  text(sub1.join('   \u2022   ') || 'Tournament team report', L + 38, 93 + nl.length * 9 + 1, { size: 9.5, color: DIM });
+
+  var cards = [];
+  cards.push(['MATCHES', String(stats.played)], ['WON', String(stats.won)], ['LOST', String(stats.lost)], [stats.drawn ? 'TIED / DRAWN' : 'TIED', String(stats.tied + stats.drawn)]);
+  cards.push(['RUNS SCORED', stats.inns ? String(stats.runsFor) : DASH], ['RUNS CONCEDED', stats.innsBowled ? String(stats.runsAgainst) : DASH], ['WICKETS TAKEN', stats.innsBowled ? String(stats.wktsTaken) : DASH], ['WICKETS LOST', stats.inns ? String(stats.wktsLost) : DASH]);
+  var cy = 126, cw = (CW - 15) / 4;
+  text('SELECTED MATCHES', L, cy - 3, { size: 8, bold: true, color: DIM });
+  cards.forEach(function (c, i) {
+    var cx = L + (i % 4) * (cw + 5), ry = cy + Math.floor(i / 4) * 27;
+    rect(cx, ry, cw, 23, SOFT, 2); rect(cx, ry, 1.2, 23, accent);
+    text(c[0], cx + 5, ry + 7, { size: 7.5, bold: true, color: DIM });
+    text(c[1], cx + 5, ry + 18, { size: 18, bold: true, color: NAVY });
+  });
+  var tcards = [];
+  if (ptRow) {
+    tcards.push(['POINTS', known(ptRow.points) ? String(num(ptRow.points)) : DASH], ['NET RUN RATE', known(ptRow.nrr) ? (num(ptRow.nrr) > 0 ? '+' : '') + ptRow.nrr : DASH], ['TABLE POSITION', '#' + (ptIdx + 1)]);
+  }
+  tcards.push(['WIN % (ALL COMPLETED)', stats.winPct == null ? DASH : Math.round(stats.winPct) + '%']);
+  var ty = cy + 2 * 27 + 8;
+  text('TOURNAMENT RECORD (STORED POINTS TABLE)', L, ty - 3, { size: 8, bold: true, color: DIM });
+  tcards.forEach(function (c, i) {
+    var cx = L + i * (cw + 5);
+    rect(cx, ty, cw, 23, SOFT, 2); rect(cx, ty, 1.2, 23, NAVY);
+    text(c[0], cx + 5, ty + 7, { size: 7.5, bold: true, color: DIM });
+    text(c[1], cx + 5, ty + 18, { size: 18, bold: true, color: NAVY });
+  });
+  // factual executive summary
+  var sy = ty + 33;
+  var parts = [];
+  parts.push(teamName(me) + ' completed ' + stats.allCompleted + ' match' + (stats.allCompleted === 1 ? '' : 'es') + ' in ' + tName + ', winning ' + stats.allWon + ' and losing ' + stats.allLost + (stats.allTied ? ' with ' + stats.allTied + ' tied or drawn' : '') + '.');
+  if (stats.allCompleted > 0 && stats.allLost === 0 && stats.allTied === 0) parts.push('The team is unbeaten across all of its completed matches in this tournament.');
+  if (sel.length !== stats.allCompleted) parts.push('This report covers the ' + sel.length + ' selected match' + (sel.length === 1 ? '' : 'es') + ' (' + stats.won + ' won, ' + stats.lost + ' lost).');
+  if (stats.inns) parts.push('In the selected matches the team scored ' + stats.runsFor + ' runs' + (stats.innsBowled ? ' and conceded ' + stats.runsAgainst : '') + (stats.innsBowled ? ', taking ' + stats.wktsTaken + ' wickets' : '') + '.');
+  if (ptIdx >= 0) parts.push('The stored points table lists the team in position ' + (ptIdx + 1) + ' with ' + num(ptRow.points) + ' points.');
+  var sm = wrap(parts.join(' '), CW - 10, 9.5);
+  var sh = sm.length * 4.5 + 14;
+  rect(L, sy, CW, sh, WHITE); doc.setDrawColor.apply(doc, RULE); doc.setLineWidth(0.3); doc.roundedRect(L, sy, CW, sh, 2, 2, 'S');
+  text('EXECUTIVE SUMMARY', L + 5, sy + 7, { size: 8, bold: true, color: DIM });
+  text(sm.join('\n'), L + 5, sy + 13, { size: 9.5 });
+  text('Prepared ' + generatedStr + ' from the scorecards recorded on AllSportsLive.', L, 266, { size: 8, color: FAINT });
+
+  /* ============================ TEAM OVERVIEW ============================ */
+  await tick(); progress(14, 'Team overview\u2026');
+  newPage();
+  heading('Team overview', 'Figures below are calculated from the ' + sel.length + ' selected completed match' + (sel.length === 1 ? '' : 'es') + '. Items the record does not hold are shown as ' + DASH + '.');
+  var kv = [];
+  var add = function (a, b) { kv.push([a, b]); };
+  add('Matches played', String(stats.played)); add('Won / Lost', stats.won + ' / ' + stats.lost);
+  add('Tied / Drawn', stats.tied + ' / ' + stats.drawn); add('Win % (all completed matches)', stats.winPct == null ? DASH : f1(stats.winPct) + '%');
+  add('Total runs scored', stats.inns ? String(stats.runsFor) : DASH); add('Average per innings', f1(stats.avgRuns));
+  add('Highest team total', stats.high == null ? DASH : String(stats.high)); add('Lowest team total', stats.low == null || stats.inns < 2 ? DASH : String(stats.low));
+  add('Runs conceded', stats.innsBowled ? String(stats.runsAgainst) : DASH); add('Wickets taken', stats.innsBowled ? String(stats.wktsTaken) : DASH);
+  add('Wickets lost', stats.inns ? String(stats.wktsLost) : DASH); add('Overs faced', stats.ballsFaced ? ballsToOvers(stats.ballsFaced) : DASH);
+  add('Overs bowled', stats.ballsBowled ? ballsToOvers(stats.ballsBowled) : DASH); add('Scoring rate (runs/over)', f2(stats.runRate));
+  add('Bowling economy (runs/over)', f2(stats.econ));
+  add('Net run rate (stored table)', ptRow && known(ptRow.nrr) ? (num(ptRow.nrr) > 0 ? '+' : '') + ptRow.nrr : DASH);
+  add('Points (stored table)', ptRow && known(ptRow.points) ? String(num(ptRow.points)) : DASH);
+  add('Table position', ptIdx >= 0 ? '#' + (ptIdx + 1) + ' of ' + data.pointsTable.length : DASH);
+  var rows = [];
+  for (var k = 0; k < kv.length; k += 2) rows.push([kv[k][0], cell(kv[k][1], NAVY, true), kv[k + 1] ? kv[k + 1][0] : '', kv[k + 1] ? cell(kv[k + 1][1], NAVY, true) : '']);
+  table(null, rows, { widths: [50, 40, 50, 40], aligns: ['left', 'right', 'left', 'right'], fs: 9 });
+
+  subhead('Match results', 'Oldest first', Math.min(sel.length + 1, 10));
+  table(['Match', 'Date', 'Opponent', 'Result', 'Team score', 'Opposition score'],
+    sel.map(function (e) { return [e.label, fmtDate(e.m.savedAt) || DASH, teamName(e.opp), outcomeCell(e), scoreStr(e.own) + (oversStr(e.own) !== DASH ? ' (' + oversStr(e.own) + ' ov)' : ''), scoreStr(e.oth) + (oversStr(e.oth) !== DASH ? ' (' + oversStr(e.oth) + ' ov)' : '')]; }),
+    { widths: [13, 21, 48, 16, 40, 42], fs: 8.5 });
+
+  if (sel.length >= 2) {
+    var cats = sel.map(catOf);
+    hbarChart('Runs scored vs runs conceded per match', cats, [
+      { name: 'Runs scored', color: accent, values: sel.map(function (e) { return hasBatted(e.own) ? num(e.own.runs) : null; }) },
+      { name: 'Runs conceded', color: [140, 150, 168], values: sel.map(function (e) { return hasBatted(e.oth) ? num(e.oth.runs) : null; }) }]);
+    hbarChart('Wickets taken vs wickets lost per match', cats, [
+      { name: 'Wickets taken', color: GREEN, values: sel.map(function (e) { return hasBatted(e.oth) ? num(e.oth.wickets) : null; }) },
+      { name: 'Wickets lost', color: RED, values: sel.map(function (e) { return hasBatted(e.own) ? num(e.own.wickets) : null; }) }], { max: 10 });
+  }
+
+  /* ========================== MATCH-BY-MATCH ========================== */
+  if (full) {
+    for (var mi = 0; mi < sel.length; mi++) {
+      var e = sel[mi];
+      await tick(); progress(20 + Math.round(30 * mi / sel.length), 'Match ' + (mi + 1) + ' of ' + sel.length + '\u2026');
+      matchSection(e, mi);
+    }
+  } else {
+    await tick(); progress(30, 'Match highlights\u2026');
+    newPage();
+    heading('Match highlights', 'Top individual performers in each selected match, from the recorded scorecards.');
+    table(['Match', 'Opponent', 'Best batting (team)', 'Best bowling (team)', 'Best batting (opposition)', 'Best bowling (opposition)'],
+      sel.map(function (e) {
+        var a = topBat(rowsOf(e.m.battingCard, e.side)), b = topBowl(rowsOf(e.m.bowlingCard, e.side));
+        var c = topBat(rowsOf(e.m.battingCard, e.oSide)), d = topBowl(rowsOf(e.m.bowlingCard, e.oSide));
+        return [e.label, teamName(e.opp), a ? a.name + ' ' + batLine(a) : DASH, b ? b.name + ' ' + bowlLine(b) : DASH, c ? c.name + ' ' + batLine(c) : DASH, d ? d.name + ' ' + bowlLine(d) : DASH];
+      }), { widths: [11, 26, 33, 33, 33, 33], fs: 8 });
+  }
+
+  function matchSection(e, idx) {
+    newPage();
+    // identity band
+    logo(e.team, L, y, 14);
+    var nA = wrap(teamName(e.team), 62, 11, true).slice(0, 2);
+    text(nA.join('\n'), L + 17, y + 6, { size: 11, bold: true, color: NAVY });
+    text('vs', 105, y + 8, { size: 9, bold: true, color: FAINT, align: 'center' });
+    logo(e.opp, R - 14, y, 14);
+    var nB = wrap(teamName(e.opp), 62, 11, true).slice(0, 2);
+    text(nB.join('\n'), R - 17, y + 6, { size: 11, bold: true, color: NAVY, align: 'right' });
+    y += 19; line(L, y, R, y, accent, 0.8); y += 5;
+    var meta = [];
+    var title = e.m.matchTitle ? String(e.m.matchTitle) : ('Match ' + e.no + (STAGE[e.m.matchStage] ? ' \u2022 ' + STAGE[e.m.matchStage] : ''));
+    meta.push(['Match', title]);
+    if (e.m.savedAt) meta.push(['Date', fmtDate(e.m.savedAt)]);
+    if (e.m.venue) meta.push(['Venue', e.m.venue]);
+    var fl = formatLabel(e.m); if (fl) meta.push(['Format', fl]);
+    meta.push(['Result', resultText(e.m)]);
+    if (STAGE[e.m.matchStage] && e.m.matchTitle) meta.push(['Stage', STAGE[e.m.matchStage]]);
+    if (e.m.toss && typeof e.m.toss === 'string') meta.push(['Toss', e.m.toss]);
+    var mrows = [];
+    for (var q = 0; q < meta.length; q += 2) mrows.push([cell(meta[q][0], DIM, true), meta[q][1], meta[q + 1] ? cell(meta[q + 1][0], DIM, true) : '', meta[q + 1] ? meta[q + 1][1] : '']);
+    table(null, mrows, { widths: [18, 72, 18, 72], fs: 8.8 });
+
+    subhead('Score summary');
+    var ownRR = !isTest(e.m) ? rate(num(e.own && e.own.runs), oversToBalls(e.own && e.own.overs)) : null;
+    var othRR = !isTest(e.m) ? rate(num(e.oth && e.oth.runs), oversToBalls(e.oth && e.oth.overs)) : null;
+    table(['Team', 'Score', 'Overs', 'Run rate', 'Outcome'], [
+      [teamName(e.team), scoreStr(e.own), oversStr(e.own), hasBatted(e.own) ? f2(ownRR) : DASH, outcomeCell(e)],
+      [teamName(e.opp), scoreStr(e.oth), oversStr(e.oth), hasBatted(e.oth) ? f2(othRR) : DASH, e.outcome === 'won' ? cell('Lost', RED, true) : e.outcome === 'lost' ? cell('Won', GREEN, true) : e.outcome === 'tied' ? cell('Tied', AMBER, true) : e.outcome === 'drawn' ? cell('Drawn', AMBER, true) : cell(DASH, DIM)]
+    ], { widths: [60, 28, 24, 24, 24], aligns: ['left', 'right', 'right', 'right', 'left'], fs: 9 });
+    if (isTest(e.m)) paragraph('Test / multi-innings format: totals are shown exactly as stored by the scorer; run rates are not calculated.', 8, DIM);
+
+    function card(side, who, label) {
+      var bat = rowsOf(e.m.battingCard, side), bowl = rowsOf(e.m.bowlingCard, side), sc = side === e.side ? e.own : e.oth;
+      ensure(Math.min((bat.length + 2) * 7.3 + 16, 215) + (label ? 8 : 0));
+      if (label) { text(label, L, y + 4, { size: 8.5, bold: true, color: DIM }); y += 7; }
+      subhead(teamName(who) + ' \u2014 batting', null, bat.length + 2);
+      if (bat.length) {
+        table(['Batter', 'Status', 'Runs', 'Balls', '4s', '6s', 'SR'],
+          bat.map(function (r) { return [r.name, r.out === false ? cell('Not out', GREEN) : r.out === true ? 'Out' : DASH, String(num(r.runs)), known(r.balls) ? String(num(r.balls)) : DASH, String(num(r.fours)), String(num(r.sixes)), known(r.balls) && num(r.balls) > 0 ? f1(num(r.runs) * 100 / num(r.balls)) : DASH]; }),
+          { widths: [52, 20, 16, 16, 13, 13, 18], aligns: ['left', 'left', 'right', 'right', 'right', 'right', 'right'], fs: 8.6,
+            foot: [{ content: 'Team total (scoreboard): ' + (hasBatted(sc) ? num(sc.runs) + '/' + num(sc.wickets) + (sc.overs != null && sc.overs !== '' ? ' in ' + sc.overs + ' overs' : '') : DASH), colSpan: 7, styles: { halign: 'left' } }] });
+      } else paragraph('Batting card not recorded for this innings.', 8.5, DIM);
+      subhead(teamName(who) + ' \u2014 bowling', null, bowl.length + 1);
+      if (bowl.length) {
+        table(['Bowler', 'Overs', 'Maidens', 'Runs', 'Wickets', 'Economy'],
+          bowl.map(function (r) { var b = num(r.overs) * 6 + num(r.balls); return [r.name, num(r.overs) + '.' + num(r.balls), String(num(r.maidens)), String(num(r.runs)), String(num(r.wickets)), b > 0 ? f2(num(r.runs) * 6 / b) : DASH]; }),
+          { widths: [62, 20, 20, 20, 20, 20], aligns: ['left', 'right', 'right', 'right', 'right', 'right'], fs: 8.6 });
+      } else paragraph('Bowling card not recorded for this innings.', 8.5, DIM);
+    }
+
+    // comparison
+    function sum(rows, f) { return rows.reduce(function (s, r) { return s + num(r[f]); }, 0); }
+    var ob = rowsOf(e.m.battingCard, e.side), pb = rowsOf(e.m.battingCard, e.oSide);
+    var obw = rowsOf(e.m.bowlingCard, e.side), pbw = rowsOf(e.m.bowlingCard, e.oSide);
+    var tb1 = topBat(ob), tb2 = topBat(pb), bw1 = topBowl(obw), bw2 = topBowl(pbw);
+    // data-grounded summary
+    var s = [];
+    var verb = e.outcome === 'won' ? 'won' : e.outcome === 'lost' ? 'lost' : e.outcome === 'tied' ? 'tied' : e.outcome === 'drawn' ? 'drew' : 'played';
+    s.push(teamName(e.team) + ' ' + verb + (e.outcome === 'tied' || e.outcome === 'drawn' ? ' with ' : e.outcome === 'unknown' || e.outcome === 'nr' ? ' ' : ' against ') + teamName(e.opp) + '.');
+    if (hasBatted(e.own)) s.push(teamShort(e.team) + ' scored ' + num(e.own.runs) + '/' + num(e.own.wickets) + (oversStr(e.own) !== DASH ? ' in ' + oversStr(e.own) + ' overs' : '') + '.');
+    if (hasBatted(e.oth)) s.push(teamShort(e.opp) + ' scored ' + num(e.oth.runs) + '/' + num(e.oth.wickets) + (oversStr(e.oth) !== DASH ? ' in ' + oversStr(e.oth) + ' overs' : '') + '.');
+    if (tb1) s.push('Top scorer for ' + teamShort(e.team) + ': ' + tb1.name + ' ' + batLine(tb1) + '.');
+    if (bw1) s.push('Best bowling for ' + teamShort(e.team) + ': ' + bw1.name + ' ' + bowlLine(bw1) + '.');
+    subhead('Match summary');
+    paragraph(s.join(' '), 9.2, INK);
+    subhead('Match comparison', null, 9);
+    var cmp = [
+      ['Runs', hasBatted(e.own) ? String(num(e.own.runs)) : DASH, hasBatted(e.oth) ? String(num(e.oth.runs)) : DASH],
+      ['Wickets lost', hasBatted(e.own) ? String(num(e.own.wickets)) : DASH, hasBatted(e.oth) ? String(num(e.oth.wickets)) : DASH],
+      ['Overs faced', oversStr(e.own), oversStr(e.oth)],
+      ['Run rate', hasBatted(e.own) ? f2(ownRR) : DASH, hasBatted(e.oth) ? f2(othRR) : DASH]
+    ];
+    if (ob.length || pb.length) {
+      cmp.push(['Fours', ob.length ? String(sum(ob, 'fours')) : DASH, pb.length ? String(sum(pb, 'fours')) : DASH]);
+      cmp.push(['Sixes', ob.length ? String(sum(ob, 'sixes')) : DASH, pb.length ? String(sum(pb, 'sixes')) : DASH]);
+      cmp.push(['Highest individual score', tb1 ? tb1.name + ' ' + batLine(tb1) : DASH, tb2 ? tb2.name + ' ' + batLine(tb2) : DASH]);
+    }
+    if (obw.length || pbw.length) cmp.push(['Best bowling figures', bw1 ? bw1.name + ' ' + bowlLine(bw1) : DASH, bw2 ? bw2.name + ' ' + bowlLine(bw2) : DASH]);
+    table(['Metric', teamName(e.team), teamName(e.opp)], cmp, { widths: [44, 68, 68], aligns: ['left', 'left', 'left'], fs: 8.8 });
+    card(e.side, e.team);
+    card(e.oSide, e.opp, 'OPPOSITION PERFORMANCE');
+
+  }
+
+  /* ========================== PLAYER REGISTER ========================== */
+  var byRuns = players.filter(function (p) { return p.b.inns; }).sort(function (a, b) { return b.b.runs - a.b.runs || a.name.localeCompare(b.name); });
+  var byWkts = players.filter(function (p) { return p.w.inns; }).sort(function (a, b) { return b.w.wkts - a.w.wkts || (a.w.econ == null) - (b.w.econ == null) || a.w.econ - b.w.econ; });
+  if (full && players.length) {
+    await tick(); progress(55, 'Player register\u2026');
+    newPage();
+    heading('Player participation register', 'Players who appear in the recorded batting or bowling cards of the selected matches, grouped by player name.');
+    subhead('Batting', 'Sorted by runs', Math.min(byRuns.length + 1, 8));
+    table(['Player', 'M', 'Inns', 'NO', 'Runs', 'Balls', 'Avg', 'SR', 'HS', '4s', '6s', '50', '100'],
+      byRuns.map(function (p) { var b = p.b; return [p.name, String(p.played), String(b.inns), String(b.no), String(b.runs), b.balls ? String(b.balls) : DASH, f1(b.avg), f1(b.sr), b.hs == null ? DASH : b.hs + (b.hsNo ? '*' : ''), String(b.fours), String(b.sixes), String(b.f50), String(b.f100)]; }),
+      { widths: [44, 9, 10, 9, 12, 13, 13, 13, 13, 10, 10, 9, 10], aligns: ['left'].concat(Array(12).fill('right')), fs: 8.3 });
+    if (byWkts.length) {
+      subhead('Bowling', 'Sorted by wickets', Math.min(byWkts.length + 1, 8));
+      table(['Player', 'M', 'Inns', 'Overs', 'Mdn', 'Runs', 'Wkts', 'Avg', 'Econ', 'SR', 'Best'],
+        byWkts.map(function (p) { var w = p.w; return [p.name, String(p.played), String(w.inns), ballsToOvers(w.balls), String(w.maidens), String(w.runs), String(w.wkts), f1(w.avg), f2(w.econ), f1(w.sr), w.best ? w.best.wkts + '/' + w.best.runs : DASH]; }),
+        { widths: [44, 9, 11, 15, 11, 13, 12, 14, 14, 14, 17], aligns: ['left'].concat(Array(10).fill('right')), fs: 8.3 });
+    }
+    paragraph('Fielding (catches, run-outs, stumpings): not available \u2014 the tournament record does not store fielder credits. Squad registrations and player photographs are also not part of this record, so only players who batted or bowled are listed. M = selected matches in which the player appears in a recorded card. NO = not outs. Avg = runs / dismissals. SR = runs per 100 balls where balls faced are recorded. Bowling Avg = runs per wicket; SR = balls per wicket.', 7.8, DIM);
+  }
+
+  /* ========================= INDIVIDUAL PROFILES ========================= */
+  if (full && players.length) {
+    var ordered = players.slice().sort(function (a, b) { return (b.b.runs + b.w.wkts * 20) - (a.b.runs + a.w.wkts * 20) || a.name.localeCompare(b.name); });
+    for (var pi = 0; pi < ordered.length; pi++) {
+      await tick(); progress(58 + Math.round(30 * pi / ordered.length), 'Player profile ' + (pi + 1) + ' of ' + ordered.length + '\u2026');
+      playerProfile(ordered[pi], pi === 0);
+    }
+  }
+  function playerProfile(p, isFirst) {
+    if (isFirst) newPage(); else ensure(125);
+    if (isFirst) { text('INDIVIDUAL PLAYER PROFILES', L, y + 1, { size: 8.5, bold: true, color: DIM }); y += 6; }
+    rect(L, y, CW, 22, SOFT, 2); rect(L, y, 1.4, 22, accent);
+    var chips = [];
+    if (p.b.inns) chips.push(['Runs', String(p.b.runs)], ['HS', p.b.hs + (p.b.hsNo ? '*' : '')], ['SR', f1(p.b.sr)]);
+    if (p.w.inns) chips.push(['Wkts', String(p.w.wkts)], ['Econ', f2(p.w.econ)]);
+    chips = chips.slice(0, 5);
+    var nameW = CW - 14 - chips.length * 17;
+    var pn = wrap(p.name, nameW, 15, true).slice(0, 2);
+    text(pn.join('\n'), L + 6, y + (pn.length > 1 ? 7 : 9), { size: 15, bold: true, color: NAVY });
+    text('Appears in ' + p.played + ' of ' + sel.length + ' selected match' + (sel.length === 1 ? '' : 'es'), L + 6, y + 17, { size: 8.5, color: DIM });
+    chips.forEach(function (c, i) { var cx = R - 4 - (chips.length - i) * 17; text(c[1], cx + 8, y + 10, { size: 11.5, bold: true, color: NAVY, align: 'center' }); text(c[0], cx + 8, y + 15.5, { size: 7, bold: true, color: DIM, align: 'center' }); });
+    y += 28;
+    var bt = p.b, wt = p.w;
+    paragraph([
+      bt.inns ? 'Batting: ' + bt.inns + ' innings, ' + bt.runs + ' runs' + (bt.avg != null ? ', average ' + f1(bt.avg) : '') + (bt.sr != null ? ', strike rate ' + f1(bt.sr) : '') + ', ' + bt.fours + ' fours, ' + bt.sixes + ' sixes' + (bt.f50 || bt.f100 ? ', ' + bt.f50 + ' fifties, ' + bt.f100 + ' hundreds' : '') + '.' : 'Batting: no batting card recorded in the selected matches.',
+      wt.inns ? 'Bowling: ' + ballsToOvers(wt.balls) + ' overs, ' + wt.wkts + ' wickets for ' + wt.runs + ' runs' + (wt.econ != null ? ', economy ' + f2(wt.econ) : '') + (wt.best ? ', best ' + wt.best.wkts + '/' + wt.best.runs : '') + '.' : 'Bowling: no bowling card recorded in the selected matches.',
+      'Fielding: not recorded in the tournament data.'
+    ].join(' '), 9, INK);
+
+    subhead('Batting \u2014 match by match', null, sel.length + 1);
+    var brow = sel.map(function (x) {
+      var r = rowsOf(x.m.battingCard, x.side).filter(function (q) { return playerKey(q.name) === p.key; })[0];
+      var hasCard = rowsOf(x.m.battingCard, x.side).length > 0;
+      var st = r ? (r.out === false ? cell('Not out', GREEN) : r.out === true ? 'Out' : DASH) : (hasCard ? cell('Did not bat', DIM) : cell('Not recorded', DIM));
+      return [x.label, fmtDate(x.m.savedAt) || DASH, teamName(x.opp), outcomeCell(x), scoreStr(x.own), r ? String(num(r.runs)) : DASH, r && known(r.balls) ? String(num(r.balls)) : DASH, r ? String(num(r.fours)) : DASH, r ? String(num(r.sixes)) : DASH, r && known(r.balls) && num(r.balls) > 0 ? f1(num(r.runs) * 100 / num(r.balls)) : DASH, st];
+    });
+    table(['Match', 'Date', 'Opponent', 'Result', 'Team', 'Runs', 'Balls', '4s', '6s', 'SR', 'Status'], brow,
+      { widths: [10, 18, 32, 12, 16, 11, 11, 8, 8, 11, 19], aligns: ['left', 'left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'left'], fs: 7.9 });
+    if (p.bowlRows.length) {
+      subhead('Bowling \u2014 match by match', null, sel.length + 1);
+      var wrow = sel.map(function (x) {
+        var r = rowsOf(x.m.bowlingCard, x.side).filter(function (q) { return playerKey(q.name) === p.key; })[0];
+        var hasCard = rowsOf(x.m.bowlingCard, x.side).length > 0;
+        if (!r) return [x.label, fmtDate(x.m.savedAt) || DASH, teamName(x.opp), outcomeCell(x), hasCard ? cell('Did not bowl', DIM) : cell('Not recorded', DIM), '', '', '', '', ''];
+        var b = num(r.overs) * 6 + num(r.balls);
+        return [x.label, fmtDate(x.m.savedAt) || DASH, teamName(x.opp), outcomeCell(x), num(r.overs) + '.' + num(r.balls), String(num(r.maidens)), String(num(r.runs)), String(num(r.wickets)), b > 0 ? f2(num(r.runs) * 6 / b) : DASH, num(r.wickets) + '/' + num(r.runs)];
+      });
+      table(['Match', 'Date', 'Opponent', 'Result', 'Overs', 'Mdn', 'Runs', 'Wkts', 'Econ', 'Figures'], wrow,
+        { widths: [10, 18, 36, 13, 17, 10, 11, 11, 12, 16], aligns: ['left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right'], fs: 7.9 });
+    }
+    // trends only when there is something to compare
+    if (p.batRows.length >= 2) vbarChart('Runs per match', p.batRows.map(function (x) { return [x.e.label, teamShort(x.e.opp).slice(0, 9)]; }), p.batRows.map(function (x) { return x.runs; }), accent, { note: p.batRows.length + ' innings' });
+    if (p.bowlRows.length >= 2) vbarChart('Wickets per match', p.bowlRows.map(function (x) { return [x.e.label, teamShort(x.e.opp).slice(0, 9)]; }), p.bowlRows.map(function (x) { return x.wkts; }), GREEN, { note: p.bowlRows.length + ' bowling innings' });
+    ensure(10);
+    text('Wagon wheel unavailable \u2014 shot-location data was not recorded.', L, y + 3, { size: 8.5, color: DIM });
+    y += 8;
+  }
+
+  /* ============================ BATTING ANALYSIS ============================ */
+  await tick(); progress(90, 'Batting and bowling analysis\u2026');
+  if (byRuns.length) {
+    newPage();
+    heading('Batting analysis', 'Based on the batting cards of the ' + sel.length + ' selected match' + (sel.length === 1 ? '' : 'es') + '. Rankings are within this selection only.');
+    hbarChart('Top run scorers', byRuns.slice(0, 10).map(function (p) { return { label: p.name, sub: p.b.inns + ' inn \u2022 avg ' + f1(p.b.avg) }; }), [{ name: 'Runs', color: accent, values: byRuns.slice(0, 10).map(function (p) { return p.b.runs; }) }]);
+    var bnd = byRuns.filter(function (p) { return p.b.runs > 0; }).map(function (p) { var br = p.b.fours * 4 + p.b.sixes * 6; return { p: p, br: br, pct: br * 100 / p.b.runs }; }).sort(function (a, b) { return b.br - a.br; }).slice(0, 10);
+    if (bnd.length) {
+      subhead('Boundary contribution', 'Runs from fours and sixes', Math.min(bnd.length + 1, 11));
+      table(['Player', 'Runs', '4s', '6s', 'Boundary runs', '% of runs'], bnd.map(function (x) { return [x.p.name, String(x.p.b.runs), String(x.p.b.fours), String(x.p.b.sixes), String(x.br), f1(x.pct) + '%']; }),
+        { widths: [58, 20, 18, 18, 36, 30], aligns: ['left', 'right', 'right', 'right', 'right', 'right'], fs: 8.6 });
+    }
+    var inn = []; byRuns.forEach(function (p) { p.batRows.forEach(function (x) { inn.push({ p: p, x: x }); }); });
+    inn.sort(function (a, b) { return b.x.runs - a.x.runs; });
+    subhead('Best individual innings', null, Math.min(inn.length, 8) + 1);
+    table(['Player', 'Match', 'Opponent', 'Runs', 'Balls', 'SR', 'Status'], inn.slice(0, 8).map(function (r) { return [r.p.name, r.x.e.label, teamName(r.x.e.opp), String(r.x.runs), r.x.balls != null ? String(r.x.balls) : DASH, r.x.balls ? f1(r.x.runs * 100 / r.x.balls) : DASH, r.x.notOut ? cell('Not out', GREEN) : r.x.outKnown ? 'Out' : DASH]; }),
+      { widths: [42, 14, 46, 15, 15, 17, 25], aligns: ['left', 'left', 'left', 'right', 'right', 'right', 'left'], fs: 8.6 });
+    paragraph('Partnerships and powerplay / phase splits are not stored in the tournament record, so they are not shown.', 8, DIM);
+  }
+
+  /* ============================ BOWLING ANALYSIS ============================ */
+  if (byWkts.length) {
+    newPage();
+    heading('Bowling analysis', 'Based on the bowling cards of the selected matches. Only wickets credited to bowlers in the card are counted.');
+    hbarChart('Wickets by bowler', byWkts.slice(0, 10).map(function (p) { return { label: p.name, sub: ballsToOvers(p.w.balls) + ' ov \u2022 econ ' + f2(p.w.econ) }; }), [{ name: 'Wickets', color: GREEN, values: byWkts.slice(0, 10).map(function (p) { return p.w.wkts; }) }]);
+    var eco = byWkts.filter(function (p) { return p.w.balls >= 6; }).sort(function (a, b) { return a.w.econ - b.w.econ; }).slice(0, 10);
+    if (eco.length) {
+      subhead('Economy comparison', 'Bowlers with at least one over; lower is better', Math.min(eco.length + 1, 11));
+      table(['Player', 'Overs', 'Runs', 'Wkts', 'Economy', 'Average', 'Strike rate'], eco.map(function (p) { return [p.name, ballsToOvers(p.w.balls), String(p.w.runs), String(p.w.wkts), f2(p.w.econ), f1(p.w.avg), f1(p.w.sr)]; }),
+        { widths: [50, 18, 18, 16, 24, 24, 30], aligns: ['left', 'right', 'right', 'right', 'right', 'right', 'right'], fs: 8.6 });
+    }
+    var sp = []; byWkts.forEach(function (p) { p.bowlRows.forEach(function (x) { sp.push({ p: p, x: x }); }); });
+    sp.sort(function (a, b) { return b.x.wkts - a.x.wkts || a.x.runs - b.x.runs; });
+    subhead('Best bowling spells', null, Math.min(sp.length, 8) + 1);
+    table(['Player', 'Match', 'Opponent', 'Overs', 'Mdn', 'Runs', 'Wkts'], sp.slice(0, 8).map(function (r) { return [r.p.name, r.x.e.label, teamName(r.x.e.opp), ballsToOvers(r.x.balls), String(r.x.maidens), String(r.x.runs), String(r.x.wkts)]; }),
+      { widths: [44, 14, 48, 18, 14, 18, 16], aligns: ['left', 'left', 'left', 'right', 'right', 'right', 'right'], fs: 8.6 });
+    paragraph('Over-by-over and phase analysis need ball-by-ball data, which is not part of this tournament record.', 8, DIM);
+  }
+
+  /* ===================== WAGON WHEELS + METHODOLOGY ===================== */
+  await tick(); progress(95, 'Data coverage\u2026');
+  newPage();
+  heading('Wagon wheels', 'Cumulative and match-wise shot maps.');
+  rect(L, y, CW, 22, SOFT, 2); rect(L, y, 1.4, 22, AMBER);
+  text('Wagon wheel unavailable \u2014 shot-location data was not recorded.', L + 6, y + 9, { size: 10.5, bold: true, color: NAVY });
+  text('The tournament record contains no shot angles or field coordinates, so no wagon wheel has been drawn. A boundary alone does not show its direction.', L + 6, y + 15, { size: 8.3, color: DIM, maxW: CW - 12 });
+  y += 30;
+
+  heading('Data coverage and methodology');
+  subhead('Where the figures come from');
+  paragraph('Every number in this report is read from the tournament record loaded on the AllSportsLive tournament page: each match\u2019s teams, saved scoreboard (runs, wickets, overs), result, and the batting and bowling cards. Nothing was estimated, and no stored statistic was changed. Only completed matches with a recorded result are included' + (excluded.live || excluded.abandoned ? ' (' + (excluded.live ? excluded.live + ' in-progress' : '') + (excluded.live && excluded.abandoned ? ' and ' : '') + (excluded.abandoned ? excluded.abandoned + ' abandoned' : '') + ' match' + (excluded.live + excluded.abandoned === 1 ? '' : 'es') + ' left out)' : '') + '.', 8.8);
+  subhead('Definitions');
+  [
+    'Batting average = runs \u00F7 (innings - not outs); shown as ' + DASH + ' when the player was never dismissed.',
+    'Strike rate = runs per 100 balls, using only innings where balls faced were recorded.',
+    'Economy = runs conceded per over (6 legal balls); bowling average = runs per wicket; bowling strike rate = balls per wicket.',
+    'Team run rate and economy use only innings whose overs were recorded; they are not calculated for Test / multi-innings formats.',
+    'Net run rate, points and table position are the stored values from the tournament points table, not recalculated here.',
+    'Win % is wins divided by all completed matches of the team in this tournament, whatever scope was selected for the report.',
+    'Players are grouped by name (the record has no player IDs). Two different players with an identical name would be combined.'
+  ].forEach(function (t) { paragraph('\u2022 ' + t, 8.6); });
+  subhead('Not available in the tournament record');
+  paragraph('Fielding credits (catches, run-outs, stumpings) \u2022 dismissal descriptions \u2022 extras and penalty runs \u2022 margin of victory \u2022 toss details \u2022 partnerships and fall of wickets \u2022 powerplay and phase splits \u2022 batting positions \u2022 squad registrations and non-playing squad members \u2022 player photographs \u2022 wagon-wheel / shot-location data. These are omitted rather than shown as zero.', 8.6);
+  paragraph('Text is set in a standard PDF font; characters outside Latin script (for example Devanagari names) cannot be shown and appear as "?".', 8.3, DIM);
+
+  /* ====================== running header / footer ====================== */
+  var total = doc.getNumberOfPages();
+  for (var pg = 1; pg <= total; pg++) {
+    doc.setPage(pg);
+    if (pg > 1) {
+      text(teamName(me) + ' \u2014 Team Performance Report', L, 13, { size: 8, bold: true, color: NAVY, maxW: 110 });
+      text(tName, R, 13, { size: 8, color: DIM, align: 'right', maxW: 70 });
+      line(L, 16, R, 16, accent, 0.5);
+    }
+    line(L, 285, R, 285, RULE, 0.25);
+    text('AllSportsLive', L, 290, { size: 7.5, bold: true, color: FAINT });
+    text('Page ' + pg + ' of ' + total, R, 290, { size: 7.5, color: FAINT, align: 'right' });
+  }
+  progress(100, 'Done');
+  return { doc: doc, pages: total, matches: sel.length, players: players.length, fileName: safePart(tName) + '_' + safePart(teamName(me)) + '_Team_Report.pdf' };
+}
+
+/* =====================================================================
+   PART 2 — OWNER-ONLY UI (browser only)
+   ===================================================================== */
+function loadScript(src) {
+  return new Promise(function (res, rej) {
+    var s = document.createElement('script'); s.src = src; s.onload = res;
+    s.onerror = function () { rej(new Error('Could not load the PDF engine. Check your connection and try again.')); };
+    document.head.appendChild(s);
+  });
+}
+async function ensureLibs() {
+  if (!(root.jspdf && root.jspdf.jsPDF)) await loadScript(JSPDF_URL);
+  if (!root.jspdf.jsPDF.API.autoTable) await loadScript(AUTOTABLE_URL);
+  return root.jspdf.jsPDF;
+}
+// Logos are drawn into a square PNG so any format works; one that cannot be read falls back to an initials tile.
+function loadLogo(url) {
+  return new Promise(function (resolve) {
+    if (!url) return resolve(null);
+    var img = new Image(), done = false;
+    var fin = function (v) { if (!done) { done = true; resolve(v); } };
+    setTimeout(function () { fin(null); }, 7000);
+    img.crossOrigin = 'anonymous';
+    img.onload = function () {
+      try {
+        var c = document.createElement('canvas'); c.width = c.height = 256;
+        var g = c.getContext('2d'), s = Math.min(256 / img.naturalWidth, 256 / img.naturalHeight);
+        var w = img.naturalWidth * s, h = img.naturalHeight * s;
+        g.drawImage(img, (256 - w) / 2, (256 - h) / 2, w, h);
+        fin(c.toDataURL('image/png'));
+      } catch (e) { fin(null); }
+    };
+    img.onerror = function () { fin(null); };
+    img.src = url;
+  });
+}
+function currentOwner() {
+  try {
+    var u = typeof auth !== 'undefined' && auth && auth.currentUser;
+    return !!(u && u.emailVerified && String(u.email || '').toLowerCase() === OWNER && typeof isOwner !== 'undefined' && isOwner);
+  } catch (e) { return false; }
+}
+function pageData() { return typeof tournamentDataCache !== 'undefined' ? tournamentDataCache : null; }
+
+var CSS = '' +
+'.tp-btn{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 9px;border-radius:99px;background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim);font:700 9.5px/1.3 var(--font-body);letter-spacing:.04em;cursor:pointer}' +
+'.tp-short{display:none}@media(max-width:560px){.tp-long{display:none}.tp-short{display:inline}}' +
+'.tp-btn:hover{border-color:var(--accent);color:var(--accent)}.tp-btn svg{width:11px;height:11px}' +
+'#tp-back{position:fixed;inset:0;z-index:10000;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(5,8,14,.62);backdrop-filter:blur(3px)}' +
+'#tp-back.open{display:flex}' +
+'#tp-modal{width:min(480px,100%);max-height:92vh;overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:20px}' +
+'#tp-modal h3{margin:0;font:700 16px var(--font-display)}#tp-modal .tp-sub{margin:3px 0 14px;color:var(--text-dim);font-size:12.5px}' +
+'#tp-modal .tp-lab{margin:14px 0 6px;font:700 10.5px var(--font-body);letter-spacing:.06em;color:var(--text-dim)}' +
+'.tp-seg{display:flex;flex-wrap:wrap;gap:6px}.tp-seg button{padding:7px 12px;border-radius:99px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font:600 12px var(--font-body);cursor:pointer}' +
+'.tp-seg button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}' +
+'.tp-list{max-height:170px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--panel-2)}' +
+'.tp-list label{display:flex;gap:9px;align-items:flex-start;padding:8px 11px;border-bottom:1px solid var(--border-soft);font-size:12.3px;cursor:pointer}.tp-list label:last-child{border-bottom:0}' +
+'.tp-list input{margin-top:2px;accent-color:var(--accent)}.tp-list small{display:block;color:var(--text-dim);font-size:11px}' +
+'#tp-count{margin:12px 0 0;font-size:12.5px;font-weight:600}#tp-note{margin:4px 0 0;font-size:11.5px;color:var(--text-dim)}' +
+'#tp-prog{display:none;margin-top:14px}#tp-prog.show{display:block}#tp-bar{height:6px;border-radius:9px;background:var(--border);overflow:hidden}#tp-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}' +
+'#tp-msg{margin-top:6px;font-size:12px;color:var(--text-dim)}#tp-msg.err{color:var(--wicket)}#tp-msg.ok{color:var(--accent)}' +
+'.tp-act{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}.tp-act button{padding:9px 16px;border-radius:99px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font:700 12.5px var(--font-body);cursor:pointer}' +
+'.tp-act button.go{background:var(--accent);border-color:var(--accent);color:var(--accent-contrast)}.tp-act button:disabled{opacity:.5;cursor:not-allowed}';
+
+var ui = null, state = null;
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function ensureUi() {
+  if (ui) return ui;
+  var st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
+  var back = document.createElement('div'); back.id = 'tp-back';
+  back.innerHTML = '<div id="tp-modal" role="dialog" aria-modal="true" aria-labelledby="tp-title">' +
+    '<h3 id="tp-title">TEAM PERFORMANCE PDF</h3><p class="tp-sub" id="tp-team"></p>' +
+    '<div class="tp-lab">MATCHES</div><div class="tp-seg" id="tp-scope"></div>' +
+    '<div class="tp-list" id="tp-list" style="margin-top:8px"></div>' +
+    '<p id="tp-count"></p><p id="tp-note"></p>' +
+    '<div class="tp-lab">REPORT DETAIL</div><div class="tp-seg" id="tp-detail"></div>' +
+    '<div id="tp-prog"><div id="tp-bar"><i></i></div></div><div id="tp-msg"></div>' +
+    '<div class="tp-act"><button id="tp-cancel" type="button">Close</button><button id="tp-go" class="go" type="button">GENERATE PDF</button></div></div>';
+  document.body.appendChild(back);
+  back.addEventListener('click', function (e) { if (e.target === back && !state.busy) close(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && back.classList.contains('open') && !state.busy) close(); });
+  back.querySelector('#tp-cancel').addEventListener('click', function () { if (!state.busy) close(); });
+  back.querySelector('#tp-go').addEventListener('click', generate);
+  ui = back; return ui;
+}
+function close() { ui.classList.remove('open'); }
+function setMsg(t, cls) { var m = ui.querySelector('#tp-msg'); m.textContent = t || ''; m.className = cls || ''; }
+function setProg(p, t) { ui.querySelector('#tp-prog').classList.add('show'); ui.querySelector('#tp-bar i').style.width = p + '%'; if (t) setMsg(t); }
+function seg(el, items, current, onPick) {
+  el.innerHTML = items.map(function (it) { return '<button type="button" data-v="' + it.v + '" class="' + (it.v === current ? 'on' : '') + '">' + esc(it.t) + '</button>'; }).join('');
+  el.querySelectorAll('button').forEach(function (b) { b.addEventListener('click', function () { if (state.busy) return; onPick(b.getAttribute('data-v')); }); });
+}
+function refresh() {
+  var n = state.checked.size, tot = state.done.length;
+  seg(ui.querySelector('#tp-scope'), [{ v: 'all', t: 'All completed' }, { v: 'won', t: 'Won only' }, { v: 'lost', t: 'Lost only' }, { v: 'custom', t: 'Custom' }], state.scope, function (v) {
+    state.scope = v;
+    if (v === 'all') state.checked = new Set(state.done.map(function (e) { return e.key; }));
+    if (v === 'won') state.checked = new Set(state.done.filter(function (e) { return e.outcome === 'won'; }).map(function (e) { return e.key; }));
+    if (v === 'lost') state.checked = new Set(state.done.filter(function (e) { return e.outcome === 'lost'; }).map(function (e) { return e.key; }));
+    refresh();
+  });
+  seg(ui.querySelector('#tp-detail'), [{ v: 'full', t: 'Full Team Report' }, { v: 'summary', t: 'Team Summary' }], state.detail, function (v) { state.detail = v; refresh(); });
+  ui.querySelector('#tp-list').innerHTML = state.done.map(function (e) {
+    return '<label><input type="checkbox" data-k="' + esc(e.key) + '"' + (state.checked.has(e.key) ? ' checked' : '') + '><span>' + esc(e.label + ' vs ' + teamName(e.opp)) + '<small>' + esc([fmtDate(e.m.savedAt), resultText(e.m)].filter(Boolean).join(' \u2022 ')) + '</small></span></label>';
+  }).join('');
+  ui.querySelectorAll('#tp-list input').forEach(function (cb) {
+    cb.addEventListener('change', function () { if (state.busy) return; var k = cb.getAttribute('data-k'); if (cb.checked) state.checked.add(k); else state.checked.delete(k); state.scope = 'custom'; refresh(); });
+  });
+  ui.querySelector('#tp-count').textContent = tot ? n + ' of ' + tot + ' completed match' + (tot === 1 ? '' : 'es') + ' will be included' : 'No completed matches yet';
+  var ex = [];
+  if (state.live) ex.push(state.live + ' in progress'); if (state.aband) ex.push(state.aband + ' abandoned');
+  ui.querySelector('#tp-note').textContent = ex.length ? 'Not included: ' + ex.join(', ') + '.' : '';
+  var go = ui.querySelector('#tp-go'); go.disabled = state.busy || n === 0;
+  if (!tot) setMsg('This team has no completed matches, so there is nothing to report yet.', 'err');
+}
+function openFor(name) {
+  if (!currentOwner()) return;
+  var data = pageData();
+  if (!data) return;
+  ensureUi();
+  var all = teamMatches(data, name), done = all.filter(function (e) { return e.status === 'done'; });
+  state = { team: name, all: all, done: done, scope: 'all', detail: 'full', busy: false, checked: new Set(done.map(function (e) { return e.key; })),
+    live: all.filter(function (e) { return e.status === 'progress'; }).length, aband: all.filter(function (e) { return e.status === 'abandoned'; }).length };
+  ui.querySelector('#tp-team').textContent = name + ' \u2014 ' + (data.displayName || 'Tournament');
+  setMsg(''); ui.querySelector('#tp-prog').classList.remove('show'); ui.querySelector('#tp-bar i').style.width = '0';
+  refresh(); ui.classList.add('open');
+  try { ui.querySelector('#tp-go').focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+}
+async function generate() {
+  if (state.busy) return;
+  if (!currentOwner()) { setMsg('Only the tournament owner can generate this report.', 'err'); return; }
+  var data = pageData();
+  state.busy = true; refresh(); setProg(2, 'Loading PDF engine\u2026');
+  try {
+    var jsPDF = await ensureLibs();
+    var sel = state.done.filter(function (e) { return state.checked.has(e.key); });
+    setProg(8, 'Loading team logos\u2026');
+    var teams = {}; teams[norm(teamName(sel[0].team))] = sel[0].team;
+    sel.forEach(function (e) { teams[norm(teamName(e.opp))] = e.opp; });
+    var logos = {};
+    await Promise.all(Object.keys(teams).map(function (k) { return loadLogo(teams[k].logoUrl).then(function (u) { if (u) logos[k] = u; }); }));
+    var scopeLabel = state.scope === 'won' ? 'Won matches only (' + sel.length + ')' : state.scope === 'lost' ? 'Lost matches only (' + sel.length + ')' : state.scope === 'all' ? 'All completed matches (' + sel.length + ')' : sel.length + ' selected of ' + state.done.length + ' completed matches';
+    var res = await build(jsPDF, data, { teamName: state.team, matchKeys: sel.map(function (e) { return e.key; }), detail: state.detail, logos: logos, scopeLabel: scopeLabel, tournamentName: data.displayName, onProgress: function (p, t) { setProg(Math.max(10, p), t); } });
+    setProg(98, 'Saving ' + res.pages + '-page PDF\u2026');
+    res.doc.save(res.fileName);
+    setProg(100, 'Done \u2014 ' + res.fileName + ' (' + res.pages + ' pages, ' + res.matches + ' matches) downloaded.');
+    ui.querySelector('#tp-msg').className = 'ok';
+  } catch (err) {
+    console.error('[team-report]', err);
+    setMsg((err && err.message) || 'Could not generate the report.', 'err');
+  } finally { state.busy = false; ui.querySelector('#tp-go').disabled = false; ui.querySelector('#tp-cancel').disabled = false; }
+}
+
+var ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6m-3-3 3 3 3-3"/></svg>';
+function mountButtons() {
+  if (typeof document === 'undefined') return;
+  var owner = currentOwner();
+  var tbl = document.getElementById('points-table');
+  if (!tbl) return;
+  if (!owner) { tbl.querySelectorAll('.tp-btn').forEach(function (b) { b.remove(); }); return; }
+  ensureUi();
+  tbl.querySelectorAll('tbody tr:not(.pt-divider)').forEach(function (tr) {
+    var td = tr.firstElementChild;
+    if (!td || td.querySelector('.tp-btn')) return;
+    var name = td.textContent.trim();
+    if (!name) return;
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'tp-btn'; b.setAttribute('data-team', name);
+    b.setAttribute('aria-label', 'Team performance PDF for ' + name);
+    b.innerHTML = ICON + '<span class="tp-long">TEAM PERFORMANCE PDF</span><span class="tp-short">TEAM PDF</span>';
+    b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openFor(name); });
+    td.appendChild(document.createElement('br')); td.appendChild(b);
+  });
+}
+
+var api = { build: build, mountButtons: mountButtons, open: openFor, _internal: { teamMatches: teamMatches, selectEntries: selectEntries, teamStats: teamStats, aggregatePlayers: aggregatePlayers, oversToBalls: oversToBalls } };
+root.TeamReport = api;
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
 </script>
 </body>
 </html>
