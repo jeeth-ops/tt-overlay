@@ -184,26 +184,53 @@
       inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') ok(); });
     });
   };
-  // A picture, resized in the browser to fit 256 px and sent as PNG (keeps transparency).
-  VB.readLogo = function (file) {
+  // A picture, resized in the browser and sent as a data URL the server
+  // accepts. Logos: up to 512 px (sharp on the broadcast graphics' large
+  // plates) as PNG, keeping transparency — as WebP (still transparent) or
+  // smaller if that PNG would be too big to store.
+  function readImage(file, done) {
     return new Promise(function (resolve, reject) {
       if (!file || !/^image\/(png|jpeg|webp|svg\+xml)$/.test(file.type)) return reject(new Error('Use a PNG, JPEG or WebP picture'));
-      if (file.size > 8 * 1024 * 1024) return reject(new Error('That picture is over 8 MB'));
+      if (file.size > 12 * 1024 * 1024) return reject(new Error('That picture is over 12 MB'));
       var fr = new FileReader();
       fr.onload = function () {
         var img = new Image();
-        img.onload = function () {
-          var k = Math.min(1, 256 / Math.max(img.width, img.height));
-          var c = document.createElement('canvas');
-          c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
-          var g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height);
-          resolve(c.toDataURL('image/png'));
-        };
+        img.onload = function () { try { resolve(done(img)); } catch (e) { reject(e); } };
         img.onerror = function () { reject(new Error('That file is not a picture we can read')); };
         img.src = fr.result;
       };
       fr.onerror = function () { reject(new Error('Could not read the file')); };
       fr.readAsDataURL(file);
+    });
+  }
+  function draw(img, max, type, quality) {
+    var k = Math.min(1, max / Math.max(img.width, img.height));
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+    var g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL(type, quality);
+  }
+  var bytesOf = function (dataUrl) { return Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4); };
+  VB.readLogo = function (file, max) {
+    return readImage(file, function (img) {
+      var limit = 580 * 1024, size = max || 512;
+      var out = draw(img, size, 'image/png');
+      if (bytesOf(out) > limit) { var w = draw(img, size, 'image/webp', 0.92); if (/^data:image\/webp/.test(w)) out = w; }
+      while (bytesOf(out) > limit && size > 128) { size = Math.round(size * 0.75); out = draw(img, size, 'image/png'); }
+      if (bytesOf(out) > limit) throw new Error('That logo is too detailed to store — try a simpler or smaller file');
+      return out;
+    });
+  };
+  // A player's portrait for the starting six and the player card: JPEG,
+  // up to 800 px, under the server's 400 KB.
+  VB.readPhoto = function (file) {
+    return readImage(file, function (img) {
+      var limit = 390 * 1024, q = 0.88, size = 800;
+      var out = draw(img, size, 'image/jpeg', q);
+      while (bytesOf(out) > limit && q > 0.5) { q -= 0.08; out = draw(img, size, 'image/jpeg', q); }
+      while (bytesOf(out) > limit && size > 300) { size = Math.round(size * 0.8); out = draw(img, size, 'image/jpeg', q); }
+      if (bytesOf(out) > limit) throw new Error('That photo is too large to store');
+      return out;
     });
   };
   VB.ROLES = { S: 'Setter', OH: 'Outside hitter', OPP: 'Opposite', MB: 'Middle blocker', L: 'Libero', DS: 'Defensive specialist', U: 'Universal' };

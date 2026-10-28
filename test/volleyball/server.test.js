@@ -150,6 +150,10 @@ function roster(prefix) {
   for (const nm of ['Owner Hawks', 'Owner Owls']) pteams.push((await api('POST', '/api/volleyball/teams', { json: { name: nm, players: roster(nm.split(' ')[1]) }, token: TOK.owner })).json.team);
   await api('PUT', `/api/volleyball/tournaments/${PT}`, { json: { teamIds: pteams.map((t) => t.teamId), logo }, token: TOK.owner });
   const pm = (await api('POST', `/api/volleyball/tournaments/${PT}/matches`, { json: { teamA: pteams[0].teamId, teamB: pteams[1].teamId }, token: TOK.owner })).json.match;
+  // (the first version's fixture index let a tournament hold only ONE match made by hand)
+  const pm2 = await api('POST', `/api/volleyball/tournaments/${PT}/matches`, { json: { teamA: pteams[1].teamId, teamB: pteams[0].teamId }, token: TOK.owner });
+  const pm3 = await api('POST', `/api/volleyball/tournaments/${PT}/matches`, { json: { teamA: pteams[0].teamId, teamB: pteams[1].teamId }, token: TOK.owner });
+  eq('more matches made by hand in the same tournament', [pm2.status, pm3.status, pm3.json && pm3.json.match && pm3.json.match.matchNo], [200, 200, 3]);
   eq('private: the overlay\'s points table needs the match key', [(await api('GET', `/api/volleyball/matches/${pm.matchId}/standings`)).status, (await api('GET', `/api/volleyball/matches/${pm.matchId}/standings?key=wrong`)).status, (await api('GET', `/api/volleyball/matches/${pm.matchId}/standings?key=${pm.overlayKey}`)).status], [404, 404, 200]);
   const plogo = (await api('GET', `/api/volleyball/tournaments/${PT}`, { token: TOK.owner })).json.tournament.logo;
   eq('private: the tournament logo shows on its overlay with the key, nowhere else', [(await api('GET', plogo)).status, (await api('GET', `${plogo}&match=${pm.matchId}&key=${pm.overlayKey}`)).status], [404, 200]);

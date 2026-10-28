@@ -92,6 +92,22 @@
   .pick button b { font-size: 18px; min-width: 26px; font-variant-numeric: tabular-nums; }
   .ovr { display: grid; gap: 10px; }
   .sidebadge { position: absolute; top: 12px; right: 14px; font-size: 11px; font-weight: 700; color: var(--mute); }
+  .chip.air.on { background: color-mix(in srgb, var(--red) 18%, transparent); color: var(--ink); }
+  .airbox { padding: 14px 16px; border-radius: 16px; background: var(--fill); }
+  .airbox.on { background: color-mix(in srgb, var(--red) 12%, var(--fill)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 70%, transparent); }
+  .airbox.off { background: color-mix(in srgb, var(--orange) 14%, var(--fill)); }
+  .gtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  .gtile { border-radius: 14px; background: var(--fill); min-width: 0; }
+  .gtile .gmain { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left; padding: 12px 14px 10px; border-radius: 14px; }
+  .gtile .gmain:hover { background: var(--fill2); }
+  .gtile .gmain small { font-weight: 600; color: var(--mute); font-size: 12px; line-height: 1.3; }
+  .gtile .sub { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
+  .gtile .sub .chip { height: 28px; font-size: 12px; }
+  .gtile.na { opacity: .55; }
+  .gtile.onair { box-shadow: 0 0 0 2px var(--red); }
+  .ontag { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--red); }
+  .linkrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
+  .linkrow input { min-width: 0; font: 600 12.5px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
 </style>
 </head>
 <body>
@@ -109,6 +125,7 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="/volleyball-common.js"></script>
 <script src="/volleyball-engine.js"></script>
+<script src="/volleyball-graphics.js"></script>
 <script>
 (function () {
   'use strict';
@@ -147,7 +164,7 @@
       P.clips[d.clip.eventId] = Object.assign(P.clips[d.clip.eventId] || {}, d.clip); renderTimeline();
     });
     P.socket.on('vb:report', (d) => { if (d.matchId === P.matchId) { P.match.report = Object.assign(P.match.report || {}, { status: d.status, version: d.version || (P.match.report && P.match.report.version) }); render(); } });
-    P.socket.on('vb:graphic', (d) => { if (d.matchId === P.matchId) { P.graphic = d.graphic; renderChips(); } });
+    P.socket.on('vb:graphic', (d) => { if (d.matchId === P.matchId) setAirState(d.graphic); });
     checkEngine();
     setInterval(checkEngine, 20000);
     setInterval(heartbeat, 10000);
@@ -165,7 +182,7 @@
     if (!r.ok) return gate('Match not found', 'It may have been deleted, or this account cannot open it.');
     if (!r.match.canManage) return gate('View only', 'Only the account that runs this tournament can score it. The public scorecard is open to everyone.');
     P.match = r.match;
-    P.graphic = r.graphic || null;
+    P.graphic = null; setAirState(r.graphic);
     loadTournament();
     rebuild(r.events || []);
     await checkLease(true);
@@ -267,6 +284,16 @@
     render();
     flush();
     return chk.pending;
+  }
+  // fn once the server has stored the event (not only this device)
+  function whenSaved(pending, fn) {
+    if (!pending) return;
+    const id = pending.event.eventId, until = Date.now() + 20000;
+    const tick = () => {
+      if (!P.outbox.some((o) => o.event.eventId === id)) { if (P.L && P.L.has(id)) fn(); return; }
+      if (Date.now() < until) setTimeout(tick, 200);
+    };
+    tick();
   }
   async function flush() {
     if (P.flushing || !P.connected || !P.lease.mine) return;
@@ -394,8 +421,9 @@
     const remote = Date.now() - P.remoteClipAt < 10 * 60000;
     const clip = P.engine.ok ? `<a class="chip" href="/volleyball-clipper?match=${esc(P.matchId)}" target="_blank" title="Point clips: ${PRE}s before + ${POST}s after each press">🎬 ${P.engine.recording ? 'Clips on' : 'Clips: not recording'}</a>`
       : `<a class="chip" href="/volleyball-clipper?match=${esc(P.matchId)}" target="_blank" title="${remote ? 'The Volleyball Clipper on the recording PC is clipping each point' : 'Open the Volleyball Clipper on the PC that records to clip every point'}">🎬 ${remote ? 'Clips: Clipper PC' : 'Clips off'}</a>`;
-    const gfx = P.graphic && P.graphic.scene && P.graphic.scene !== 'none' && P.graphic.scene !== 'scorebug' ? `<span class="chip" style="background:color-mix(in srgb,var(--red) 18%,transparent)">On air: ${esc(P.graphic.scene)}</span>` : '';
-    $('#chips').innerHTML = gfx + clip + conn + lease;
+    $('#chips').innerHTML = '<button class="chip air" id="air" title="What the overlay shows — click for the graphics"></button>' + clip + conn + lease;
+    $('#air').onclick = openGfx;
+    renderAir();
     if ($('#takeBtn')) $('#takeBtn').onclick = () => takeControl(false);
     renderTitle();
   }
@@ -742,7 +770,8 @@
     $$('[data-c]', sh.el).forEach((b) => b.onclick = () => { choice = b.dataset.c; upd(); });
     $$('[data-f]', sh.el).forEach((b) => b.onclick = () => { firstServe = b.dataset.f; upd(); });
     $$('[data-l]', sh.el).forEach((b) => b.onclick = () => { leftSide = b.dataset.l; upd(); });
-    $('#ok', sh.el).onclick = () => { sh.close(); if (send({ type: 'TOSS', set, winner, choice, firstServe: choice === 'court' ? firstServe : undefined, leftSide })) setTimeout(() => graphic('toss', { set }), 300); };
+    // the toss goes on air once the server has it (the server shows only what it has)
+    $('#ok', sh.el).onclick = () => { sh.close(); whenSaved(send({ type: 'TOSS', set, winner, choice, firstServe: choice === 'court' ? firstServe : undefined, leftSide }), () => graphic('toss', { set })); };
   }
   // Six slots per team, laid out as the team sees its court (front row IV III II).
   const luDraft = {};
@@ -816,20 +845,141 @@
     $$('[data-g]').forEach((b) => b.onclick = () => graphic(b.dataset.g));
   }
 
-  /* ---------- graphics ---------- */
-  async function graphic(scene, data) {
-    const r = await VB.ack(P.socket, 'vb:graphic', { matchId: P.matchId, scene, data: data || {} });
-    if (!r.ok) toast('Could not change the graphic', 'err'); else { P.graphic = r.graphic; renderChips(); }
+  /* ---------- graphics: what is on air (the server's word) and the controls ----------
+     One graphic at a time. Taking one sends the score bar off air on every
+     overlay; when it ends (dismissed, timed out, replaced) the live score
+     comes back. Times on screen are the server's: it ends a timed graphic
+     itself, so a panel that is closed (or offline) cannot leave one up. */
+  const GX = window.VolleyballGraphics;
+  const airNow = () => Date.now() + (P.gOffset || 0);
+  let gfxSheet = null;
+  let gfxDur = VB.store.get('vb_gfx_dur', 'default');        // 'default' | 'hold' | seconds
+  function setAirState(g) {
+    if (!g || typeof g.seq !== 'number') return;
+    if (P.graphic && typeof P.graphic.seq === 'number' && g.seq < P.graphic.seq) return;
+    P.graphic = g;
+    if (g.serverNow) P.gOffset = g.serverNow - Date.now();
+    renderAir();
   }
-  $('#gfxBtn').onclick = () => {
-    const sc = [['scorebug', 'Scoreboard only'], ['intro', 'Match intro'], ['lineup', 'Starting six (both)'], ['toss', 'Toss result'], ['setSummary', 'Set summary'], ['final', 'Final result'], ['standings', 'Points table'], ['none', 'Hide everything']];
-    const sh = VB.sheet(`<h3>On-air graphics</h3><p class="small muted" style="margin:4px 0 12px">The overlay shows one graphic at a time, always from the saved match data.</p>
-      <div class="grid2">${sc.map(([k, l]) => `<button class="btn ${P.graphic && P.graphic.scene === k ? 'primary' : ''}" data-sc="${k}">${l}</button>`).join('')}</div>
-      <div class="section-title">Player card</div><div class="row wrapr">${['A', 'B'].map((t) => P.L.setup.teams[t].order.map((id) => `<button class="chip" data-ps="${esc(id)}">#${esc(player(t, id).number)} ${esc(short(player(t, id).name))}</button>`).join('')).join('')}</div>
-      <div class="foot"><button class="btn" data-close>Done</button></div>`, { wide: true });
-    $$('[data-sc]', sh.el).forEach((b) => b.onclick = () => { graphic(b.dataset.sc); sh.close(); });
-    $$('[data-ps]', sh.el).forEach((b) => b.onclick = () => { graphic('playerStat', { playerId: b.dataset.ps }); sh.close(); });
-  };
+  function airLabel(g) {
+    if (!g || !g.scene) return '';
+    let x = GX.SCENES[g.scene] ? GX.SCENES[g.scene].label : g.scene;
+    const d = g.data || {};
+    if (g.scene === 'lineup') x += d.team ? ' · ' + teamOf(d.team).name : ' · both teams';
+    if (g.scene === 'setSummary' && d.set) x += ' · set ' + d.set;
+    if (g.scene === 'playerStat' && d.playerId) { const t = player('A', d.playerId) ? 'A' : 'B'; const pl = player(t, d.playerId); if (pl) x += ' · #' + pl.number + ' ' + short(pl.name); }
+    return x;
+  }
+  const airLeft = (g) => (g && g.scene && g.expiresAt != null ? Math.max(0, Math.ceil((g.expiresAt - airNow()) / 1000)) : null);
+  function renderAir() {
+    const el = $('#air');
+    const g = P.graphic;
+    if (el) {
+      if (g && g.scene) { const left = airLeft(g); el.className = 'chip air on'; el.innerHTML = `<span class="dot bad"></span>On air · ${esc(airLabel(g))} · ${left != null ? left + ' s' : 'hold'}`; }
+      else if (g && g.clean) { el.className = 'chip air'; el.innerHTML = '<span class="dot wait"></span>Overlay hidden'; }
+      else { el.className = 'chip air'; el.innerHTML = '<span class="dot ok"></span>Live score'; }
+    }
+    if (gfxSheet) paintGfx();
+  }
+  setInterval(() => { if (P.graphic && P.graphic.scene && P.graphic.expiresAt != null) renderAir(); }, 1000);
+  async function airCmd(cmd) {
+    if (!P.socket) return { ok: false };
+    const r = await VB.ack(P.socket, 'vb:graphic', Object.assign({ matchId: P.matchId }, cmd));
+    if (r && r.graphic) setAirState(r.graphic);
+    if (!r || !r.ok) toast(r && r.stale ? 'That graphic is no longer on air' : r && r.error && !/^[a-z-]+$/.test(r.error) ? r.error : 'Could not change the graphic — check the connection', 'err');
+    return r || { ok: false };
+  }
+  // scorebug = the live score only, none = hide everything (the screens' own buttons use these)
+  function graphic(scene, data, durationSec) {
+    if (scene === 'scorebug') return airCmd({ action: 'live' });
+    if (scene === 'none') return airCmd({ action: 'clean' });
+    const cmd = { action: 'take', scene, data: data || {}, reqId: VB.uid() };
+    const d = durationSec !== undefined ? durationSec : gfxDur;
+    if (d !== 'default') cmd.durationSec = d;
+    return airCmd(cmd);
+  }
+  // what the match can show right now (the server checks again — this only greys out the obvious)
+  function sceneHint(sc) {
+    const st = P.L && P.L.state;
+    if (!st) return { ok: false, hint: 'Loading…' };
+    const s = E.summary(P.L.setup, st);
+    const nextSet = s.status === 'in_set' ? s.set : (s.nextSet || st.sets.length || 1);
+    const lu = st.lineups[nextSet] || {};
+    switch (sc) {
+      case 'intro': return { ok: true, hint: 'Teams, venue, date' };
+      case 'toss': return st.tosses[1] ? { ok: true, hint: tossText(st.tosses[1]).replace(/\.$/, '') } : { ok: false, hint: 'Record the toss first' };
+      case 'lineup': return lu.A || lu.B ? { ok: true, hint: 'Set ' + nextSet + (lu.A && lu.B ? ' · both saved' : ' · one saved') } : { ok: false, hint: 'Save the line-ups first' };
+      case 'setStart': return s.status === 'completed' || s.status === 'abandoned' ? { ok: false, hint: 'The match is over' } : { ok: true, hint: 'Set ' + nextSet + (s.status === 'in_set' ? ' · now' : ' · coming up') };
+      case 'rotation': return s.status === 'in_set' ? { ok: true, hint: 'Who stands where now' } : { ok: false, hint: 'During a set' };
+      case 'timeout': { const to = s.status === 'in_set' ? GX.runningTimeout(P.L.timeline, st.rules, VB.serverNow()) : null; return to ? { ok: true, hint: (to.technical ? 'Technical' : teamOf(to.team).name) + ' · ends with it' } : { ok: false, hint: 'When a time-out is called' }; }
+      case 'playerStat': return { ok: true, hint: 'Pick a player below' };
+      case 'setSummary': { const done = st.sets.filter((x) => x.status === 'completed'); return done.length ? { ok: true, hint: 'Set ' + done[done.length - 1].number + ' · or pick a set' } : { ok: false, hint: 'After a set' }; }
+      case 'final': return st.sets.length ? { ok: true, hint: s.status === 'completed' ? 'Final result' : 'The match score so far' } : { ok: false, hint: 'Once play starts' };
+      case 'scorecard': return st.sets.length ? { ok: true, hint: 'Team figures, top scorers' } : { ok: false, hint: 'Once play starts' };
+      case 'standings': return { ok: true, hint: 'The table as it stands now' };
+      default: return { ok: true, hint: '' };
+    }
+  }
+  $('#gfxBtn').onclick = openGfx;
+  function openGfx() {
+    if (gfxSheet) return;
+    gfxSheet = VB.sheet(`<div class="row wrapr"><h3 class="grow">On-air graphics</h3><a class="btn sm" href="/volleyball-templates?match=${esc(P.matchId)}" target="_blank" rel="noopener">Graphics studio ↗</a></div>
+      <p class="small muted" style="margin:4px 0 12px">One graphic at a time, always from the saved match. A graphic takes the screen: the score bar steps off and comes back, with the latest score, when it ends.</p>
+      <div id="gfxAir"></div>
+      <div class="row wrapr" style="margin:14px 0 4px"><span class="small grow"><b>Time on screen</b> <span class="muted">for the next graphic</span></span>
+        <div class="seg" id="gfxDur">${[['default', 'Tournament default'], ['hold', 'Hold'], [10, '10 s'], [20, '20 s'], [45, '45 s']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(v) === String(gfxDur)}">${l}</button>`).join('')}</div></div>
+      <div id="gfxBody"></div>
+      <div class="foot"><button class="btn" data-close>Done</button></div>`, { wide: true, onClose: () => { gfxSheet = null; } });
+    $$('#gfxDur button', gfxSheet.el).forEach((b) => b.onclick = () => {
+      gfxDur = b.dataset.v === 'default' || b.dataset.v === 'hold' ? b.dataset.v : Number(b.dataset.v);
+      VB.store.set('vb_gfx_dur', gfxDur);
+      $$('#gfxDur button', gfxSheet.el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    });
+    paintGfx(true);
+  }
+  function paintGfx(full) {
+    if (!gfxSheet) return;
+    const el = gfxSheet.el, g = P.graphic || {};
+    const on = !!g.scene, left = airLeft(g);
+    const both = on && g.scene === 'lineup' && !(g.data && g.data.team);
+    const swapped = both && g.swapAt != null && airNow() >= g.swapAt;
+    $('#gfxAir', el).innerHTML = `<div class="airbox ${on ? 'on' : g.clean ? 'off' : ''}"><div class="row wrapr">
+      <span class="dot ${on ? 'bad' : g.clean ? 'wait' : 'ok'}"></span>
+      <div class="grow" style="min-width:200px"><b>${on ? 'ON AIR · ' + esc(airLabel(g)) : g.clean ? 'Everything is hidden' : 'The live score is on air'}</b>
+        <div class="tiny muted">${on ? (left != null ? `${left} s left — then the live score returns` : 'Held until you dismiss it') : g.clean ? 'Nothing shows on the overlay until you bring it back.' : 'Pick a graphic below to take it to air.'}</div></div>
+      ${both && !swapped ? '<button class="btn sm" data-a="next">Next team</button>' : ''}
+      ${on && left != null ? '<button class="btn sm" data-a="hold">Hold</button>' : ''}
+      ${on ? '<button class="btn sm primary" data-a="stop">Dismiss · back to live</button>' : ''}
+      ${!on && g.clean ? '<button class="btn sm primary" data-a="live">Show the score bar</button>' : ''}
+      ${!g.clean ? '<button class="btn sm" data-a="clean">Hide everything</button>' : ''}</div></div>`;
+    $$('[data-a]', $('#gfxAir', el)).forEach((b) => b.onclick = () => {
+      const a = b.dataset.a;
+      if (a === 'next') airCmd({ action: 'next', id: g.id });
+      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' });
+      else if (a === 'stop') airCmd({ action: 'stop', id: g.id });
+      else airCmd({ action: a });
+    });
+    if (!full && $('#gfxBody', el).dataset.k === String(P.L ? P.L.seq : 0) + (g.scene || '') + (g.id || '')) return;
+    $('#gfxBody', el).dataset.k = String(P.L ? P.L.seq : 0) + (g.scene || '') + (g.id || '');
+    const st = P.L && P.L.state;
+    const done = st ? st.sets.filter((x) => x.status === 'completed') : [];
+    const tile = (sc) => {
+      const h = sceneHint(sc), live = on && g.scene === sc;
+      const subs = sc === 'lineup' ? `<div class="sub"><button class="chip" data-t="lineup" data-team="">Both teams</button>${['A', 'B'].map((t) => `<button class="chip" data-t="lineup" data-team="${t}">${esc(teamOf(t).shortName || teamOf(t).name)}</button>`).join('')}</div>`
+        : sc === 'setSummary' && done.length > 1 ? `<div class="sub">${done.map((x) => `<button class="chip" data-t="setSummary" data-set="${x.number}">Set ${x.number}</button>`).join('')}</div>` : '';
+      return `<div class="gtile ${h.ok ? '' : 'na'} ${live ? 'onair' : ''}"><button class="gmain" data-t="${sc}" ${sc === 'playerStat' ? 'data-noop="1"' : ''}><b>${esc(GX.SCENES[sc].label)}</b>${live ? '<span class="ontag">● ON AIR</span>' : ''}<small>${esc(h.hint)}</small></button>${subs}</div>`;
+    };
+    $('#gfxBody', el).innerHTML = Object.keys(GX.GROUPS).map((grp) => `<div class="section-title">${esc(GX.GROUPS[grp])}</div><div class="gtiles">${GX.ORDER.filter((k) => GX.SCENES[k].group === grp).map(tile).join('')}</div>`).join('')
+      + `<div class="section-title">Player card</div><div class="row wrapr">${['A', 'B'].map((t) => P.L ? P.L.setup.teams[t].order.map((id) => `<button class="chip" data-ps="${esc(id)}">#${esc(player(t, id).number)} ${esc(short(player(t, id).name))}</button>`).join('') : '').join('')}</div>`;
+    $$('[data-t]', $('#gfxBody', el)).forEach((b) => b.onclick = () => {
+      if (b.dataset.noop) return;
+      const data = {};
+      if (b.dataset.team) data.team = b.dataset.team;
+      if (b.dataset.set) data.set = Number(b.dataset.set);
+      graphic(b.dataset.t, data);
+    });
+    $$('[data-ps]', $('#gfxBody', el)).forEach((b) => b.onclick = () => graphic('playerStat', { playerId: b.dataset.ps }));
+  }
 
   /* ---------- corrections ---------- */
   $('#fixBtn').onclick = () => {
@@ -906,13 +1056,17 @@
   }
 
   $('#moreBtn').onclick = () => {
-    const ov = `${location.origin}/volleyball-overlay?match=${P.matchId}${P.tournament && P.tournament.visibility === 'private' ? '&key=' + P.match.overlayKey : ''}`;
-    const sh = VB.sheet(`<h3>Match links</h3><div class="stack" style="margin-top:12px">
-      <div class="row"><span class="grow small ellipsis">Overlay: ${esc(ov)}</span><button class="btn sm" id="cp">Copy</button><a class="btn sm" href="${esc(ov)}" target="_blank" rel="noopener">Open</a></div>
-      <a class="btn" href="/volleyball-clipper?match=${esc(P.matchId)}" target="_blank" rel="noopener">Volleyball Clipper</a><a class="btn" href="/volleyball/match/${esc(P.matchId)}" target="_blank" rel="noopener">Public scorecard</a><a class="btn" href="/volleyball#/t/${esc(P.match.tournamentId)}">Tournament dashboard</a>
-      <div class="row"><span class="grow small">Theme</span><div class="seg" id="th"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
+    const base = `${location.origin}/volleyball-overlay?match=${P.matchId}${P.tournament && P.tournament.visibility === 'private' ? '&key=' + P.match.overlayKey : ''}`;
+    const links = [['Score bar + graphics', base], ['Corner bug + graphics', base + '&layout=compact'], ['Graphics only (no score bar)', base + '&layout=graphics']];
+    // a long link sits in its own field (it scrolls inside it) — the sheet never grows sideways
+    const sh = VB.sheet(`<h3>Match links</h3><p class="small muted" style="margin:4px 0 10px">Add an overlay as a <b>Browser source</b> in vMix / OBS at 1920 × 1080 — its background is transparent.</p>
+      <div class="stack">${links.map(([l, u], i) => `<div><div class="small" style="font-weight:700;margin:0 2px 4px">${esc(l)}</div><div class="linkrow"><input class="input" readonly value="${esc(u)}" aria-label="${esc(l)} link"><button class="btn sm" data-cp="${i}">Copy</button><a class="btn sm" href="${esc(u)}" target="_blank" rel="noopener">Open</a></div></div>`).join('')}
+      <div class="grid2"><a class="btn" href="/volleyball-templates?match=${esc(P.matchId)}" target="_blank" rel="noopener">Graphics studio</a><a class="btn" href="/volleyball-clipper?match=${esc(P.matchId)}" target="_blank" rel="noopener">Volleyball Clipper</a>
+        <a class="btn" href="/volleyball/match/${esc(P.matchId)}" target="_blank" rel="noopener">Public scorecard</a><a class="btn" href="/volleyball#/t/${esc(P.match.tournamentId)}">Tournament dashboard</a></div>
+      <div class="row wrapr"><span class="grow small">Theme</span><div class="seg" id="th"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
       <p class="tiny muted">Keys: A / L = point to the left / right team · Z undo · Y redo · R replay · G graphics.</p></div><div class="foot"><button class="btn" data-close>Done</button></div>`);
-    $('#cp', sh.el).onclick = () => VB.copy(ov).then((ok) => toast(ok ? 'Overlay link copied' : ov));
+    $$('[data-cp]', sh.el).forEach((b) => b.onclick = () => { const u = links[Number(b.dataset.cp)][1]; VB.copy(u).then((ok) => toast(ok ? 'Overlay link copied' : u)); });
+    $$('.linkrow input', sh.el).forEach((inp) => inp.onfocus = () => inp.select());
     const cur = VB.store.get('vb_theme', 'auto');
     $$('#th button', sh.el).forEach((b) => { b.setAttribute('aria-pressed', String(b.dataset.v === cur)); b.onclick = () => { VB.store.set('vb_theme', b.dataset.v); VB.applyTheme(); $$('#th button', sh.el).forEach((x) => x.setAttribute('aria-pressed', String(x === b))); }; });
   };

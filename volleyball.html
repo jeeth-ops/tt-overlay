@@ -25,11 +25,14 @@
   .mact { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   @media (max-width: 760px) { .mrow { grid-template-columns: minmax(0, 1fr); } .mact { justify-content: flex-start; } }
   .roster { display: grid; gap: 6px; }
-  .rrow { display: grid; grid-template-columns: 54px minmax(0, 1fr) 150px auto auto auto 32px; gap: 6px; align-items: center; }
+  .rrow { display: grid; grid-template-columns: 40px 54px minmax(0, 1fr) 150px auto auto auto 32px; gap: 6px; align-items: center; }
+  .rrow .ph { width: 40px; height: 40px; border-radius: 50%; background: var(--fill) center 18% / cover no-repeat; display: grid; place-items: center; cursor: pointer; font-size: 15px; color: var(--mute); position: relative; }
+  .rrow .ph.none { cursor: not-allowed; opacity: .45; }
+  .rrow .ph .x { position: absolute; right: -4px; top: -4px; width: 18px; height: 18px; border-radius: 50%; background: var(--red); color: #fff; font: 700 11px/18px system-ui, sans-serif; text-align: center; }
   .rrow .input { height: 36px; border-radius: 10px; }
   .rrow .tog { height: 32px; min-width: 34px; border-radius: 9px; background: var(--fill); font-weight: 700; font-size: 12.5px; }
   .rrow .tog[aria-pressed="true"] { background: var(--blue); color: #fff; }
-  @media (max-width: 640px) { .rrow { grid-template-columns: 48px minmax(0, 1fr) auto auto auto 28px; } .rrow select { display: none; } }
+  @media (max-width: 640px) { .rrow { grid-template-columns: 36px 48px minmax(0, 1fr) auto auto auto 28px; } .rrow .ph { width: 36px; height: 36px; } .rrow select { display: none; } }
   .logo-pick { width: 72px; height: 72px; border-radius: 18px; background: var(--fill) center/contain no-repeat; display: grid; place-items: center; font-size: 26px; cursor: pointer; flex: none; border: 2px dashed var(--line2); }
   .pick-list { max-height: 280px; overflow: auto; }
   .gate { max-width: 520px; margin: 40px auto; text-align: center; }
@@ -292,7 +295,9 @@
       <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="tsv">${isNew ? 'Create team' : 'Save team'}</button></div>`, { wide: true, sticky: true });
     const el = sh.el;
     const draw = () => {
+      // a portrait (for the starting six and the player card) goes up at once — only for a saved player
       $('#roster', el).innerHTML = players.map((p, i) => `<div class="rrow" data-i="${i}" style="${p.active === false ? 'opacity:.5' : ''}">
+        ${!isNew && p.playerId ? `<label class="ph" title="Portrait for the broadcast graphics" style="${p.photo ? `background-image:url('${esc(p.photo)}')` : ''}">${p.photo ? '<span class="x" data-rmph title="Remove the portrait">×</span>' : '📷'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden data-ph></label>` : '<span class="ph none" title="Save the team first, then add a portrait">📷</span>'}
         <input class="input num" data-f="number" maxlength="3" value="${esc(p.number || '')}" placeholder="#" inputmode="numeric">
         <input class="input" data-f="name" maxlength="60" value="${esc(p.name || '')}" placeholder="Player name">
         <select class="input" data-f="role"><option value="">Role…</option>${Object.keys(VB.ROLES).map((k) => `<option value="${k}" ${p.role === k ? 'selected' : ''}>${VB.ROLES[k]}</option>`).join('')}</select>
@@ -311,6 +316,14 @@
           draw();
         });
         $('[data-del]', row).onclick = () => { players.splice(i, 1); draw(); };
+        const phIn = $('[data-ph]', row), rm = $('[data-rmph]', row);
+        const setPhoto = async (photo) => {
+          const r = await api('PUT', `/api/volleyball/teams/${team.teamId}/players/${players[i].playerId}/photo`, { photo });
+          if (!r.ok) return toast((r.json && r.json.error) || 'Could not save the portrait', 'err');
+          players[i].photo = r.json.photo; draw(); toast(photo ? 'Portrait saved' : 'Portrait removed');
+        };
+        if (phIn) phIn.onchange = async (e) => { try { await setPhoto(await VB.readPhoto(e.target.files[0])); } catch (err) { toast(err.message, 'err'); } };
+        if (rm) rm.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setPhoto(null); };
       });
     };
     draw();
@@ -421,7 +434,8 @@
     const base = `${location.origin}/volleyball-overlay?match=${m.matchId}${tState.tournament.visibility === 'private' ? '&key=' + m.overlayKey : ''}`;
     const items = [['Scoreboard', base], ['Compact scoreboard', base + '&layout=compact'], ['Graphics only (intro, line-ups…)', base + '&layout=graphics']];
     const s = VB.sheet(`<h3>Overlay links</h3><p class="muted small" style="margin:6px 0 12px">Add as a <b>Browser source</b> in OBS / vMix at 1920 × 1080. The background is transparent.</p>
-      <div class="stack">${items.map(([l, u]) => `<div class="row"><div class="grow"><b class="small">${esc(l)}</b><div class="tiny muted ellipsis">${esc(u)}</div></div><button class="btn sm" data-copy="${esc(u)}">Copy</button><a class="btn sm" href="${esc(u)}" target="_blank" rel="noopener">Open</a></div>`).join('')}</div>
+      <div class="stack">${items.map(([l, u]) => `<div class="row"><div class="grow"><b class="small">${esc(l)}</b><div class="tiny muted ellipsis">${esc(u)}</div></div><button class="btn sm" data-copy="${esc(u)}">Copy</button><a class="btn sm" href="${esc(u)}" target="_blank" rel="noopener">Open</a></div>`).join('')}
+        <a class="btn" href="/volleyball-templates?match=${esc(m.matchId)}" target="_blank" rel="noopener">Graphics studio — preview and take graphics to air</a></div>
       <div class="foot"><button class="btn" data-close>Done</button></div>`);
     $$('[data-copy]', s.el).forEach((b) => b.onclick = () => VB.copy(b.dataset.copy).then((ok) => toast(ok ? 'Copied' : b.dataset.copy)));
   }
