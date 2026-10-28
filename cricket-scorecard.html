@@ -2680,6 +2680,176 @@
   .hl-dl-b{ display:inline-grid; place-items:center; min-width:19px; height:19px; padding:0 4px; border-radius:6px; font-size:10.5px; font-weight:800; color:#fff; }
   .hl-dl-b.four{ background:var(--four); } .hl-dl-b.six{ background:var(--six); } .hl-dl-b.wicket{ background:var(--wicket); }
 </style>
+<style id="sc-tabs-style">
+  /* ================================================================
+     🧭 MATCH SECTIONS — the tab bar under the brand bar and the six
+     sections it opens (Info, Squads, Commentary, Summary, Insights, MVP).
+     The Scorecard tab is the page exactly as it always was: nothing in it
+     is restyled, moved or re-rendered by this block. On any other tab the
+     score header (and the live stream, which keeps playing) stays on top,
+     and only that section shows under it.
+     ================================================================ */
+  #sc-tabs{
+    position:sticky; top:var(--sct-top, 0px); z-index:39;
+    background:color-mix(in srgb, var(--panel) 92%, transparent);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);
+  }
+  @media (max-width:640px){ #sc-tabs{ backdrop-filter:none; -webkit-backdrop-filter:none; background:color-mix(in srgb, var(--panel) 97%, transparent); } }
+  .sct-track{
+    position:relative; display:flex; gap:2px; max-width:1440px; margin:0 auto; padding:0 18px;
+    overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch;
+  }
+  .sct-track::-webkit-scrollbar{ display:none; }
+  .sct-tab{
+    position:relative; flex:none; display:inline-flex; align-items:center; gap:7px;
+    padding:13px 14px 12px; border:none; background:none; cursor:pointer; white-space:nowrap;
+    font-family:var(--font-display); font-weight:700; font-size:13.5px; letter-spacing:.1px; color:var(--text-dim);
+    transition:color .18s ease;
+  }
+  .sct-tab svg{ width:16px; height:16px; flex:none; opacity:.85; }
+  .sct-tab:hover{ color:var(--text); }
+  .sct-tab[aria-selected="true"]{ color:var(--text); }
+  .sct-tab[aria-selected="true"] svg{ color:var(--accent); opacity:1; }
+  .sct-tab:focus-visible{ outline:2px solid var(--accent); outline-offset:-4px; border-radius:10px; }
+  .sct-live{ width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
+  .sct-live[hidden]{ display:none; }
+  .sct-ink{
+    position:absolute; left:0; bottom:0; height:3px; width:0; border-radius:3px 3px 0 0; background:var(--accent);
+    transform:translateX(0); transition:transform .28s cubic-bezier(.32,.72,0,1), width .28s cubic-bezier(.32,.72,0,1);
+    pointer-events:none;
+  }
+  @media (max-width:640px){ .sct-track{ padding:0 8px; } .sct-tab{ padding:12px 11px 11px; font-size:13px; gap:6px; } .sct-tab svg{ width:15px; height:15px; } }
+
+  /* every tab but Scorecard: the score header on top, then that section only */
+  html[data-sc-tab]:not([data-sc-tab="scorecard"]) #wrap > :not(#hero-row):not(#sc-panels){ display:none !important; }
+  html:not([data-sc-tab]) #sc-panels, html[data-sc-tab="scorecard"] #sc-panels{ display:none; }
+  #sc-panels{ display:flex; flex-direction:column; gap:14px; min-width:0; }
+  .sct-panel{ display:flex; flex-direction:column; gap:14px; min-width:0; animation:sctIn .26s ease both; }
+  .sct-panel[hidden]{ display:none; }
+  @keyframes sctIn{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:none; } }
+  @media (prefers-reduced-motion: reduce){ .sct-panel{ animation:none; } .sct-ink{ transition:none; } }
+
+  .sct-grid{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+  .sct-grid > *{ min-width:0; }
+  @media (max-width:860px){ .sct-grid{ grid-template-columns:minmax(0,1fr); } }
+  .sct-sub{ font-size:12px; color:var(--text-dim); margin:-8px 0 12px; line-height:1.45; }
+  .sct-note{ font-size:11.5px; color:var(--text-faint); line-height:1.5; }
+  .sct-empty{ text-align:center; color:var(--text-dim); padding:34px 16px; font-size:13.5px; line-height:1.5; }
+  .sct-empty b{ display:block; color:var(--text); font-family:var(--font-display); font-size:15px; margin-bottom:4px; }
+  .sct-pill{ display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:99px; font-size:11px; font-weight:800; letter-spacing:.3px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); white-space:nowrap; }
+  .sct-pill.live{ color:var(--live); border-color:color-mix(in srgb, var(--live) 40%, var(--border)); }
+  .sct-pill.live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
+  .sct-tcol{ color:var(--tc, var(--accent)); }
+  .sct-dot{ display:inline-block; width:10px; height:10px; border-radius:3px; background:var(--tc, var(--accent)); flex:none; }
+
+  /* Info */
+  .sct-kv{ display:grid; grid-template-columns:minmax(110px, 34%) minmax(0,1fr); }
+  .sct-kv > div{ padding:11px 2px; border-bottom:1px solid var(--border-soft); font-size:13px; min-width:0; overflow-wrap:anywhere; }
+  .sct-kv > div:nth-last-child(-n+2){ border-bottom:none; }
+  .sct-kv .k{ color:var(--text-dim); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; padding-top:13px; }
+  .sct-kv .v{ font-weight:700; }
+  .sct-kv .v.muted{ color:var(--text-faint); font-weight:600; }
+  .sct-vs{ display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:12px; margin-bottom:6px; }
+  .sct-vs .t{ display:flex; align-items:center; gap:10px; min-width:0; font-family:var(--font-display); font-weight:800; font-size:15px; }
+  .sct-vs .t.r{ flex-direction:row-reverse; text-align:right; }
+  .sct-vs .t span{ min-width:0; overflow-wrap:anywhere; }
+  .sct-vs .x{ font-size:11px; font-weight:800; color:var(--text-faint); letter-spacing:.6px; }
+  .sct-logo{ width:36px; height:36px; border-radius:11px; flex:none; display:grid; place-items:center; overflow:hidden; background:var(--tc, var(--accent)); color:#fff; font-size:12px; font-weight:800; box-shadow:0 0 0 1px var(--border); }
+  .sct-logo img{ width:100%; height:100%; object-fit:contain; background:#fff; }
+
+  /* Squads */
+  .sct-team-h{ display:flex; align-items:center; gap:10px; margin:-4px 0 12px; }
+  .sct-team-h h3{ margin:0; font-family:var(--font-display); font-size:16px; font-weight:800; flex:1; min-width:0; overflow-wrap:anywhere; }
+  .sct-sq-group{ font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); margin:14px 2px 4px; }
+  .sct-sq-group:first-of-type{ margin-top:0; }
+  .sct-pl{ display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--border-soft); }
+  .sct-pl:last-child{ border-bottom:none; }
+  .sct-pl .n{ width:26px; height:26px; border-radius:8px; display:grid; place-items:center; background:color-mix(in srgb, var(--tc, var(--accent)) 14%, transparent); color:var(--tc, var(--accent)); font-size:11px; font-weight:800; }
+  .sct-pl .nm{ font-weight:700; font-size:13.5px; min-width:0; overflow-wrap:anywhere; }
+  .sct-pl .fig{ font-size:11.5px; color:var(--text-dim); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .sct-pl .fig b{ color:var(--text); }
+  .sct-pl.bench .nm{ color:var(--text-dim); font-weight:600; }
+  .role-tag.role-lhb{ background:var(--panel-2); color:var(--text-dim); box-shadow:inset 0 0 0 1px var(--border); }
+
+  /* Summary / Insights */
+  .sct-inn-h{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .sct-inn-h .ttl{ font-family:var(--font-display); font-weight:800; font-size:15px; flex:1; min-width:0; }
+  .sct-inn-h .sc{ font-family:var(--font-display); font-weight:800; font-size:20px; font-variant-numeric:tabular-nums; }
+  .sct-inn-h .sc small{ font-size:12px; color:var(--text-dim); font-weight:700; margin-left:4px; }
+  .sct-mini{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
+  @media (max-width:520px){ .sct-mini{ grid-template-columns:minmax(0,1fr); } }
+  .sct-mini h4{ margin:0 0 4px; font-size:10.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); }
+  .sct-li{ display:flex; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px dashed var(--border-soft); font-size:12.5px; }
+  .sct-li:last-child{ border-bottom:none; }
+  .sct-li span:first-child{ min-width:0; overflow-wrap:anywhere; font-weight:700; }
+  .sct-li b{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .sct-li small{ color:var(--text-dim); font-weight:600; }
+  .sct-ps{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 12px; align-items:center; padding:8px 0; border-bottom:1px dashed var(--border-soft); font-size:12.5px; }
+  .sct-ps:last-child{ border-bottom:none; }
+  .sct-ps .who{ font-weight:700; min-width:0; overflow-wrap:anywhere; }
+  .sct-ps .who small{ display:block; color:var(--text-faint); font-weight:700; font-size:10.5px; text-transform:uppercase; letter-spacing:.3px; }
+  .sct-ps .r{ font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .sct-ps .bar{ grid-column:1 / -1; height:6px; border-radius:99px; background:var(--panel-2); overflow:hidden; }
+  .sct-ps .bar i{ display:block; height:100%; border-radius:99px; background:var(--tc, var(--accent)); }
+  .sct-moments{ display:flex; flex-direction:column; }
+  .sct-mo{ display:grid; grid-template-columns:52px 22px minmax(0,1fr); gap:10px; align-items:start; padding:10px 0; border-bottom:1px solid var(--border-soft); font-size:12.5px; line-height:1.45; }
+  .sct-mo:last-child{ border-bottom:none; }
+  .sct-mo .ov{ font-weight:800; color:var(--text-dim); font-variant-numeric:tabular-nums; padding-top:1px; }
+  .sct-mo .ic{ width:22px; height:22px; border-radius:7px; display:grid; place-items:center; font-size:11px; font-weight:800; color:#fff; background:var(--text-faint); }
+  .sct-mo .ic.w{ background:var(--wicket); } .sct-mo .ic.s{ background:var(--six); } .sct-mo .ic.f{ background:var(--four); } .sct-mo .ic.m{ background:var(--accent); }
+  .sct-mo .tx b{ font-weight:800; }
+  .sct-mo .tx small{ display:block; color:var(--text-dim); font-weight:600; }
+  .sct-tiles{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:10px; }
+  @media (max-width:760px){ .sct-tiles{ grid-template-columns:repeat(2, minmax(0,1fr)); } }
+  .sct-tile{ padding:12px 14px; border-radius:var(--radius-sm); background:var(--panel-2); border:1px solid var(--border); min-width:0; }
+  .sct-tile .k{ font-size:10.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); font-weight:800; }
+  .sct-tile .v{ font-family:var(--font-display); font-size:22px; font-weight:800; margin-top:3px; font-variant-numeric:tabular-nums; }
+  .sct-tile .s{ font-size:11.5px; color:var(--text-dim); font-weight:600; overflow-wrap:anywhere; }
+  .sct-chart{ width:100%; max-width:880px; margin:0 auto; overflow:hidden; }
+  .sct-chart svg{ display:block; width:100%; height:auto; }
+  .sct-legend{ display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; font-size:12px; font-weight:700; color:var(--text-dim); }
+  .sct-legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .sct-table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .sct-table-wrap table td:first-child{ font-weight:700; overflow-wrap:anywhere; }
+  .sct-share{ height:6px; border-radius:99px; background:var(--panel-2); overflow:hidden; min-width:56px; }
+  .sct-share i{ display:block; height:100%; background:var(--tc, var(--accent)); border-radius:99px; }
+
+  /* MVP */
+  .sct-mvp-top{ position:relative; overflow:hidden; border-top:3px solid var(--tc, var(--accent)); }
+  .sct-mvp-top::before{ content:''; position:absolute; inset:0; background:linear-gradient(135deg, color-mix(in srgb, var(--tc, var(--accent)) 16%, transparent), transparent 60%); pointer-events:none; }
+  .sct-mvp-top > *{ position:relative; }
+  .sct-mvp-head{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .sct-mvp-crown{ width:54px; height:54px; border-radius:16px; display:grid; place-items:center; font-size:26px; background:color-mix(in srgb, var(--tc, var(--accent)) 18%, var(--panel-2)); flex:none; }
+  .sct-mvp-name{ flex:1; min-width:0; }
+  .sct-mvp-name b{ display:block; font-family:var(--font-display); font-size:20px; font-weight:800; overflow-wrap:anywhere; }
+  .sct-mvp-name span{ font-size:12.5px; color:var(--text-dim); font-weight:700; }
+  .sct-mvp-pts{ text-align:right; }
+  .sct-mvp-pts b{ display:block; font-family:var(--font-display); font-size:30px; font-weight:800; line-height:1; color:var(--tc, var(--accent)); font-variant-numeric:tabular-nums; }
+  .sct-mvp-pts span{ font-size:10.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-faint); font-weight:800; }
+  .sct-calc{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .sct-calc span{ padding:6px 10px; border-radius:10px; background:var(--panel-2); border:1px solid var(--border); font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .sct-calc span.eq{ background:color-mix(in srgb, var(--tc, var(--accent)) 16%, var(--panel-2)); border-color:color-mix(in srgb, var(--tc, var(--accent)) 45%, var(--border)); }
+  .sct-why{ margin:12px 0 0; padding-left:18px; font-size:12.5px; line-height:1.6; color:var(--text-dim); }
+  .sct-why b{ color:var(--text); }
+  .sct-rank{ display:grid; grid-template-columns:26px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-soft); }
+  .sct-rank:last-child{ border-bottom:none; }
+  .sct-rank .no{ font-weight:800; color:var(--text-faint); text-align:center; }
+  .sct-rank .nm{ font-weight:800; font-size:13.5px; min-width:0; overflow-wrap:anywhere; }
+  .sct-rank .nm small{ display:block; font-weight:600; font-size:11.5px; color:var(--text-dim); }
+  .sct-rank .pt{ font-family:var(--font-display); font-weight:800; font-size:16px; font-variant-numeric:tabular-nums; }
+  .sct-stack{ grid-column:2 / -1; display:flex; height:6px; border-radius:99px; overflow:hidden; background:var(--panel-2); }
+  .sct-stack i{ display:block; height:100%; }
+  .sct-stack .bat{ background:var(--four); } .sct-stack .bowl{ background:var(--wicket); } .sct-stack .fld{ background:var(--accent); }
+
+  /* Commentary: the page's own full commentary, shown inline in the tab */
+  #sc-cm-host #commentary-page{ position:static; inset:auto; z-index:auto; transform:none; transition:none; background:transparent; will-change:auto; display:block; }
+  #sc-cm-host #commentary-page-head{ padding:0 0 12px; background:none; border-bottom:none; }
+  #sc-cm-host #commentary-page-back{ display:none; }
+  #sc-cm-host #cm-filterbar{ position:sticky; top:var(--sct-sticky, 0px); z-index:5; max-width:none; border:1px solid var(--border); border-radius:var(--radius-sm); }
+  #sc-cm-host #commentary-page-body{ overflow:visible; max-width:none; padding:14px 2px 4px; }
+  #sc-cm-host #commentary-page.ow-on #cm-filterbar, #sc-cm-host #commentary-page.ow-on #commentary-page-body{ max-width:none; }
+</style>
 </head>
 <body>
 
@@ -4074,6 +4244,7 @@ async function loadFinalBallLog(token, matchId){
   }
   if(finalMatchData){ renderFinalInnings(); renderResultAndSuperOver(finalMatchData, !!(finalMatchData.winningTeam || resultLineOf(finalMatchData)), finalBallLog); }
   renderFinalCommentary();
+  if(typeof scTabsRefresh === 'function') scTabsRefresh();
 }
 
 let lastSnapshotSignature = null; // set by loadMatchSnapshot; lets a 30s poll skip re-rendering an unchanged finished match
@@ -4661,6 +4832,7 @@ function renderFinalSnapshot(match, displayName){
   renderFinalInnings();
   renderTeamWicketClips({ battingTeam: finalActiveInnings });
   renderResultAndSuperOver(match, hasResult, finalBallLog);
+  if(typeof scTabsRefresh === 'function') scTabsRefresh();
 }
 
 // Small A/B switch above the batting/bowling tables so both completed
@@ -4836,6 +5008,8 @@ function render(){
   renderTables(s);
   renderBottom(s);
   renderResultAndSuperOver(s, matchStatusText(s).badge === 'RESULT', s.ballLog);
+  // 🧭 the open Info / Squads / Summary / Insights / MVP tab follows the live score
+  if(typeof scTabsRefresh === 'function') scTabsRefresh();
 }
 
 /* ---------- Momentum Meter ----------
@@ -5476,10 +5650,13 @@ function clipMapFingerprint(){ return Object.keys(commentaryClipMap).sort().join
 let commentaryCoverTimer = null;
 function openCommentaryPage(){
   commentaryPageOpen = true;
+  // 🧭 Shown inside the Commentary tab (sc-inline): no backdrop, and the
+  // page underneath is not covered — it is the page.
+  const inline = document.getElementById('commentary-page').classList.contains('sc-inline');
   document.getElementById('commentary-page').classList.add('open');
-  document.getElementById('commentary-page-backdrop').classList.add('open');
+  if(!inline) document.getElementById('commentary-page-backdrop').classList.add('open');
   clearTimeout(commentaryCoverTimer);
-  commentaryCoverTimer = setTimeout(() => { if(commentaryPageOpen) document.documentElement.classList.add('cm-open'); }, 320);
+  if(!inline) commentaryCoverTimer = setTimeout(() => { if(commentaryPageOpen) document.documentElement.classList.add('cm-open'); }, 320);
   // Build the (potentially large) commentary DOM AFTER the slide-up
   // transition has started, not before — doing it synchronously in the
   // same tick as adding .open blocked the main thread right as the CSS
@@ -5557,7 +5734,7 @@ document.getElementById('commentary-page-body').addEventListener('click', (e) =>
 })();
 document.getElementById('commentary-page-back').addEventListener('click', closeCommentaryPage);
 document.getElementById('commentary-page-backdrop').addEventListener('click', closeCommentaryPage);
-document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && commentaryPageOpen) closeCommentaryPage(); });
+document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && commentaryPageOpen && !document.getElementById('commentary-page').classList.contains('sc-inline')) closeCommentaryPage(); });
 
 // ---- Commentary filter bar state ----
 // commentaryInningsFilter: 'all' or the innings number (as a string, since
@@ -10046,6 +10223,675 @@ startWatching();
   var sync = function(){ el.classList.toggle('page-hidden', document.hidden); };
   document.addEventListener('visibilitychange', sync, { passive: true });
   sync();
+})();
+</script>
+<script>
+/* ================================================================
+   🧭 MATCH SECTIONS — Scorecard · Info · Squads · Commentary · Summary ·
+   Insights · MVP.
+
+   Scorecard is this page exactly as it always was. Every other tab is
+   built only from data this page already has: the live state the panel
+   broadcasts (latestState), or a finished match's saved record
+   (finalMatchData) and its ball log (finalBallLog). Nothing is invented: a
+   figure the match never recorded (officials, a squad that was never
+   saved, ball-by-ball for an imported scorecard) is said to be missing.
+
+   ?tab=<id> in the link opens that tab, and switching tabs updates the
+   link in place (no extra Back-button steps), so a shared or reloaded
+   link opens the same section. Scorecard has no ?tab=.
+   A live match keeps every tab current: render() / the finished-match
+   loaders call scTabsRefresh(), which redraws the open tab only.
+   ================================================================ */
+(function(){
+  'use strict';
+  const TABS = [
+    { id:'scorecard', label:'Scorecard', icon:'<rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M9 9.5V20"/>' },
+    { id:'info', label:'Info', icon:'<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.2"/>' },
+    { id:'squads', label:'Squads', icon:'<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9.5" r="2.5"/><path d="M15.4 14.3c2.5-.3 4.5 1.3 5.1 4.2"/>' },
+    { id:'commentary', label:'Commentary', icon:'<path d="M4.5 5.5h15v10h-8l-4.5 3.5v-3.5H4.5z"/><path d="M8 9.5h8M8 12.5h5"/>', live:true },
+    { id:'summary', label:'Summary', icon:'<path d="M6 4.5h9l3 3v12H6z"/><path d="M9 10.5h6M9 13.5h6M9 16.5h4"/>' },
+    { id:'insights', label:'Insights', icon:'<path d="M4.5 19.5h15"/><path d="M7 16v-4M11 16V8M15 16v-6M19 16V5"/>' },
+    { id:'mvp', label:'MVP', icon:'<path d="M12 3.8l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.5l5.4-.8z"/>' }
+  ];
+  const IDS = TABS.map(t => t.id);
+  const root = document.documentElement;
+  const E = (v) => escapeHtml(String(v == null ? '' : v));
+  let active = 'scorecard';
+  const painted = {};
+  let built = false;
+
+  /* ---------------- the bar + the panels ---------------- */
+  function build(){
+    const brand = document.getElementById('brandbar'), wrap = document.getElementById('wrap'), hero = document.getElementById('hero-row');
+    if(!brand || !wrap || !hero) return false;
+    if(document.getElementById('sc-tabs')) return true;
+    const nav = document.createElement('nav');
+    nav.id = 'sc-tabs';
+    nav.setAttribute('aria-label', 'Match sections');
+    nav.innerHTML = `<div class="sct-track" role="tablist" aria-label="Match sections">${TABS.map(t => `<button type="button" class="sct-tab" role="tab" id="sct-tab-${t.id}" data-tab="${t.id}" aria-selected="false" ${t.id === 'scorecard' ? 'aria-controls="wrap"' : `aria-controls="sct-p-${t.id}"`} tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${t.icon}</svg>${t.label}${t.live ? '<span class="sct-live" hidden aria-label="live"></span>' : ''}</button>`).join('')}<span class="sct-ink" aria-hidden="true"></span></div>`;
+    brand.insertAdjacentElement('afterend', nav);
+    const panels = document.createElement('div');
+    panels.id = 'sc-panels';
+    panels.innerHTML = TABS.filter(t => t.id !== 'scorecard').map(t => `<section class="sct-panel" id="sct-p-${t.id}" role="tabpanel" aria-labelledby="sct-tab-${t.id}" hidden>${t.id === 'commentary' ? '<div class="card" id="sc-cm-card"><div id="sc-cm-host"></div></div>' : ''}</section>`).join('');
+    hero.insertAdjacentElement('afterend', panels);
+    nav.addEventListener('click', (e) => { const b = e.target.closest('.sct-tab'); if(b) select(b.dataset.tab, { user:true }); });
+    nav.addEventListener('keydown', (e) => {
+      const i = IDS.indexOf(active);
+      const to = e.key === 'ArrowRight' ? IDS[(i + 1) % IDS.length] : e.key === 'ArrowLeft' ? IDS[(i - 1 + IDS.length) % IDS.length] : e.key === 'Home' ? IDS[0] : e.key === 'End' ? IDS[IDS.length - 1] : null;
+      if(!to) return;
+      e.preventDefault();
+      select(to, { user:true });
+      const b = document.getElementById('sct-tab-' + to); if(b) b.focus();
+    });
+    // the page swaps its whole content for a message (no match / could not load): no sections then
+    if(window.MutationObserver) new MutationObserver(() => { if(!document.getElementById('hero-row')) window.scTabsRefresh(); }).observe(wrap, { childList: true });
+    measure();
+    window.addEventListener('resize', () => { measure(); ink(); });
+    if(window.ResizeObserver) new ResizeObserver(() => { measure(); ink(); }).observe(brand);
+    built = true;
+    return true;
+  }
+  // The bar sits under the (sticky) brand bar; Commentary's filters sit under both.
+  function measure(){
+    const brand = document.getElementById('brandbar'), nav = document.getElementById('sc-tabs');
+    const bh = brand ? brand.offsetHeight : 0;
+    root.style.setProperty('--sct-top', bh + 'px');
+    root.style.setProperty('--sct-sticky', (bh + (nav ? nav.offsetHeight : 0) + 8) + 'px');
+  }
+  function ink(){
+    const b = document.getElementById('sct-tab-' + active), i = document.querySelector('#sc-tabs .sct-ink');
+    if(!b || !i) return;
+    i.style.width = Math.max(0, b.offsetWidth - 20) + 'px';
+    i.style.transform = `translateX(${b.offsetLeft + 10}px)`;
+  }
+  function tabFromUrl(){
+    const t = new URLSearchParams(location.search).get('tab');
+    return IDS.includes(t) ? t : 'scorecard';
+  }
+  function writeUrl(id){
+    try {
+      const qs = new URLSearchParams(location.search);
+      if(id === 'scorecard') qs.delete('tab'); else qs.set('tab', id);
+      const q = qs.toString();
+      history.replaceState(history.state, '', location.pathname + (q ? '?' + q : '') + location.hash);
+    } catch(e){ /* a sandboxed frame: the tab still switches */ }
+  }
+
+  function select(id, opts){
+    opts = opts || {};
+    if(!IDS.includes(id)) id = 'scorecard';
+    if(!built && !build()) return;
+    const prev = active;
+    active = id;
+    root.dataset.scTab = id;
+    document.querySelectorAll('#sc-tabs .sct-tab').forEach(b => {
+      const on = b.dataset.tab === id;
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
+    });
+    document.querySelectorAll('#sc-panels .sct-panel').forEach(p => { p.hidden = p.id !== 'sct-p-' + id; });
+    ink();
+    if(opts.user) writeUrl(id);
+    commentaryInline(id === 'commentary');
+    if(id !== 'scorecard' && id !== 'commentary') paint(id, true);
+    // the chosen tab fully in view inside the (sideways-scrolling) bar on a phone —
+    // after the section is drawn, and at once (a smooth scroll is cut short by that work)
+    const tb = document.getElementById('sct-tab-' + id), track = tb && tb.parentElement;
+    if(tb && track && track.scrollWidth > track.clientWidth){
+      const pad = 24, l = tb.offsetLeft, r = l + tb.offsetWidth;
+      const to = l - pad < track.scrollLeft ? l - pad : r + pad > track.scrollLeft + track.clientWidth ? r + pad - track.clientWidth : null;
+      if(to != null) track.scrollLeft = Math.max(0, to);
+    }
+    // Read from the top of the section the viewer chose — but never jump
+    // when they are already above it.
+    if(opts.user && prev !== id){
+      const wrap = document.getElementById('wrap');
+      const sticky = parseFloat(getComputedStyle(root).getPropertyValue('--sct-sticky')) || 0;
+      if(wrap && wrap.getBoundingClientRect){
+        const y = Math.max(0, window.scrollY + wrap.getBoundingClientRect().top - sticky);
+        if(window.scrollY > y + 4) try { window.scrollTo({ top: y, behavior:'auto' }); } catch(e){}
+      }
+    }
+  }
+
+  /* ---------------- Commentary: the page's own full commentary, inline ----------------
+     The full-screen commentary page (same filters, over summaries, wagon
+     wheels and clip replays) is moved into the tab while the tab is open
+     and put back where it was when it closes — so "Watch Full Commentary"
+     on the Scorecard tab still opens it full screen, exactly as before. */
+  let cmMark = null;
+  function commentaryInline(on){
+    const page = document.getElementById('commentary-page'), host = document.getElementById('sc-cm-host');
+    if(!page || !host) return;
+    if(read(() => typeof commentaryPageOpen) !== 'boolean') return;   // the main script did not start
+    if(on){
+      if(page.parentNode !== host){
+        if(commentaryPageOpen) closeCommentaryPage();          // it was open full screen
+        if(!cmMark){ cmMark = document.createComment('commentary-page'); page.parentNode.insertBefore(cmMark, page); }
+        host.appendChild(page);
+      }
+      page.classList.add('sc-inline');
+      if(!commentaryPageOpen) openCommentaryPage();
+    } else if(page.classList.contains('sc-inline')){
+      page.classList.remove('sc-inline');
+      if(commentaryPageOpen) closeCommentaryPage();
+      if(cmMark && cmMark.parentNode) cmMark.parentNode.insertBefore(page, cmMark);
+    }
+  }
+
+  /* ---------------- one view of the match, live or finished ---------------- */
+  function teamOf(m, k){ return (k === 'A' ? m.A : m.B) || {}; }
+  function tName(t, k){ return (t && (t.name || t.short)) || ('Team ' + k); }
+  function tShort(t, k){ return (t && (t.short || t.name)) || k; }
+  function tColor(t, k){ return (t && t.color) || (k === 'A' ? 'var(--team-a-color, var(--accent))' : 'var(--team-b-color, var(--six))'); }
+  const ord = (n) => n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th';
+  const ballsOf = (o) => { const p = String(o == null ? '0' : o).split('.'); return (Number(p[0]) || 0) * 6 + (Number(p[1]) || 0); };
+  const rr = (runs, balls) => balls > 0 ? (runs * 6 / balls) : 0;
+
+  // (the page's own state lives in the main script; if that script never
+  // finished starting, its bindings cannot be read — no data then)
+  const read = (fn) => { try { return fn(); } catch(e){ return undefined; } };
+  function model(){
+    const s = read(() => latestState && latestState.score ? latestState : null) || null;
+    if(s){
+      const balls = (typeof dedupeBallLog === 'function' ? dedupeBallLog(s.ballLog || []) : (s.ballLog || []));
+      const st = Object.assign({}, s, { ballLog: balls });
+      const status = matchStatusText(s);
+      const innings = (s.inningsArchive || []).filter(i => !isSuperOverInnings(i.no)).map(i => ({ no: i.no, team: i.team, runs: i.runs, wickets: i.wickets, overs: i.overs, declared: i.declared, extras: i.extras }));
+      const curNo = s.inningsNumber || 1;
+      if(!innings.some(i => i.no === curNo) && !liveInSuperOver(s) && (balls.some(b => (b.innings || 1) === curNo) || s.score.runs || s.score.wickets || s.score.overs || s.score.balls)){
+        innings.push({ no: curNo, team: s.battingTeam, runs: s.score.runs, wickets: s.score.wickets, overs: fmtOvers(s.score.overs, s.score.balls), current: status.badge !== 'RESULT', extras: (s.extras && s.extras[s.battingTeam]) || null });
+      }
+      let statusText = status.text;
+      if(status.badge === 'LIVE' && s.target && !liveInSuperOver(s)){
+        const left = (ballsPerInnings(s) || 0) - ((s.score.overs || 0) * 6 + (s.score.balls || 0)), need = s.target - s.score.runs;
+        const bt = s.battingTeam === 'A' ? s.teamA : s.teamB;
+        if(need > 0) statusText = `${(bt && (bt.short || bt.name)) || 'Team ' + s.battingTeam} need ${need} run${need === 1 ? '' : 's'}${left > 0 ? ` off ${left} ball${left === 1 ? '' : 's'}` : ''}`;
+      }
+      return { live: true, finished: status.badge === 'RESULT', statusText, st, A: s.teamA || {}, B: s.teamB || {}, balls, innings,
+        squads: { A: s.teamA ? { players: s.teamA.players, captainId: s.teamA.captainId, wkId: s.teamA.wkId } : null, B: s.teamB ? { players: s.teamB.players, captainId: s.teamB.captainId, wkId: s.teamB.wkId } : null },
+        partnerships: null, imported: false, tournament: s.leagueName || '', meta: s, target: s.target || null };
+    }
+    const fm = read(() => finalMatchData);
+    if(fm){
+      const m = fm;
+      const balls = read(() => finalBallLog) || [];
+      const innings = (m.inningsArchive || []).filter(i => !isSuperOverInnings(i.no)).map(i => ({ no: i.no, team: i.team, runs: i.runs, wickets: i.wickets, overs: i.overs, declared: i.declared, extras: i.extras }));
+      // the innings that ended the match is not archived — its team's total is
+      ['A', 'B'].forEach(k => {
+        const rows = ((m.battingCard && m.battingCard[k]) || []).filter(r => !isSuperOverInnings(r.inningsNo || 1));
+        const nos = [...new Set(rows.map(r => r.inningsNo || 1))];
+        const sc = k === 'A' ? m.scoreA : m.scoreB;
+        nos.forEach(no => {
+          if(innings.some(i => i.no === no)) return;
+          const others = innings.filter(i => i.team === k);
+          if(others.length) return; // a Test team's later innings: its own total is not split out in the record
+          innings.push({ no, team: k, runs: (sc && sc.runs) || 0, wickets: (sc && sc.wickets) || 0, overs: (sc && sc.overs) || '0.0', extras: (m.extras && m.extras[k]) || null });
+        });
+        if(!nos.length && sc && (sc.runs || ballsOf(sc.overs)) && !innings.some(i => i.team === k)){
+          innings.push({ no: innings.length + 1, team: k, runs: sc.runs || 0, wickets: sc.wickets || 0, overs: sc.overs || '0.0', extras: (m.extras && m.extras[k]) || null });
+        }
+      });
+      innings.sort((a, b) => a.no - b.no);
+      const last = innings[innings.length - 1] || { no: 1, team: firstBattingTeamOf(m) };
+      const st = { format: m.format, customOvers: m.customOvers, teamA: m.teamA || {}, teamB: m.teamB || {}, battingCard: m.battingCard || {}, bowlingCard: m.bowlingCard || {},
+        fallOfWickets: m.fallOfWickets || {}, extras: m.extras || {}, inningsArchive: innings, inningsNumber: last.no, battingTeam: last.team, ballLog: balls,
+        striker: null, nonStriker: null, bowler: null, score: { runs: 0, wickets: 0, overs: 0, balls: 0 }, toss: m.toss, venue: m.venue };
+      const hasResult = !!(m.winningTeam || resultLineOf(m));
+      return { live: false, finished: hasResult, statusText: hasResult ? (resultLineOf(m) || winMarginText(m) || shortResultText(m) || 'Match completed') : 'In progress', st, A: m.teamA || {}, B: m.teamB || {}, balls, innings,
+        squads: { A: m.squadA || null, B: m.squadB || null }, partnerships: m.partnerships || null, imported: !!m.importSource, tournament: read(() => finalTournamentName) || '', meta: m, target: null };
+    }
+    return null;
+  }
+  const innBalls = (m, no) => m.balls.filter(b => (b.innings || 1) === no);
+  function battingOf(m, inn){ try { return battingRowsForInnings(m.st, inn.no); } catch(e){ return []; } }
+  function bowlingOf(m, inn){ try { return bowlingRowsForInnings(m.st, inn.no); } catch(e){ return []; } }
+  function nameTeam(m){
+    const map = {};
+    ['A', 'B'].forEach(k => {
+      ((m.st.battingCard && m.st.battingCard[k]) || []).forEach(r => { if(r && r.name) map[r.name] = k; });
+      ((m.st.bowlingCard && m.st.bowlingCard[k]) || []).forEach(r => { if(r && r.name && !map[r.name]) map[r.name] = k; });
+      const sq = m.squads[k]; ((sq && sq.players) || []).forEach(p => { if(p && p.name && !map[p.name]) map[p.name] = k; });
+    });
+    if(m.live){
+      const s = m.st, bt = s.battingTeam, ft = bt === 'A' ? 'B' : 'A';
+      [s.striker, s.nonStriker].forEach(p => { if(p && p.name && !map[p.name]) map[p.name] = bt; });
+      if(s.bowler && s.bowler.name && !map[s.bowler.name]) map[s.bowler.name] = ft;
+    }
+    return map;
+  }
+  function overs(m, no){
+    const out = [];
+    innBalls(m, no).forEach(b => {
+      const ov = overBallParts(b.over, b.ballType).over;
+      let o = out[out.length - 1];
+      if(!o || o.over !== ov){ o = { over: ov, runs: 0, wkts: 0, balls: 0, bowler: b.bowler || '' }; out.push(o); }
+      o.runs += (b.runs || 0);
+      if(b.isWicket) o.wkts++;
+      if(LEGAL_KINDS.has(b.ballType)) o.balls++;
+      if(!o.bowler && b.bowler) o.bowler = b.bowler;
+    });
+    return out;
+  }
+  // 4s / 6s off the bat, dots and the rest — counted from the deliveries themselves.
+  function scoring(m, no){
+    const c = { dots: 0, ones: 0, twos: 0, threes: 0, fours: 0, sixes: 0, legal: 0, extrasBalls: 0 };
+    innBalls(m, no).forEach(b => {
+      const k = b.ballType, r = b.runs || 0;
+      if(LEGAL_KINDS.has(k)){ c.legal++; if(r === 0) c.dots++; }
+      if(k === '1') c.ones++; else if(k === '2') c.twos++; else if(k === '3') c.threes++;
+      else if(k === '4') c.fours++; else if(k === '6') c.sixes++;
+      else if(k === 'OT'){ if(r === 4) c.fours++; else if(r === 6) c.sixes++; }
+      else if(k === 'Nb' && (!b.nbRunsAs || b.nbRunsAs === 'bat')){ if(r - 1 === 4) c.fours++; else if(r - 1 === 6) c.sixes++; }
+      if(k === 'Wd' || k === 'Nb' || k === 'B' || k === 'LB' || k === 'PEN') c.extrasBalls++;
+    });
+    return c;
+  }
+  // Partnerships of an innings: the saved record's own list for a finished
+  // match; otherwise worked out from the deliveries (runs incl. extras, legal balls).
+  function partnerships(m, inn){
+    const saved = m.partnerships && (m.partnerships[inn.no] || m.partnerships[String(inn.no)]);
+    if(Array.isArray(saved) && saved.length) return saved.map(p => ({ batters: p.batters || String(p.pairKey || '').split('|'), runs: p.runs || 0, balls: p.balls || 0, forWicket: p.forWicket, unbroken: !p.endScore && !p.broken }));
+    const out = []; let cur = null;
+    innBalls(m, inn.no).forEach(b => {
+      if(!cur){ cur = { batters: [b.striker, b.nonStriker].filter(Boolean), runs: 0, balls: 0, forWicket: out.length + 1, unbroken: true }; }
+      [b.striker, b.nonStriker].forEach(n => { if(n && !cur.batters.includes(n) && cur.batters.length < 2) cur.batters.push(n); });
+      cur.runs += (b.runs || 0);
+      if(LEGAL_KINDS.has(b.ballType)) cur.balls++;
+      if(b.isWicket){ cur.unbroken = false; out.push(cur); cur = null; }
+    });
+    if(cur) out.push(cur);
+    return out;
+  }
+
+  /* ---------------- small pieces ---------------- */
+  function logo(t, k){
+    const c = tColor(t, k);
+    if(t && t.logoUrl) return `<span class="sct-logo" style="--tc:${E(c)}"><img src="${E(t.logoUrl)}" alt="" loading="lazy"></span>`;
+    const ini = String(tShort(t, k)).slice(0, 3).toUpperCase();
+    return `<span class="sct-logo" style="--tc:${E(c)}">${E(ini)}</span>`;
+  }
+  const empty = (title, text) => `<div class="card"><div class="sct-empty"><b>${E(title)}</b>${E(text)}</div></div>`;
+  const card = (title, body, extra) => `<div class="card${extra ? ' ' + extra : ''}"><div class="section-title"><span class="dash"></span>${title}</div>${body}</div>`;
+  const statusPill = (m) => m.finished ? `<span class="sct-pill">Result</span>` : m.live ? `<span class="sct-pill live">Live</span>` : `<span class="sct-pill">Snapshot</span>`;
+  function formatText(st){
+    if(!st.format) return '';
+    if(st.format === 'Custom') return `${st.customOvers || 20} overs a side`;
+    if(st.format === 'Test') return 'Test match';
+    const r = FORMAT_RULES[st.format];
+    return r && r.oversPerInnings !== Infinity ? `${st.format} · ${r.oversPerInnings} overs a side` : st.format;
+  }
+  function dateText(d){
+    if(!d) return '';
+    const mm = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
+    const dt = mm ? new Date(+mm[1], +mm[2] - 1, +mm[3]) : new Date(d);
+    if(isNaN(dt)) return String(d);
+    try { return dt.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short', year:'numeric' }); } catch(e){ return dt.toDateString(); }
+  }
+
+  /* ---------------- INFO ---------------- */
+  function renderInfo(m){
+    const s = m.meta || {}, A = m.A, B = m.B;
+    const toss = m.st.toss && (m.st.toss.winner === 'A' || m.st.toss.winner === 'B')
+      ? `${tName(teamOf(m, m.st.toss.winner), m.st.toss.winner)} won the toss and chose to ${m.st.toss.decision === 'BOWL' ? 'bowl' : 'bat'} first` : '';
+    const scores = m.innings.map(i => `${E(tShort(teamOf(m, i.team), i.team))} ${i.runs}/${i.wickets}${i.declared ? 'd' : ''} (${E(i.overs)} ov)`).join(' · ');
+    const rows = [
+      ['Match', `${tName(A, 'A')} vs ${tName(B, 'B')}`],
+      ['Tournament', m.tournament],
+      ['Match no.', s.matchNo ? 'Match ' + s.matchNo : ''],
+      ['Stage', s.matchStage],
+      ['Format', formatText(m.st)],
+      ['Date', dateText(s.matchDate)],
+      ['Venue', m.st.venue || s.venue],
+      ['Toss', toss],
+      ['Status', m.statusText],
+      ['Score', scores],
+      ['Officials', '']
+    ];
+    const kv = rows.map(([k, v]) => {
+      const missing = k === 'Officials' ? 'Umpires and match officials are not recorded for this match' : 'Not recorded';
+      return `<div class="k">${E(k)}</div><div class="v${v ? '' : ' muted'}">${v ? (k === 'Score' ? v : E(v)) : E(missing)}</div>`;
+    }).join('');
+    const head = `<div class="sct-vs"><div class="t">${logo(A, 'A')}<span>${E(tName(A, 'A'))}</span></div><div class="x">VS</div><div class="t r">${logo(B, 'B')}<span>${E(tName(B, 'B'))}</span></div></div>`;
+    const stream = (s.streamUrl && typeof extractYouTubeId === 'function' && extractYouTubeId(s.streamUrl)) ? `<p class="sct-note" style="margin-top:12px">Live stream: shown under the score at the top of every tab.</p>` : '';
+    return card(`Match info ${statusPill(m)}`, head + `<div class="sct-kv" style="margin-top:10px">${kv}</div>` + stream);
+  }
+
+  /* ---------------- SQUADS ---------------- */
+  function figuresByName(m){
+    const bat = {}, bowl = {};
+    ['A', 'B'].forEach(k => {
+      ((m.st.battingCard && m.st.battingCard[k]) || []).forEach(r => { if(!r || !r.name || isSuperOverInnings(r.inningsNo || 1)) return; (bat[r.name] = bat[r.name] || []).push(r); });
+      ((m.st.bowlingCard && m.st.bowlingCard[k]) || []).forEach(r => { if(!r || !r.name || isSuperOverInnings(r.inningsNo || 1)) return; (bowl[r.name] = bowl[r.name] || []).push(r); });
+    });
+    if(m.live){
+      const s = m.st;
+      [s.striker, s.nonStriker].forEach(p => { if(p && p.name && !(bat[p.name] || []).some(r => (r.inningsNo || 1) === s.inningsNumber)) (bat[p.name] = bat[p.name] || []).push({ ...p, out: false, howOut: 'not out', inningsNo: s.inningsNumber }); });
+      if(s.bowler && s.bowler.name){ const list = (bowl[s.bowler.name] = bowl[s.bowler.name] || []); const i = list.findIndex(r => (r.inningsNo || 1) === s.inningsNumber); if(i > -1) list[i] = { ...s.bowler, inningsNo: s.inningsNumber }; else if(s.bowler.overs || s.bowler.balls) list.push({ ...s.bowler, inningsNo: s.inningsNumber }); }
+    }
+    return { bat, bowl };
+  }
+  function renderSquads(m){
+    const fig = figuresByName(m);
+    const ip = impactListOf(m.meta || {});
+    const teamBatted = (k) => m.innings.some(i => i.team === k);
+    const blocks = ['A', 'B'].map(k => {
+      const t = teamOf(m, k), c = tColor(t, k);
+      const sq = m.squads[k];
+      let players = (sq && Array.isArray(sq.players) ? sq.players : []).filter(p => p && p.name);
+      let derived = false;
+      if(!players.length){
+        // no squad saved with this match: the players who batted or bowled
+        const names = new Set();
+        ((m.st.battingCard && m.st.battingCard[k]) || []).forEach(r => r && r.name && names.add(r.name));
+        ((m.st.bowlingCard && m.st.bowlingCard[k]) || []).forEach(r => r && r.name && names.add(r.name));
+        players = [...names].map(n => ({ name: n, isXI: true }));
+        derived = players.length > 0;
+      }
+      if(!players.length) return `<div class="card" style="--tc:${E(c)}"><div class="sct-team-h">${logo(t, k)}<h3>${E(tName(t, k))}</h3></div><div class="sct-empty" style="padding:18px 6px"><b>Squad not announced</b>The players appear here once the scorer adds them.</div></div>`;
+      const cap = sq && sq.captainId, wk = sq && sq.wkId;
+      const row = (p, i, bench) => {
+        const tags = [];
+        if(p.id && cap && p.id === cap) tags.push('<span class="role-tag role-c" title="Captain">C</span>');
+        if(p.id && wk && p.id === wk) tags.push('<span class="role-tag role-wk" title="Wicketkeeper">WK</span>');
+        if(p.hand === 'L') tags.push('<span class="role-tag role-lhb" title="Left-handed batter">LHB</span>');
+        const inE = ip.find(e => (p.id && e.inId === p.id) || e.inName === p.name), outE = ip.find(e => (p.id && e.outId === p.id) || e.outName === p.name);
+        if(inE) tags.push(`<span class="role-tag role-ipin" title="Impact Player — came on for ${E(inE.outName || '')}">⬆ IP</span>`);
+        else if(outE) tags.push(`<span class="role-tag role-ipout" title="Replaced by Impact Player ${E(outE.inName || '')}">⬇ SUB</span>`);
+        else if(p.impactSub && bench) tags.push('<span class="role-tag role-ipout" title="Named Impact Player substitute">IP sub</span>');
+        const b = fig.bat[p.name] || [], w = fig.bowl[p.name] || [];
+        const parts = [];
+        b.forEach(r => parts.push(`<b>${r.runs || 0}${r.out ? '' : '*'}</b> (${r.balls || 0})`));
+        w.forEach(r => parts.push(`<b>${r.wickets || 0}/${r.runs || 0}</b> (${fmtOvers(r.overs, r.balls)})`));
+        const figure = parts.length ? parts.join(' · ') : (!bench && teamBatted(k) && m.finished ? 'DNB' : '');
+        return `<div class="sct-pl${bench ? ' bench' : ''}"><span class="n">${i + 1}</span><span class="nm">${E(p.name)}${tags.join('')}</span><span class="fig">${figure}</span></div>`;
+      };
+      const xi = players.filter(p => p.isXI !== false), rest = players.filter(p => p.isXI === false);
+      return `<div class="card" style="--tc:${E(c)}"><div class="sct-team-h">${logo(t, k)}<h3>${E(tName(t, k))}</h3><span class="sct-pill">${xi.length} in XI</span></div>
+        <div class="sct-sq-group">${derived ? 'Players who featured' : 'Playing XI'}</div>${xi.map((p, i) => row(p, i, false)).join('')}
+        ${rest.length ? `<div class="sct-sq-group">Bench / squad</div>${rest.map((p, i) => row(p, i, true)).join('')}` : ''}
+        ${derived ? '<p class="sct-note" style="margin-top:10px">The full squad was not saved with this match — these are the players who batted or bowled.</p>' : ''}</div>`;
+    });
+    return `<div class="sct-grid">${blocks.join('')}</div><p class="sct-note">C captain · WK wicketkeeper · LHB left-handed batter · ⬆ IP Impact Player · figures are this match's: runs (balls) and wickets/runs (overs).</p>`;
+  }
+
+  /* ---------------- SUMMARY ---------------- */
+  function inningsTitle(m, inn){ return `${ord(inn.no)} innings · ${tName(teamOf(m, inn.team), inn.team)}`; }
+  function renderSummary(m){
+    if(!m.innings.length) return empty('The summary builds up as the match is played', 'Innings totals, top performers, partnerships, the fall of wickets and the key moments appear here from the first ball.');
+    const out = [];
+    if(m.finished || m.statusText) out.push(`<div class="card"><div class="sct-inn-h"><span class="ttl">${E(m.statusText)}</span>${statusPill(m)}</div>${m.innings.map(i => `<div class="sct-li"><span><span class="sct-dot" style="--tc:${E(tColor(teamOf(m, i.team), i.team))}"></span> ${E(inningsTitle(m, i))}</span><b>${i.runs}/${i.wickets}${i.declared ? 'd' : ''} <small>(${E(i.overs)} ov)</small></b></div>`).join('')}</div>`);
+    m.innings.slice().reverse().forEach(inn => {
+      const t = teamOf(m, inn.team), c = tColor(t, inn.team);
+      const bat = battingOf(m, inn).slice().sort((a, b) => (b.runs || 0) - (a.runs || 0) || (a.balls || 0) - (b.balls || 0)).slice(0, 3);
+      const bowl = bowlingOf(m, inn).slice().sort((a, b) => (b.wickets || 0) - (a.wickets || 0) || (a.runs || 0) - (b.runs || 0)).slice(0, 3);
+      const ex = inn.extras || {};
+      const exTotal = ['wd', 'nb', 'b', 'lb', 'pen'].reduce((n, k2) => n + (Number(ex[k2]) || 0), 0);
+      const pships = partnerships(m, inn);
+      const maxP = Math.max(1, ...pships.map(p => p.runs || 0));
+      const fowList = ((m.st.fallOfWickets && m.st.fallOfWickets[inn.team]) || []).filter(f => (f.inningsNo || 1) === inn.no);
+      out.push(`<div class="card card-featured" style="--card-accent:${E(c)};--tc:${E(c)}">
+        <div class="sct-inn-h"><span class="ttl">${E(inningsTitle(m, inn))}</span>${inn.current ? '<span class="sct-pill live">Batting</span>' : ''}<span class="sc">${inn.runs}/${inn.wickets}${inn.declared ? 'd' : ''}<small>${E(inn.overs)} ov · RR ${rr(inn.runs, ballsOf(inn.overs)).toFixed(2)}</small></span></div>
+        <div class="sct-mini">
+          <div><h4>Top batters</h4>${bat.length ? bat.map(r => `<div class="sct-li"><span>${E(r.name)}</span><b>${r.runs || 0}${r.out ? '' : '*'} <small>(${r.balls || 0})</small></b></div>`).join('') : '<div class="sct-note">No batting yet</div>'}</div>
+          <div><h4>Top bowlers</h4>${bowl.length ? bowl.map(r => `<div class="sct-li"><span>${E(r.name)}</span><b>${r.wickets || 0}/${r.runs || 0} <small>(${fmtOvers(r.overs, r.balls)})</small></b></div>`).join('') : '<div class="sct-note">No bowling yet</div>'}</div>
+        </div>
+        <p class="sct-note" style="margin-top:10px">Extras ${exTotal}${exTotal ? ` (wd ${ex.wd || 0}, nb ${ex.nb || 0}, b ${ex.b || 0}, lb ${ex.lb || 0}${ex.pen ? ', pen ' + ex.pen : ''})` : ''}</p>
+      </div>`);
+      out.push(`<div class="sct-grid">
+        ${card(`Partnerships <span class="sct-note">${E(tShort(t, inn.team))}</span>`, pships.length ? pships.map(p => `<div class="sct-ps" style="--tc:${E(c)}"><span class="who"><small>${ord(p.forWicket || 1)} wicket${p.unbroken && inn.current ? ' · unbroken' : ''}</small>${E((p.batters || []).filter(Boolean).join(' & ') || '—')}</span><span class="r">${p.runs || 0} <small class="sct-note">(${p.balls || 0})</small></span><span class="bar"><i style="width:${((p.runs || 0) / maxP * 100).toFixed(1)}%"></i></span></div>`).join('') : '<div class="sct-note">No partnership data</div>')}
+        ${card(`Fall of wickets <span class="sct-note">${E(tShort(t, inn.team))}</span>`, fowHtml(fowList, innBalls(m, inn.no)))}
+      </div>`);
+    });
+    out.push(card('Key moments', momentsHtml(m)));
+    return out.join('');
+  }
+  // How a batter got out: the batting card's own line (what the Scorecard
+  // tab shows) when it has one, else written from the wicket ball.
+  function howOutOf(m, inn, who, b){
+    const row = battingOf(m, inn).find(r => r.name === who && r.out);
+    if(row){ try { const t = howOutFull(row); if(t && !/^not out$/i.test(t)) return t; } catch(e){} if(row.howOut) return row.howOut; }
+    const d = b.dismissal || {}, type = d.type || b.dismissalType || 'Out', f = d.fielder || b.fielderName || '', bw = b.bowler || '';
+    const T = String(type).toLowerCase();
+    if(T === 'caught') return `c ${f || '?'} b ${bw}`;
+    if(T === 'caught & bowled') return `c & b ${bw}`;
+    if(T === 'caught behind') return `c †${f || '?'} b ${bw}`;
+    if(T === 'bowled') return `b ${bw}`;
+    if(T === 'lbw') return `lbw b ${bw}`;
+    if(T === 'stumped') return `st ${f || '?'} b ${bw}`;
+    if(T === 'hit wicket') return `hit wkt b ${bw}`;
+    if(/^run out/.test(T)) return `run out${f ? ' (' + f + ')' : ''}`;
+    return T;
+  }
+  // Only what the deliveries and the cards say: every wicket, the biggest
+  // over of each innings, collapses (3+ wickets inside 20 runs), 50s/100s,
+  // 3-wicket hauls, the best partnership.
+  function momentsHtml(m){
+    if(m.imported && !m.balls.length) return '<div class="sct-note">This match was imported from a scorecard, so there is no ball-by-ball record to draw key moments from.</div>';
+    const items = [];
+    m.innings.forEach(inn => {
+      const t = teamOf(m, inn.team), sn = tShort(t, inn.team);
+      let runs = 0, wk = 0;
+      const wkts = [];
+      innBalls(m, inn.no).forEach(b => {
+        runs += (b.runs || 0);
+        if(b.isWicket){
+          wk++;
+          const p = overBallParts(b.over, b.ballType);
+          const d = b.dismissal || {};
+          const who = d.batter || b.dismissedPlayer || b.striker || '';
+          wkts.push({ runs, wk });
+          items.push({ inn: inn.no, key: p.over * 10 + p.ball, ov: `${p.over}.${p.ball}`, ic: 'w', icon: 'W', html: `<b>${E(who || 'Wicket')}</b> ${E(howOutOf(m, inn, who, b))}<small>${E(sn)} ${runs}/${wk}</small>` });
+        }
+      });
+      for(let i = 2; i < wkts.length; i++){
+        let j = i; while(j > 0 && wkts[i].runs - wkts[j - 1].runs <= 20) j--;
+        if(i - j + 1 >= 3 && (i === wkts.length - 1 || wkts[i + 1].runs - wkts[j].runs > 20)){
+          items.push({ inn: inn.no, key: 1e6 + i, ov: '', ic: 'w', icon: '↘', html: `<b>Collapse:</b> ${i - j + 1} wickets for ${wkts[i].runs - (j ? wkts[j - 1].runs : 0)} runs<small>${E(sn)} from ${j ? wkts[j - 1].runs + '/' + wkts[j - 1].wk : '0/0'} to ${wkts[i].runs}/${wkts[i].wk}</small>` });
+        }
+      }
+      const ov = overs(m, inn.no).filter(o => o.balls >= 6 || o.runs);
+      if(ov.length > 1){
+        const best = ov.reduce((x, o) => o.runs > x.runs ? o : x, ov[0]);
+        if(best.runs >= 10) items.push({ inn: inn.no, key: best.over * 10 + 6.5, ov: `Ov ${best.over + 1}`, ic: 's', icon: best.runs, html: `<b>Biggest over:</b> ${best.runs} runs${best.wkts ? `, ${best.wkts} wkt` : ''}${best.bowler ? ' off ' + E(best.bowler) : ''}<small>${E(sn)} innings</small>` });
+      }
+      battingOf(m, inn).filter(r => (r.runs || 0) >= 50).forEach(r => items.push({ inn: inn.no, key: 2e6, ov: '', ic: 'f', icon: (r.runs >= 100 ? '100' : '50'), html: `<b>${E(r.name)}</b> ${r.runs}${r.out ? '' : '*'} off ${r.balls || 0}<small>${r.runs >= 100 ? 'Century' : 'Half-century'} · ${E(sn)}</small>` }));
+      bowlingOf(m, inn).filter(r => (r.wickets || 0) >= 3).forEach(r => items.push({ inn: inn.no, key: 2e6 + 1, ov: '', ic: 'm', icon: r.wickets, html: `<b>${E(r.name)}</b> ${r.wickets}/${r.runs || 0} (${fmtOvers(r.overs, r.balls)})<small>${r.wickets >= 5 ? 'Five-wicket haul' : 'Three-wicket haul'}</small>` }));
+      const ps = partnerships(m, inn);
+      if(ps.length > 1){ const bp = ps.reduce((x, p) => (p.runs || 0) > (x.runs || 0) ? p : x, ps[0]); if((bp.runs || 0) >= 20) items.push({ inn: inn.no, key: 2e6 + 2, ov: '', ic: 'm', icon: '🤝', html: `<b>Best partnership:</b> ${bp.runs} (${bp.balls || 0}) · ${E((bp.batters || []).filter(Boolean).join(' & '))}<small>${ord(bp.forWicket || 1)} wicket · ${E(sn)}</small>` }); }
+    });
+    if(!items.length) return '<div class="sct-note">No wickets, big overs or milestones yet.</div>';
+    const byInn = [...new Set(items.map(i => i.inn))].sort((a, b) => b - a);
+    return byInn.map(no => {
+      const inn = m.innings.find(i => i.no === no);
+      const list = items.filter(i => i.inn === no).sort((a, b) => b.key - a.key);
+      return `<div class="sct-sq-group">${E(inn ? inningsTitle(m, inn) : ord(no) + ' innings')}</div><div class="sct-moments">${list.map(i => `<div class="sct-mo"><span class="ov">${E(i.ov)}</span><span class="ic ${i.ic}">${E(i.icon)}</span><span class="tx">${i.html}</span></div>`).join('')}</div>`;
+    }).join('');
+  }
+
+  /* ---------------- INSIGHTS ---------------- */
+  function wormSvg(m){
+    const series = m.innings.map(inn => {
+      const pts = [{ x: 0, y: 0 }]; let cum = 0; const wk = [];
+      overs(m, inn.no).forEach(o => { cum += o.runs; pts.push({ x: o.over + (o.balls >= 6 ? 1 : o.balls / 6), y: cum }); if(o.wkts) wk.push({ x: o.over + (o.balls >= 6 ? 1 : o.balls / 6), y: cum, n: o.wkts }); });
+      return { inn, pts, wk, c: tColor(teamOf(m, inn.team), inn.team) };
+    }).filter(s => s.pts.length > 1);
+    if(!series.length) return '';
+    const W = 640, H = 230, L = 34, R = 10, T = 12, Bm = 26;
+    const maxX = Math.max(1, ...series.map(s => s.pts[s.pts.length - 1].x), ballsPerInnings(m.st) ? ballsPerInnings(m.st) / 6 : 0);
+    const maxY = Math.max(10, ...series.map(s => s.pts[s.pts.length - 1].y));
+    const sx = (x) => L + x / maxX * (W - L - R), sy = (y) => T + (1 - y / maxY) * (H - T - Bm);
+    const yStep = maxY > 200 ? 50 : maxY > 80 ? 20 : maxY > 40 ? 10 : 5;
+    const xStep = maxX > 30 ? 10 : maxX > 12 ? 2 : 1;
+    let grid = '';
+    for(let y = 0; y <= maxY; y += yStep) grid += `<line x1="${L}" x2="${W - R}" y1="${sy(y)}" y2="${sy(y)}" stroke="var(--border-soft)"/><text x="${L - 6}" y="${sy(y) + 4}" text-anchor="end" font-size="10" fill="var(--text-faint)">${y}</text>`;
+    for(let x = 0; x <= maxX; x += xStep) grid += `<text x="${sx(x)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-faint)">${x}</text>`;
+    const lines = series.map(s => `<polyline fill="none" stroke="${s.c}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" points="${s.pts.map(p => `${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ')}"/>` + s.wk.map(w => `<circle cx="${sx(w.x).toFixed(1)}" cy="${sy(w.y).toFixed(1)}" r="${3.5 + Math.min(3, w.n)}" fill="var(--wicket)" stroke="var(--panel)" stroke-width="1.5"><title>${w.n} wicket${w.n === 1 ? '' : 's'}</title></circle>`).join('')).join('');
+    return `<div class="sct-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Runs by over">${grid}${lines}</svg></div><div class="sct-legend">${series.map(s => `<span><span class="sct-dot" style="--tc:${E(s.c)}"></span>${E(inningsTitle(m, s.inn))}</span>`).join('')}<span><span class="sct-dot" style="--tc:var(--wicket);border-radius:99px"></span>Wicket</span></div>`;
+  }
+  function manhattanSvg(m){
+    const per = m.innings.map(inn => ({ inn, ov: overs(m, inn.no), c: tColor(teamOf(m, inn.team), inn.team) })).filter(x => x.ov.length);
+    if(!per.length) return '';
+    const n = Math.max(...per.map(p => (p.ov[p.ov.length - 1] || { over: 0 }).over + 1));
+    const W = 640, H = 200, L = 30, R = 8, T = 10, Bm = 24;
+    const maxY = Math.max(6, ...per.flatMap(p => p.ov.map(o => o.runs)));
+    const gw = (W - L - R) / n, bw = Math.max(2, Math.min(18, (gw - 4) / per.length));
+    let bars = '';
+    per.forEach((p, pi) => p.ov.forEach(o => {
+      const h = o.runs / maxY * (H - T - Bm), x = L + o.over * gw + (gw - bw * per.length) / 2 + pi * bw;
+      bars += `<rect x="${x.toFixed(1)}" y="${(H - Bm - h).toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${Math.max(0.5, h).toFixed(1)}" rx="2" fill="${p.c}"><title>Over ${o.over + 1}: ${o.runs} run${o.runs === 1 ? '' : 's'}${o.wkts ? ', ' + o.wkts + ' wkt' : ''}</title></rect>` + (o.wkts ? `<circle cx="${(x + (bw - 1) / 2).toFixed(1)}" cy="${(H - Bm - h - 6).toFixed(1)}" r="3.5" fill="var(--wicket)"/>` : '');
+    }));
+    const step = n > 30 ? 10 : n > 12 ? 2 : 1;
+    let labels = '';
+    for(let i = 0; i < n; i += step) labels += `<text x="${(L + i * gw + gw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-faint)">${i + 1}</text>`;
+    return `<div class="sct-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Runs in each over"><line x1="${L}" x2="${W - R}" y1="${H - Bm}" y2="${H - Bm}" stroke="var(--border)"/><text x="${L - 6}" y="${T + 8}" text-anchor="end" font-size="10" fill="var(--text-faint)">${maxY}</text>${bars}${labels}</svg></div>`;
+  }
+  function renderInsights(m){
+    if(!m.balls.length){
+      if(m.imported) return empty('Ball-by-ball insights are not available', 'This match was imported from a scorecard photo, so it has no delivery-by-delivery record. The Scorecard and Summary tabs have its figures.');
+      return empty('Insights appear once the first ball is bowled', 'Run-rate comparison, scoring breakdown, phases, batting and bowling analysis are worked out from every delivery.');
+    }
+    const out = [];
+    // headline numbers
+    const all = m.innings.map(inn => ({ inn, sc: scoring(m, inn.no) }));
+    const tot = all.reduce((a, x) => ({ fours: a.fours + x.sc.fours, sixes: a.sixes + x.sc.sixes, dots: a.dots + x.sc.dots, legal: a.legal + x.sc.legal }), { fours: 0, sixes: 0, dots: 0, legal: 0 });
+    let bestOver = null;
+    m.innings.forEach(inn => overs(m, inn.no).forEach(o => { if(!bestOver || o.runs > bestOver.runs) bestOver = Object.assign({ inn }, o); }));
+    let bestP = null;
+    m.innings.forEach(inn => partnerships(m, inn).forEach(p => { if(!bestP || (p.runs || 0) > (bestP.runs || 0)) bestP = Object.assign({ inn }, p); }));
+    out.push(`<div class="card"><div class="sct-tiles">
+      <div class="sct-tile"><div class="k">Boundaries</div><div class="v">${tot.fours + tot.sixes}</div><div class="s">${tot.fours} fours · ${tot.sixes} sixes</div></div>
+      <div class="sct-tile"><div class="k">Dot balls</div><div class="v">${tot.legal ? Math.round(tot.dots / tot.legal * 100) : 0}%</div><div class="s">${tot.dots} of ${tot.legal} legal balls</div></div>
+      <div class="sct-tile"><div class="k">Best over</div><div class="v">${bestOver ? bestOver.runs : 0}</div><div class="s">${bestOver ? `Over ${bestOver.over + 1} · ${E(tShort(teamOf(m, bestOver.inn.team), bestOver.inn.team))}` : '—'}</div></div>
+      <div class="sct-tile"><div class="k">Best stand</div><div class="v">${bestP ? bestP.runs || 0 : 0}</div><div class="s">${bestP ? E((bestP.batters || []).filter(Boolean).join(' & ')) : '—'}</div></div>
+    </div></div>`);
+    // run-rate comparison
+    const rrRows = m.innings.map(inn => { const b = ballsOf(inn.overs); return `<div class="sct-li"><span><span class="sct-dot" style="--tc:${E(tColor(teamOf(m, inn.team), inn.team))}"></span> ${E(inningsTitle(m, inn))}</span><b>RR ${rr(inn.runs, b).toFixed(2)} <small>· ${inn.runs}/${inn.wickets} in ${E(inn.overs)} ov</small></b></div>`; }).join('');
+    const req = m.live && !m.finished && m.target ? (() => { const s = m.st, left = (ballsPerInnings(s) || 0) - ((s.score.overs || 0) * 6 + (s.score.balls || 0)), need = m.target - s.score.runs; return left > 0 && need > 0 ? `<div class="sct-li"><span>Required rate</span><b>${(need * 6 / left).toFixed(2)} <small>· ${need} off ${left} balls</small></b></div>` : ''; })() : '';
+    out.push(card('Run-rate comparison', `<div class="sct-sub">Cumulative runs over by over · dots mark wickets</div>${wormSvg(m)}<div style="margin-top:12px">${rrRows}${req}</div>`));
+    out.push(card('Runs in each over', manhattanSvg(m) + `<div class="sct-legend">${m.innings.map(inn => `<span><span class="sct-dot" style="--tc:${E(tColor(teamOf(m, inn.team), inn.team))}"></span>${E(tShort(teamOf(m, inn.team), inn.team))}</span>`).join('')}</div>`));
+    // scoring breakdown
+    out.push(card('Scoring breakdown', `<div class="sct-table-wrap"><table><thead><tr><th>Innings</th><th class="num">Dots</th><th class="num">1s</th><th class="num">2s</th><th class="num">3s</th><th class="num">4s</th><th class="num">6s</th><th class="num">Extras</th><th class="num">Boundary %</th></tr></thead><tbody>
+      ${all.map(({ inn, sc }) => { const ex = inn.extras || {}; const exr = ['wd', 'nb', 'b', 'lb', 'pen'].reduce((n, k) => n + (Number(ex[k]) || 0), 0); const bpct = inn.runs ? Math.round((sc.fours * 4 + sc.sixes * 6) / inn.runs * 100) : 0;
+        return `<tr><td><span class="sct-dot" style="--tc:${E(tColor(teamOf(m, inn.team), inn.team))}"></span> ${E(tShort(teamOf(m, inn.team), inn.team))} <span class="sct-note">${ord(inn.no)}</span></td><td class="num tabnum">${sc.dots}</td><td class="num tabnum">${sc.ones}</td><td class="num tabnum">${sc.twos}</td><td class="num tabnum">${sc.threes}</td><td class="num tabnum">${sc.fours}</td><td class="num tabnum">${sc.sixes}</td><td class="num tabnum">${exr}</td><td class="num tabnum">${bpct}%</td></tr>`; }).join('')}
+    </tbody></table></div><p class="sct-note" style="margin-top:8px">Boundary % = share of the innings' runs that came in fours and sixes.</p>`));
+    // phases
+    const ph = phasesForFormat(m.st);
+    if(ph && ph.length > 1){
+      out.push(card('Phases', `<div class="sct-table-wrap"><table><thead><tr><th>Innings</th>${ph.map(p => `<th class="num">${E(p.name)} <span class="sct-note">(${p.from + 1}-${p.to + 1})</span></th>`).join('')}</tr></thead><tbody>
+        ${m.innings.map(inn => { const ov = overs(m, inn.no); return `<tr><td>${E(tShort(teamOf(m, inn.team), inn.team))} <span class="sct-note">${ord(inn.no)}</span></td>${ph.map(p => { const os = ov.filter(o => o.over >= p.from && o.over <= p.to); if(!os.length) return '<td class="num sct-note">—</td>'; const r = os.reduce((n, o) => n + o.runs, 0), w = os.reduce((n, o) => n + o.wkts, 0), b = os.reduce((n, o) => n + o.balls, 0); return `<td class="num tabnum"><b>${r}/${w}</b> <span class="sct-note">RR ${rr(r, b).toFixed(1)}</span></td>`; }).join('')}</tr>`; }).join('')}
+      </tbody></table></div>`));
+    }
+    // batting & bowling analysis
+    const bats = [], bowls = [];
+    m.innings.forEach(inn => {
+      const c = tColor(teamOf(m, inn.team), inn.team), oc = tColor(teamOf(m, inn.team === 'A' ? 'B' : 'A'), inn.team === 'A' ? 'B' : 'A');
+      battingOf(m, inn).forEach(r => bats.push({ r, inn, c }));
+      bowlingOf(m, inn).forEach(r => bowls.push({ r, inn, c: oc }));
+    });
+    const topBat = bats.filter(x => (x.r.balls || 0) > 0 || (x.r.runs || 0) > 0).sort((a, b) => (b.r.runs || 0) - (a.r.runs || 0)).slice(0, 8);
+    const topBowl = bowls.filter(x => (x.r.overs || 0) || (x.r.balls || 0)).sort((a, b) => (b.r.wickets || 0) - (a.r.wickets || 0) || bowlerEcon(a.r) - bowlerEcon(b.r)).slice(0, 8);
+    const bb = (name, inn) => innBalls(m, inn.no).filter(b => b.bowler === name);
+    out.push(`<div class="sct-grid">
+      ${card('Batting analysis', topBat.length ? `<div class="sct-table-wrap"><table><thead><tr><th>Batter</th><th class="num">R</th><th class="num">B</th><th class="num">SR</th><th class="num">4s/6s</th><th>Share</th></tr></thead><tbody>${topBat.map(({ r, inn, c }) => { const share = inn.runs ? Math.round((r.runs || 0) / inn.runs * 100) : 0; return `<tr style="--tc:${E(c)}"><td>${E(r.name)}${r.out ? '' : '<span class="sct-note"> *</span>'}</td><td class="num tabnum"><b>${r.runs || 0}</b></td><td class="num tabnum">${r.balls || 0}</td><td class="num tabnum">${strikeRate(r.runs || 0, r.balls || 0).toFixed(1)}</td><td class="num tabnum">${r.fours || 0}/${r.sixes || 0}</td><td><div class="sct-share" title="${share}% of the innings' runs"><i style="width:${share}%"></i></div></td></tr>`; }).join('')}</tbody></table></div><p class="sct-note" style="margin-top:8px">Share = the batter's runs as a part of their team's innings total.</p>` : '<div class="sct-note">No batting yet</div>')}
+      ${card('Bowling analysis', topBowl.length ? `<div class="sct-table-wrap"><table><thead><tr><th>Bowler</th><th class="num">O</th><th class="num">W</th><th class="num">R</th><th class="num">Econ</th><th class="num">Dot %</th></tr></thead><tbody>${topBowl.map(({ r, inn }) => { const balls = bb(r.name, inn); const legal = balls.filter(b => LEGAL_KINDS.has(b.ballType)); const dots = legal.filter(b => !(b.runs || 0)).length; return `<tr><td>${E(r.name)}</td><td class="num tabnum">${fmtOvers(r.overs, r.balls)}</td><td class="num tabnum"><b>${r.wickets || 0}</b></td><td class="num tabnum">${r.runs || 0}</td><td class="num tabnum">${bowlerEcon(r).toFixed(2)}</td><td class="num tabnum">${legal.length ? Math.round(dots / legal.length * 100) + '%' : '—'}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="sct-note">No bowling yet</div>')}
+    </div>`);
+    return out.join('');
+  }
+
+  /* ---------------- MVP ----------------
+     The same impact score as this page's Match MVP Tracker — runs + 20 per
+     wicket + 10 per catch — so the two never name different players; this
+     tab shows every number behind it. */
+  function renderMvp(m){
+    const st = m.st;
+    const batRows = allBattingRows(st), bowlRows = allBowlingRows(st), catches = catchesByPlayer(st);
+    const tm = nameTeam(m);
+    const P = {};
+    const touch = (n) => P[n] || (P[n] = { name: n, runs: 0, balls: 0, fours: 0, sixes: 0, outs: 0, inns: 0, wickets: 0, bRuns: 0, bBalls: 0, maidens: 0, catches: 0, runOuts: 0, stumpings: 0 });
+    batRows.forEach(r => { if(!r || !r.name) return; const p = touch(r.name); p.runs += r.runs || 0; p.balls += r.balls || 0; p.fours += r.fours || 0; p.sixes += r.sixes || 0; p.inns++; if(r.out) p.outs++; });
+    bowlRows.forEach(r => { if(!r || !r.name) return; const p = touch(r.name); p.wickets += r.wickets || 0; p.bRuns += r.runs || 0; p.bBalls += (r.overs || 0) * 6 + (r.balls || 0); p.maidens += r.maidens || 0; });
+    Object.entries(catches).forEach(([n, c]) => { touch(n).catches += c; });
+    (st.ballLog || []).forEach(b => { const d = b.dismissal; if(!d || !d.fielder) return; if(/^run out/i.test(d.type || '')) touch(d.fielder).runOuts++; else if(/^stumped/i.test(d.type || '')) touch(d.fielder).stumpings++; });
+    const list = Object.values(P).map(p => Object.assign(p, { bat: p.runs, bowl: p.wickets * 20, fld: p.catches * 10, score: p.runs + p.wickets * 20 + p.catches * 10 })).filter(p => p.score > 0)
+      .sort((a, b) => b.score - a.score || b.wickets - a.wickets || b.runs - a.runs);
+    if(!list.length) return empty(m.live ? 'No MVP yet' : 'No performances recorded', 'The most valuable player is worked out from runs, wickets and catches as soon as they happen.');
+    const top = list[0], k = tm[top.name], t = k ? teamOf(m, k) : null, c = k ? tColor(t, k) : 'var(--accent)';
+    const tie = list[1] && list[1].score === top.score;
+    const why = [];
+    if(top.inns) why.push(`<li><b>${top.runs}</b> run${top.runs === 1 ? '' : 's'} off <b>${top.balls}</b> ball${top.balls === 1 ? '' : 's'} (SR ${strikeRate(top.runs, top.balls).toFixed(1)}, ${top.fours} four${top.fours === 1 ? '' : 's'}, ${top.sixes} six${top.sixes === 1 ? '' : 'es'})${top.outs < top.inns ? ', not out' : ''}</li>`);
+    if(top.bBalls) why.push(`<li><b>${top.wickets}</b> wicket${top.wickets === 1 ? '' : 's'} for <b>${top.bRuns}</b> in ${Math.floor(top.bBalls / 6)}.${top.bBalls % 6} overs (economy ${(top.bRuns * 6 / top.bBalls).toFixed(2)}${top.maidens ? ', ' + top.maidens + ' maiden' + (top.maidens === 1 ? '' : 's') : ''})</li>`);
+    if(top.catches || top.runOuts || top.stumpings) why.push(`<li>${[top.catches ? `<b>${top.catches}</b> catch${top.catches === 1 ? '' : 'es'}` : '', top.runOuts ? `${top.runOuts} run-out${top.runOuts === 1 ? '' : 's'}` : '', top.stumpings ? `${top.stumpings} stumping${top.stumpings === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ')} in the field</li>`);
+    if(list[1]) why.push(`<li>${tie ? 'Level with' : `<b>${top.score - list[1].score}</b> point${top.score - list[1].score === 1 ? '' : 's'} clear of`} ${E(list[1].name)} (${list[1].score})${tie ? ' — ahead on wickets, then runs' : ''}</li>`);
+    const max = top.score || 1;
+    return `<div class="card sct-mvp-top" style="--tc:${E(c)}">
+        <div class="sct-mvp-head"><div class="sct-mvp-crown" aria-hidden="true">🏅</div>
+          <div class="sct-mvp-name"><b>${E(top.name)}</b><span>${E(k ? tName(t, k) : '')} · ${m.finished ? 'Most valuable player of the match' : 'Leading the MVP race — live, can change'}</span></div>
+          <div class="sct-mvp-pts"><b>${top.score}</b><span>Impact points</span></div></div>
+        <div class="sct-calc"><span>${top.runs} runs × 1 = ${top.bat}</span><span>${top.wickets} wkt${top.wickets === 1 ? '' : 's'} × 20 = ${top.bowl}</span><span>${top.catches} catch${top.catches === 1 ? '' : 'es'} × 10 = ${top.fld}</span><span class="eq">= ${top.score} points</span></div>
+        <ul class="sct-why">${why.join('')}</ul>
+      </div>
+      ${card('MVP standings', list.slice(0, 10).map((p, i) => { const kk = tm[p.name], tt = kk ? teamOf(m, kk) : null;
+        const figs = [p.inns ? `${p.runs}${p.outs < p.inns ? '*' : ''} (${p.balls})` : '', p.bBalls ? `${p.wickets}/${p.bRuns} (${Math.floor(p.bBalls / 6)}.${p.bBalls % 6})` : '', p.catches ? `${p.catches} ct` : ''].filter(Boolean).join(' · ');
+        return `<div class="sct-rank"><span class="no">${i + 1}</span><span class="nm">${E(p.name)}<small>${kk ? `<span class="sct-tcol" style="--tc:${E(tColor(tt, kk))}">${E(tShort(tt, kk))}</span> · ` : ''}${E(figs)}</small></span><span class="pt">${p.score}</span><span class="sct-stack" title="Batting ${p.bat} · Bowling ${p.bowl} · Fielding ${p.fld}"><i class="bat" style="width:${(p.bat / max * 100).toFixed(1)}%"></i><i class="bowl" style="width:${(p.bowl / max * 100).toFixed(1)}%"></i><i class="fld" style="width:${(p.fld / max * 100).toFixed(1)}%"></i></span></div>`; }).join('')
+        + `<div class="sct-legend"><span><span class="sct-dot" style="--tc:var(--four)"></span>Batting</span><span><span class="sct-dot" style="--tc:var(--wicket)"></span>Bowling</span><span><span class="sct-dot" style="--tc:var(--accent)"></span>Fielding</span></div>`)}
+      <p class="sct-note">How it is worked out: 1 point per run, 20 per wicket, 10 per catch — the same impact score as the Match MVP Tracker on the Scorecard tab. Run-outs and stumpings are shown but are not part of the score. Ties go to more wickets, then more runs.</p>`;
+  }
+
+  /* ---------------- painting ---------------- */
+  const RENDER = { info: renderInfo, squads: renderSquads, summary: renderSummary, insights: renderInsights, mvp: renderMvp };
+  function keyOf(m){
+    if(!m) return 'none';
+    const lb = m.balls[m.balls.length - 1];
+    return JSON.stringify([m.live, m.finished, m.statusText, m.balls.length, lb ? [lb.over, lb.ballType, lb.runs, lb.isWicket] : null, m.innings.map(i => [i.no, i.runs, i.wickets, i.overs]),
+      ['A', 'B'].map(k => [((m.squads[k] && m.squads[k].players) || []).length, ((m.st.battingCard && m.st.battingCard[k]) || []).length, ((m.st.bowlingCard && m.st.bowlingCard[k]) || []).length]),
+      m.live ? [m.st.striker && m.st.striker.runs, m.st.nonStriker && m.st.nonStriker.runs, m.st.bowler && [m.st.bowler.overs, m.st.bowler.balls, m.st.bowler.runs], m.st.toss, m.st.venue] : (m.meta && [m.meta.updatedAt, m.meta.savedAt]), m.tournament]);
+  }
+  function paint(id, force){
+    const el = document.getElementById('sct-p-' + id);
+    const fn = RENDER[id];
+    if(!el || !fn) return;
+    const m = model();
+    const key = keyOf(m);
+    if(!force && painted[id] === key) return;
+    if(force && painted[id] === key && el.childElementCount) return;
+    painted[id] = key;
+    try {
+      el.innerHTML = m ? fn(m) : empty('Loading the match…', 'Waiting for the score to arrive.');
+    } catch(err){
+      console.warn('[tabs] ' + id + ' could not be drawn', err);
+      el.innerHTML = empty('This section could not be shown', 'The Scorecard tab has every figure for this match.');
+    }
+  }
+  function liveDot(){
+    const m = model();
+    const on = !!(m && m.live && !m.finished);
+    document.querySelectorAll('#sc-tabs .sct-live').forEach(d => { d.hidden = !on; });
+  }
+  // Called after every live update / finished-match load.
+  window.scTabsRefresh = function(){
+    if(!built) return;
+    if(!document.getElementById('hero-row') || !document.getElementById('sc-panels')){
+      // the page replaced its content with a message (no match / could not load) — no sections
+      const nav = document.getElementById('sc-tabs'); if(nav) nav.hidden = true;
+      root.removeAttribute('data-sc-tab');
+      return;
+    }
+    liveDot();
+    if(active !== 'scorecard' && active !== 'commentary') paint(active, false);
+  };
+  window.scTabsSelect = (id) => select(id, { user: true });
+
+  if(build()){
+    select(tabFromUrl(), { user: false });
+    // a tab named in the link but different spelling/case: keep the link tidy
+    if(new URLSearchParams(location.search).has('tab') && tabFromUrl() === 'scorecard') writeUrl('scorecard');
+    window.scTabsRefresh();
+    // fonts / the hero settling change tab widths
+    setTimeout(() => { measure(); ink(); }, 300);
+    if(document.fonts && document.fonts.ready) document.fonts.ready.then(() => { measure(); ink(); });
+  }
 })();
 </script>
 </body>
