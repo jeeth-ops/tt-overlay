@@ -3,10 +3,12 @@
 The volleyball module's own suites. They run the **real** code — the rules
 engine, `server.js` with `volleyball-server.js` mounted (in-memory MongoDB
 from `test/mongo-memory.js`, a stand-in Firebase that knows only the test
-tokens), and, for clips, the **real** Clipper Helper (the Cricket Panel's
-`clipper-helper/server.js`) cutting a growing fMP4 recording with ffmpeg, plus
-the older Stream Engine route. Nothing here talks to a real database,
-Firebase, Cloudflare R2, Google Drive or vMix.
+tokens), and, for clips, the **real** Volleyball Clipper — volleyball's own
+program (`volleyball-clipper-helper/` → VolleyballClipper.exe, port 5007,
+`asl-vb-clipper://`), never the Cricket Panel's Clipper Helper — cutting a
+growing fMP4 recording with ffmpeg, plus the older Stream Engine route.
+Nothing here talks to a real database, Firebase, Cloudflare R2, Google Drive
+or vMix.
 
 ```
 node test/volleyball/engine.test.js          # FIVB scoring: rally point, sets to 25 / 15, win by 2, best of 5, service order,
@@ -28,13 +30,20 @@ node test/volleyball/graphics-server.test.js # on-air graphics on the real serve
                                               # time-out graphic ends on the next rally, broadcast look per tournament, portraits;
                                               # live-on / live-off / live-mode saved and kept through points, timers and reloads;
                                               # vb:output reports (joined overlays only, cleaned, forgotten on disconnect)
-node test/volleyball/clipper-helper.test.js  # the REAL Clipper Helper + a growing ffmpeg recording: a point = T0-15 s … T0+3 s
-                                              # (frame timecodes), short lead-in reported, duplicates, offline → upload once,
-                                              # restart resumes, Players/<Team>/<No-Name>/Set-N links by player id, retry,
-                                              # next match isolated, the cricket clip path unchanged
+node test/volleyball/clipper-helper.test.js  # the REAL Volleyball Clipper + a growing ffmpeg recording: a point = T0-7 s … T0+3 s
+                                              # = 10 s (frame timecodes), short lead-in reported, duplicates, offline → upload once,
+                                              # restart resumes, VolleyballClips/…/Set-N + Players/<Team>/<No-Name> links by player
+                                              # id, retry, next match isolated, a cricket press refused (it never cuts cricket)
+node test/volleyball/clipper-separation.test.js # the REAL Cricket Clipper and Volleyball Clipper side by side, each from its own
+                                              # folder (Windows launchers emulated from their files): nothing shared (files, ports,
+                                              # links, settings, queues, clips folders, logs); both cutting at once; the "Can not
+                                              # find script file" Stop failure reproduced and fixed; cricket STOP / START × 3 and
+                                              # volleyball STOP / START × 3, each leaving the other untouched; the real Cricket
+                                              # Panel's ▶ Start / ⏹ Stop × 3 (needs jsdom: npm install --no-save jsdom)
 NODE_PATH=$(npm root -g) node test/volleyball/clipper-ui.test.js     # Chromium: the panel's 🎬 Clipper — READY only after the
                                               # checks, "Who earned this point?" never blocks scoring, assign later from the six on
-                                              # court then, Undo, reload resume, vMix stopped → WARNING, Stop; the Clipper page
+                                              # court then, Undo, reload resume, vMix stopped → WARNING, Stop, Quit the Volleyball
+                                              # Clipper (it closes itself, nothing else); the Clipper page
 NODE_PATH=$(npm root -g) node test/volleyball/clip-e2e.test.js       # the real Stream Engine: a point press -> T0-7 s … T0+3 s,
                                               # finalised after the post-roll, independent jobs, short pre-roll reported honestly
 NODE_PATH=$(npm root -g) node test/volleyball/ui.test.js             # Chromium: dashboard -> panel (phone, offline, corrections,
@@ -56,5 +65,10 @@ NODE_PATH=$(npm root -g) node test/volleyball/studio.test.js         # Chromium:
                                               # panel reconciles; no sideways scroll on desktop or phone
 node stream-engine/test/clipWindow.test.js   # per-job clip windows, sport routes, capture pages (cricket URLs unchanged)
 ```
+
+The two clipper suites can also run against the packaged programs (`npm run
+build` in each clipper's folder): `VB_CLIPPER_BIN=<VolleyballClipper binary>`
+for both, plus `CRICKET_CLIPPER_BIN=<ClipperHelper binary>` for
+`clipper-separation.test.js`.
 
 Screenshots from the browser suites: `test/out/volleyball/`.

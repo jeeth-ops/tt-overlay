@@ -1,18 +1,21 @@
 /* ================================================================
-   🎬 VOLLEYBALL CLIPPER — the browser side of the SAME local Clipper
-   Helper the Cricket Panel uses (clipper-helper/: ClipperHelper.exe next
-   to vMix on the PC that records). Nothing here records, cuts or uploads:
-   the helper cuts each clip from vMix's own recording file and syncs it;
-   this file only tells it which match, which points, and who earned them.
+   🎬 VOLLEYBALL CLIPPER — the browser side of the VOLLEYBALL Clipper
+   (volleyball-clipper-helper/: VolleyballClipper.exe next to vMix on the
+   PC that records, localhost:5007). Its own program — not the Cricket
+   Panel's Clipper Helper (ClipperHelper.exe, localhost:5005, asl-clipper://),
+   which nothing here ever calls, starts or stops. Nothing here records,
+   cuts or uploads: the Volleyball Clipper cuts each clip from vMix's own
+   recording file and syncs it; this file only tells it which match, which
+   points, and who earned them.
 
-     ▶ Start Clipper   the Clipper Launcher's asl-clipper:// link starts the
-                       helper hidden (set up once per PC — the same launcher
-                       as cricket); the website link and THIS match are
+     ▶ Start Clipper   the Volleyball Clipper Launcher's asl-vb-clipper://
+                       link starts VolleyballClipper.exe hidden (set up
+                       once per PC); the website link and THIS match are
                        handed to it, and the match's clipping session is
                        claimed on the website (one device clips a match)
      every point       one clip job, "<matchId>_<the point's eventId>": the
                        moment of the press, the rally before it and the end
-                       of it (the helper's volleyball window, 15 s + 3 s) —
+                       of it (its window, 7 s + 3 s = 10 s by default) —
                        queued here first, so a helper that is restarting
                        still gets it, and never twice
      who earned it     sent to the helper whenever the point's attribution
@@ -23,15 +26,16 @@
                        match, and a recording is being written right now
 
    Timing: a press made on this PC is sent with this PC's clock — the clock
-   the helper maps onto the recording (its wall-clock ↔ file-time anchor,
-   see clipper-helper/server.js). A point scored on ANOTHER device arrives
-   stamped on the server's clock and is converted with this page's measured
-   offset (VB.clock) before it is sent.
+   the Volleyball Clipper maps onto the recording (its wall-clock ↔
+   file-time anchor, see volleyball-clipper-helper/volleyball-clipper-server.js).
+   A point scored on ANOTHER device arrives stamped on the server's clock
+   and is converted with this page's measured offset (VB.clock) before it
+   is sent.
    ================================================================ */
 (function () {
   'use strict';
-  var HELPER = 'http://localhost:5005';          // the local helper (clipper-helper/) — cricket uses the same one
-  var LINK = 'asl-clipper://';                   // the Clipper Launcher (clipper-helper/install-clipper-launcher.bat)
+  var HELPER = 'http://localhost:5007';          // the Volleyball Clipper (volleyball-clipper-helper/) — never cricket's :5005
+  var LINK = 'asl-vb-clipper://';                // its launcher (install-volleyball-clipper-launcher.bat) — never asl-clipper://
   var OUTBOX_MAX_AGE_MS = 8 * 60 * 60 * 1000;    // like the Cricket Panel's clip outbox
   var BEAT_MS = 10000;
   var RECORDING_STALE_MS = 15000;                // the helper's own "still growing" rule
@@ -65,6 +69,8 @@
     if (window.AbortSignal && AbortSignal.timeout) return AbortSignal.timeout(ms);
     var c = new AbortController(); setTimeout(function () { c.abort(); }, ms); return c.signal;
   }
+  // The Volleyball Clipper says who it is — never act on anything else that answers.
+  function isVolleyballClipper(s) { return !!s && s.app === 'volleyball-clipper' && s.volleyball === true; }
   function helperGet(path, ms) {
     return fetch(HELPER + path, { signal: timeout(ms || 2500), cache: 'no-store' }).then(function (r) { return r.json(); });
   }
@@ -206,12 +212,12 @@
       while (!up && Date.now() < until) { if (await ping()) { up = true; break; } await new Promise(function (r) { setTimeout(r, 700); }); }
       if (!up) {
         C.busy = null;
-        C.notice = 'The Clipper app did not start on this PC. First time here? Set up the Clipper Launcher once (below). Already did? Look in clipper-log.txt next to ClipperHelper.exe.';
+        C.notice = 'The Volleyball Clipper did not start on this PC. First time here? Set up the Volleyball Clipper Launcher once (below). Already did? Look in volleyball-clipper-log.txt next to VolleyballClipper.exe.';
         changed(); return;
       }
-      if (!C.helper.status || C.helper.status.volleyball !== true) {
+      if (!isVolleyballClipper(C.helper.status)) {
         C.busy = null;
-        C.notice = 'This PC’s Clipper app is an older version that does not know volleyball points — update ClipperHelper.exe (clipper-helper: npm run build), then start it again.';
+        C.notice = 'Something other than the Volleyball Clipper answers on this PC’s port 5007 — close it, then start the Volleyball Clipper (VolleyballClipper.exe) again.';
         changed(); return;
       }
       C.session = { id: (C.session && C.session.id) || 'clp-' + VB.uid().slice(0, 18), on: true };
@@ -244,13 +250,18 @@
       C.notice = k.processing ? k.processing + ' clip' + (k.processing === 1 ? ' is' : 's are') + ' still being made — they finish in the background. No new points are clipped until you start again.' : 'Clipping stopped. Clips already made are kept; no new points are clipped until you start again.';
       changed();
     }
-    // The helper app itself (like the Cricket Panel's Stop): only on request.
+    // The Volleyball Clipper program itself: only on request. It is asked
+    // to close itself (its queue saved, only ITS ffmpeg ended); the
+    // launcher link is the fallback. The Cricket Clipper is never touched.
     async function quitApp() {
       var pending = Array.from(C.jobs.values()).filter(function (j) { return ['WAITING', 'CUTTING', 'CUT_RETRY', 'LOCAL_SAVED', 'OFFLINE_PENDING', 'SENDING', 'SENT', 'SYNC_RETRY'].indexOf(j.syncStatus) >= 0; }).length;
-      var ok = await VB.confirm('Quit the Clipper app on this PC?', pending ? pending + ' clip' + (pending === 1 ? ' is' : 's are') + ' not finished yet — they wait on this PC and carry on the next time the Clipper starts (nothing is lost or cut twice).' : 'No clips are waiting. vMix keeps recording; only clipping stops.', 'Quit Clipper', true);
+      var ok = await VB.confirm('Quit the Volleyball Clipper on this PC?', (pending ? pending + ' clip' + (pending === 1 ? ' is' : 's are') + ' not finished yet — they wait on this PC and carry on the next time the Clipper starts (nothing is lost or cut twice).' : 'No clips are waiting. vMix keeps recording; only volleyball clipping stops.') + ' The Cricket Clipper is not affected.', 'Quit Volleyball Clipper', true);
       if (!ok) return;
-      launch('stop');
-      setTimeout(function () { ping().then(changed); }, 2500);
+      try { await helperPost('/quit', {}, 3000); } catch (e) { /* not answering — the launcher below */ }
+      var until = Date.now() + 4000;
+      while (Date.now() < until) { await new Promise(function (r) { setTimeout(r, 400); }); if (!(await ping())) break; }
+      if (C.helper.alive) { launch('stop'); setTimeout(function () { ping().then(changed); }, 2500); }
+      changed();
     }
 
     /* ---------- points ---------- */
@@ -289,8 +300,8 @@
       C.lastPointAt = Date.now();
       // the website hears that this point's clip is on its way (another
       // device shows it; the clip itself arrives from the helper)
-      var win = model().window || { pre: 15, post: 3 };
-      VB.api('POST', '/api/volleyball/matches/' + o.matchId + '/clips', { clipId: clipId, eventId: ev.eventId, status: 'REQUESTED', localStatus: 'WAITING_FOR_POSTROLL', t0: ev.at, preRollSec: win.pre, postRollSec: win.post, team: meta.team, scoreAtTrigger: meta.score ? { set: meta.set, A: meta.score.A, B: meta.score.B } : null, engine: 'clipper-helper', sourceSessionId: C.session.id });
+      var win = model().window || { pre: 7, post: 3 };
+      VB.api('POST', '/api/volleyball/matches/' + o.matchId + '/clips', { clipId: clipId, eventId: ev.eventId, status: 'REQUESTED', localStatus: 'WAITING_FOR_POSTROLL', t0: ev.at, preRollSec: win.pre, postRollSec: win.post, team: meta.team, scoreAtTrigger: meta.score ? { set: meta.set, A: meta.score.A, B: meta.score.B } : null, engine: 'volleyball-clipper', sourceSessionId: C.session.id });
       flush();
       changed();
       return true;
@@ -392,7 +403,7 @@
       var recOk = helperOk && !!rec && !!s.recordingGrowing && !s.recordingError && s.recordingSeconds != null;
       var matchOk = helperOk && s.matchId === o.matchId && s.sport === 'volleyball';
       var siteOk = helperOk && s.mainServerUrl === location.origin;
-      checks.push({ ok: helperOk && s.volleyball === true, label: 'Clipper app on this PC', detail: helperOk ? (s.volleyball === true ? 'Running (v' + (s.helperVersion || '?') + ')' : 'Running, but an older version — update ClipperHelper.exe') : 'Not running — ▶ Start Clipper' });
+      checks.push({ ok: helperOk && isVolleyballClipper(s), label: 'Volleyball Clipper on this PC', detail: helperOk ? (isVolleyballClipper(s) ? 'Running (VolleyballClipper v' + (s.helperVersion || '?') + ')' : 'Something else answers on port 5007') : 'Not running — ▶ Start Clipper' });
       checks.push({ ok: matchOk, label: 'This match', detail: matchOk ? teamName('A') + ' v ' + teamName('B') : helperOk ? (s.matchId && s.matchId !== o.matchId ? 'The Clipper is set up for another match — Start Clipper sets it to this one' : 'Not handed over yet') : '—' });
       checks.push({ ok: recOk && !s.recordingAmbiguous, label: 'vMix recording', detail: !helperOk ? '—' : s.recordingError ? s.recordingError : !rec ? 'No recording found — check the recording folder in Clipper setup' : !s.recordingGrowing ? rec + ' is not being written — start Record in vMix' : s.recordingAmbiguous ? 'More than one file is being written (' + s.recordingAmbiguous.join(', ') + ') — clips use ' + rec + '; stop the other recording' : rec + ' · ' + Math.round((s.recordingSeconds || 0) / 60) + ' min recorded' });
       checks.push({ ok: siteOk, label: 'Website link', detail: siteOk ? location.host : helperOk ? 'Set when clipping starts' : '—' });
@@ -404,7 +415,7 @@
       else if (!on() || !mine()) {
         if (elsewhere) { state = owner.status && owner.status.state ? owner.status.state : 'READY'; text = (owner.label || 'Another device') + ' is clipping' + (owner.status && owner.status.text ? ' — ' + owner.status.text : ''); }
         else { state = 'STOPPED'; text = 'Clipping is off — points are not clipped'; }
-      } else if (!checks[0].ok) { state = 'WARNING'; text = helperOk ? 'Update the Clipper app on this PC' : 'The Clipper app is not running on this PC'; }
+      } else if (!checks[0].ok) { state = 'WARNING'; text = helperOk ? 'This is not the Volleyball Clipper' : 'The Volleyball Clipper is not running on this PC'; }
       else if (!checks[2].ok) { state = 'WARNING'; text = !rec ? 'No vMix recording found' : !s.recordingGrowing ? 'vMix is not recording' : s.recordingAmbiguous ? 'Two recordings are being written' : 'The recording cannot be read'; }
       else if (!matchOk || !siteOk) { state = 'WARNING'; text = 'Setting the Clipper up for this match…'; }
       else if (k.failed) { state = 'WARNING'; text = k.failed + ' clip' + (k.failed === 1 ? '' : 's') + ' could not be cut — retry'; }
@@ -537,6 +548,8 @@
       return '<span class="muted">' + esc(typeOf(a)) + '</span>' + (opts.canAssign ? ' <button class="btn xs ghost" data-assign="' + esc(r.eventId) + '">Change</button>' : '');
     };
     var startLabel = md.state === 'STARTING' ? 'Starting…' : md.elsewhere ? 'Clip on this PC instead' : '▶ Start Clipper';
+    // the help section stays open across repaints once the operator opened it
+    var helpOpen = !!(el.querySelector('.clpfirst') && el.querySelector('.clpfirst').open);
     el.innerHTML = '<div class="clphead ' + w[0] + '"><span class="clpword">' + w[1] + '</span><div class="grow"><b>' + esc(md.text) + '</b>'
       + '<div class="small muted">' + (md.window ? 'Each point: ' + md.window.pre + ' s of the rally before the press + ' + md.window.post + ' s after · ' : '') + 'cut from the vMix recording on the PC that records</div></div>'
       + (active ? '<button class="btn" id="clpStop">Stop clipping</button>' : '<button class="btn primary" id="clpStart"' + (md.state === 'STARTING' ? ' disabled' : '') + '>' + startLabel + '</button>') + '</div>'
@@ -556,12 +569,12 @@
           + '<span class="clipst ' + r.state.cls + '" title="' + esc(r.error || r.state.text) + '">' + esc(r.state.text) + '</span>'
           + '<span class="acts">' + (r.watchUrl ? '<button class="btn xs" data-play="' + esc(r.eventId) + '" title="Play">▶</button>' : '') + (r.state.retry ? '<button class="btn xs" data-retry="' + esc(r.clipId) + '">Retry</button>' : '') + (r.state.serverRetry ? '<button class="btn xs" data-sretry="' + esc(r.clipId) + '">Retry upload</button>' : '') + '</span></div>';
       }).join('') : '<div class="muted small">No point clips yet — they appear here as points are scored.</div>') + '</div>'
-      + '<details class="clpfirst"><summary>First time on this PC, or something not working?</summary><ol class="small">'
-      + '<li>The Clipper is the same app the Cricket Panel uses (<b>ClipperHelper.exe</b>, next to vMix). Get the <a href="/clipper-launcher.zip">Clipper Launcher</a>, unzip it into the ClipperHelper folder and run <code>install-clipper-launcher.bat</code> once — then <b>▶ Start Clipper</b> works from here.</li>'
-      + '<li>Once per PC, tell it where vMix records: <a href="' + esc(ctl.setupUrl) + '" target="_blank" rel="noopener">open Clipper setup</a> → the vMix recording folder (the file being written is found by itself) → Save. A PC set up for cricket already has it.</li>'
+      + '<details class="clpfirst"' + (helpOpen ? ' open' : '') + '><summary>First time on this PC, or something not working?</summary><ol class="small">'
+      + '<li>Volleyball has its <b>own</b> Clipper program, <b>VolleyballClipper.exe</b> (next to vMix) — separate from the Cricket Clipper (ClipperHelper.exe), which it never starts, stops or changes. Keep it in its own folder (not the cricket one), get the <a href="/volleyball-clipper-launcher.zip">Volleyball Clipper Launcher</a>, unzip it there and run <code>install-volleyball-clipper-launcher.bat</code> once — then <b>▶ Start Clipper</b> works from here.</li>'
+      + '<li>Once per PC, tell it where vMix records: <a href="' + esc(ctl.setupUrl) + '" target="_blank" rel="noopener">open Volleyball Clipper setup</a> → the vMix recording folder (the file being written is found by itself) → Save.</li>'
       + '<li>vMix must record an MP4 (it is read while it is being written). Start <b>Record</b> in vMix — READY shows only once the recording is really growing.</li>'
       + (opts.matchId ? '<li>Scoring on a phone or tablet? Open the <a href="/volleyball-clipper?match=' + esc(opts.matchId) + '" target="_blank" rel="noopener">Clipper page</a> on the vMix PC — it clips the points scored on the phone.</li>' : '')
-      + '</ol>' + (active ? '<button class="btn xs ghost" id="clpQuit">Quit the Clipper app on this PC</button>' : '') + '</details>';
+      + '</ol>' + (active ? '<button class="btn xs ghost" id="clpQuit">Quit the Volleyball Clipper on this PC</button>' : '') + '</details>';
     var q = function (s) { return el.querySelector(s); };
     if (q('#clpStart')) q('#clpStart').onclick = function () { ctl.start(); };
     if (q('#clpStop')) q('#clpStop').onclick = function () { VB.confirm('Stop clipping this match?', 'Points after this are not clipped until you start again. Clips already made are kept, and any still being made finish in the background.', 'Stop clipping').then(function (y) { if (y) ctl.stop(); }); };

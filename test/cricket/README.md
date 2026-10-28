@@ -46,6 +46,8 @@ NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the ov
 node test/cricket/wicket-bowler-test.js          # Wicket Details + optional / late / corrected bowler (tests 1-45): both panels, scorecard, overlay, database
 node test/cricket/out-types-test.js              # all 16 out types under the Laws, the strike question, bowling 0s/NB/WD: both panels, scorecard, server
 node test/cricket/clipper-launcher-test.js       # ▶ Start / ⏹ Stop Clipper from the Clipper panel (asl-clipper:// launcher, hidden), launcher files + zip
+node test/volleyball/clipper-separation.test.js  # the Cricket Clipper beside the separate Volleyball Clipper: nothing shared, the panel's
+                                                  # ▶ Start / ⏹ Stop × 3 really stopping / starting the real ClipperHelper, volleyball untouched
 node test/cricket/clip-position-test.js          # 4 / 6 / every wicket on the first, middle, last ball: the clip names that ball's batter + bowler (both panels)
 node test/cricket/toss-stream-test.js            # toss lists teams by name; YouTube link tick (both panels)
 NODE_PATH=$(npm root -g) node test/cricket/broadcast-graphics-test.js  # 🎬 PLAYING XI / TOSS / MATCH INTRO / SCORECARDS: the server's rules (timings, Hold,

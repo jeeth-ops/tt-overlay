@@ -1,20 +1,24 @@
-/* 🎬 Volleyball point clips through the REAL Clipper Helper — the same
-   local app the Cricket Panel uses (clipper-helper/server.js, run from a
-   temp copy) — cutting from a vMix-like recording that is still being
-   written:
+/* 🎬 Volleyball point clips through the REAL Volleyball Clipper —
+   volleyball's own local program (volleyball-clipper-helper/
+   volleyball-clipper-server.js → VolleyballClipper.exe, run from a temp
+   copy; NOT the Cricket Clipper) — cutting from a vMix-like recording that
+   is still being written:
 
      REAL website (server.js, in-memory MongoDB, stand-in R2)
        ⇄ a switchable "internet" (a proxy that can drop every connection)
-       ⇄ REAL Clipper Helper ⇄ a growing fragmented MP4 written live by
+       ⇄ REAL Volleyball Clipper ⇄ a growing fragmented MP4 written live by
          ffmpeg (what vMix writes while it records)
 
    Every frame of the recording carries its own time in its brightness
    (left third: second, middle: minute, right: the fraction of a second),
    so the first and last frame of a clip say exactly which moment of the
    recording it holds. Proven here:
-     • no recording yet → the helper says so (nothing is "ready")
-     • a point 15 s+ into the recording → 18 s: the 15 s of the rally
-       before the press and 3 s after it — the moment of the press is in it
+     • no recording yet → the clipper says so (nothing is "ready")
+     • a second copy started while it runs closes by itself and leaves the
+       running one (and its queue file) alone
+     • a point 7 s+ into the recording → 10 s: the 7 s of the rally before
+       the press and 3 s after it (the cut waits those 3 s) — the moment
+       of the press is in it
      • a point a few seconds after vMix started → only what exists, marked
        as a short lead-in — never padded
      • three quick points → three jobs, three clips, each its own window
@@ -23,14 +27,18 @@
        follows the scorer's attribution: the kill's player (by id), a team
        point, still pending; it is filed locally under the player too
      • no internet → cut and filed anyway, uploaded ONCE when it is back
-     • the helper restarted mid-queue → the job carries on, nothing is
+     • the clipper restarted mid-queue → the job carries on, nothing is
        re-cut or re-uploaded
      • a second match → its own jobs and folders; the first match's keep
        theirs
      • the recording stopped → a later point says so honestly
-     • a cricket press is still a cricket clip (15 s / 3 s, /api/clips/ingest)
+     • a cricket press is refused: the Volleyball Clipper never cuts cricket
+       (that is the Cricket Clipper's job, a different program)
 
      NODE_PATH=$(npm root -g) node test/volleyball/clipper-helper.test.js
+
+   VB_CLIPPER_BIN=<a VolleyballClipper binary from `npm run build`> runs
+   the same checks against the packaged program instead of its source.
 */
 const fs = require('fs');
 const os = require('os');
@@ -135,17 +143,20 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
   const m1 = await newMatch();
   const MID = m1.M.matchId;
 
-  // ---- the helper, from a temp copy (its config / queue files stay out of the repo) ----
-  const hDir = path.join(tmp, 'ClipperHelper');
+  // ---- the Volleyball Clipper, from a temp copy (its settings / queue files stay out of the repo) ----
+  const hDir = path.join(tmp, 'VolleyballClipper');
   fs.mkdirSync(hDir);
-  for (const f of ['server.js', 'fmp4.js', 'clipOrganizer.js', 'volleyballOrganizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'clipper-helper', f), path.join(hDir, f));
+  const BIN = process.env.VB_CLIPPER_BIN ? path.join(hDir, 'VolleyballClipper.exe') : null;
+  if (BIN) { fs.copyFileSync(process.env.VB_CLIPPER_BIN, BIN); fs.chmodSync(BIN, 0o755); }
+  else for (const f of ['volleyball-clipper-server.js', 'vb-fmp4.js', 'vb-organizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'volleyball-clipper-helper', f), path.join(hDir, f));
   const hPort = await freePort();
-  // the one-time setup of a PC: where vMix records (the folder); the website link is handed over by the panel
-  fs.writeFileSync(path.join(hDir, 'config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, clipsFolder: '', mainServerUrl: '', preRollSeconds: 15, postRollSeconds: 3 }));
+  // the one-time setup of a PC: where vMix records (the folder); the website link is handed over by the panel (default window: 7 s + 3 s)
+  fs.writeFileSync(path.join(hDir, 'volleyball-clipper-config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, clipsFolder: '', mainServerUrl: '' }));
   let hLog = '';
   let helper = null;
+  const spawnHelper = () => spawn(BIN || process.execPath, BIN ? [] : [path.join(hDir, 'volleyball-clipper-server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
   const startHelper = () => {
-    helper = spawn(process.execPath, [path.join(hDir, 'server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
+    helper = spawnHelper();
     helper.stdout.on('data', (d) => { hLog += d; }); helper.stderr.on('data', (d) => { hLog += d; });
   };
   const H = (m, u, o) => call(hPort, m, u, o);
@@ -155,11 +166,22 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
   const madeMatches = [MID];
   try {
     head('1 · NO RECORDING YET');
-    ok('the helper runs', await helperUp());
+    ok('the Volleyball Clipper runs', await helperUp());
     await sleep(5500);   // one recording check (every 5 s)
     let st = (await H('GET', '/status')).json;
     ok('it says there is no recording (so nothing can be READY)', !st.currentRecordingFile && /No recording file found/.test(st.recordingError || ''), st.recordingError);
-    ok('it knows volleyball points (v5.3+), with the 15 s + 3 s window', st.volleyball === true && st.volleyballClipTiming && st.volleyballClipTiming.beforeSeconds === 15 && st.volleyballClipTiming.afterSeconds === 3, st.volleyballClipTiming);
+    ok('it says who it is (the Volleyball Clipper, not the Cricket Clipper), with the 7 s + 3 s = 10 s window', st.app === 'volleyball-clipper' && st.exe === 'VolleyballClipper.exe' && st.volleyball === true && st.volleyballClipTiming && st.volleyballClipTiming.beforeSeconds === 7 && st.volleyballClipTiming.afterSeconds === 3 && st.volleyballClipTiming.durationSeconds === 10, { app: st.app, t: st.volleyballClipTiming });
+    ok('…its own settings file — no cricket config.json', fs.existsSync(path.join(hDir, 'volleyball-clipper-config.json')) && !fs.existsSync(path.join(hDir, 'config.json')));
+    // the exe double-clicked while it already runs: that copy cannot get the port
+    const jobsFile = path.join(hDir, 'volleyball-clip-jobs.json');
+    const jobsWas = fs.existsSync(jobsFile) ? fs.statSync(jobsFile).mtimeMs : null;
+    const second = spawnHelper();
+    let secondLog = '';
+    second.stdout.on('data', (d) => { secondLog += d; }); second.stderr.on('data', (d) => { secondLog += d; });
+    const secondCode = await Promise.race([new Promise((r) => second.once('exit', r)), sleep(15000).then(() => 'still running')]);
+    if (secondCode === 'still running') second.kill('SIGKILL');
+    const st2 = (await H('GET', '/status')).json;
+    ok('a second copy started while it runs closes by itself (port in use); the running one carries on, its queue file untouched', secondCode === 1 && /already in use/.test(secondLog) && st2 && st2.pid === st.pid && (fs.existsSync(jobsFile) ? fs.statSync(jobsFile).mtimeMs : null) === jobsWas, { secondCode, jobsWas, log: secondLog.slice(-300) });
 
     // what the panel sends for a point (volleyball-clipper.js → point())
     let pointNo = 0, sa = 0, sb = 0, uid = 0;
@@ -188,23 +210,23 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
       '-f', 'lavfi', '-i', 'sine=f=440:r=48000', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', '-keyint_min', '25', '-c:a', 'aac',
       '-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-flush_packets', '1', '-f', 'mp4', recFile], { stdio: ['ignore', 'ignore', 'pipe'] });
     let recErr = ''; recorder.stderr.on('data', (d) => { recErr += d; });
-    // the operator presses Start Clipper as vMix starts recording, and the first point comes 6 s later
+    // the operator presses Start Clipper as vMix starts recording, and the first point comes 4 s later
     await H('POST', '/recording-start', { json: { startedAt: Date.now(), matchId: MID, mainServerUrl: `http://127.0.0.1:${proxyPort}`, sport: 'volleyball', matchLabel: 'Pune Panthers v Goa Waves', tournamentId: T.tournamentId, tournamentName: 'Clipper Cup' } });
-    await sleep(Math.max(0, W0 + 6000 - Date.now()));
+    await sleep(Math.max(0, W0 + 4000 - Date.now()));
     early = await pointOf(m1, 'A');
     for (let i = 0; i < 40; i++) { await sleep(500); st = (await H('GET', '/status')).json; if (st.recordingGrowing && st.recordingSeconds) break; }
     ok('the file vMix is writing is found in the recording folder — no path typed', st.currentRecordingFile === recFile && st.recordingGrowing === true, { file: st.currentRecordingFile, growing: st.recordingGrowing, err: st.recordingError || recErr });
     const rs = (await H('POST', '/recording-start', { json: { startedAt: Date.now(), matchId: MID, mainServerUrl: `http://127.0.0.1:${proxyPort}`, sport: 'volleyball', matchLabel: 'Pune Panthers v Goa Waves', tournamentId: T.tournamentId, tournamentName: 'Clipper Cup' } })).json;
     st = (await H('GET', '/status')).json;
     ok('the panel hands over the match and the website — the helper is set up for THIS match', rs.success && st.matchId === MID && st.sport === 'volleyball' && st.mainServerUrl === `http://127.0.0.1:${proxyPort}`, { rs, matchId: st.matchId, sport: st.sport });
-    ok('…its folders exist before the first point', fs.existsSync(path.join(recDir, 'Clips', 'Clipper-Cup', `Pune-Panthers-v-Goa-Waves_${MID}`, 'Players')));
+    ok('…its folders exist before the first point — in its OWN clips folder (VolleyballClips, never cricket’s Clips)', fs.existsSync(path.join(recDir, 'VolleyballClips', 'Clipper-Cup', `Pune-Panthers-v-Goa-Waves_${MID}`, 'Players')) && !fs.existsSync(path.join(recDir, 'Clips')));
     ok('one recording only — nothing ambiguous', !st.recordingAmbiguous, st.recordingAmbiguous);
 
     head('3 · A POINT A FEW SECONDS AFTER vMIX STARTED — only what exists');
     ok('the press was accepted at once, and the point was already on the scoreboard', early.accept.success && early.scored.success && early.scored.summary.points.A === 1, { accept: early.accept, scored: early.scored && early.scored.summary && early.scored.summary.points });
     let j = await waitJob(early.clipId, ['SYNC_COMPLETE', 'CUT_FAILED'], 45000);
     const lead = (early.t0 - W0) / 1000;
-    ok('the clip has the ~6 s that exist before the press (+3 s after) — not padded to 18 s', j && j.clipSeconds != null && near(j.clipSeconds, lead + 3, 1.2) && j.window.partialPreRoll === true && near(j.window.actualPreRollSec, lead, 1.2), j && { clipSeconds: j.clipSeconds, window: j.window, lead });
+    ok('the clip has the ~4 s that exist before the press (+3 s after) — not padded to 10 s', j && j.clipSeconds != null && near(j.clipSeconds, lead + 3, 1.2) && j.window.partialPreRoll === true && near(j.window.actualPreRollSec, lead, 1.2), j && { clipSeconds: j.clipSeconds, window: j.window, lead });
     ok('…and it starts at the very start of the recording', j && j.localPath && near(timeAt(j.localPath, 'first'), 0, 1.0), j && j.localPath && timeAt(j.localPath, 'first'));
     let sc = await siteClip(early.eventId);
     ok('…on the website it is marked a short lead-in', sc && sc.actual.partialPreRoll === true, sc && sc.actual);
@@ -215,16 +237,16 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
     j = await waitJob(p.clipId, ['WAITING'], 2000);
     ok('it waits for the 3 s after the point to be recorded first', j && j.syncStatus === 'WAITING', j && j.syncStatus);
     j = await waitJob(p.clipId, ['SYNC_COMPLETE', 'CUT_FAILED'], 45000);
-    const exp0 = (p.t0 - 15000 - W0) / 1000, exp1 = (p.t0 + 3000 - W0) / 1000;
+    const exp0 = (p.t0 - 7000 - W0) / 1000, exp1 = (p.t0 + 3000 - W0) / 1000;
     const f0 = j && j.localPath ? timeAt(j.localPath, 'first') : null, f1 = j && j.localPath ? timeAt(j.localPath, 'last') : null;
-    ok('18 s long', j && near(j.clipSeconds, 18, 0.6) && near(duration(j.localPath), 18, 0.6), j && j.clipSeconds);
-    ok('it starts 15 s before the press (recording time, ±1 s)', near(f0, exp0, 1.0), { first: f0, expected: exp0 });
+    ok('10 s long', j && near(j.clipSeconds, 10, 0.6) && near(duration(j.localPath), 10, 0.6), j && j.clipSeconds);
+    ok('it starts 7 s before the press (recording time, ±1 s)', near(f0, exp0, 1.0), { first: f0, expected: exp0 });
     ok('it ends 3 s after the press (±1 s) — the moment of the point is inside it', near(f1, exp1, 1.0) && f0 < (p.t0 - W0) / 1000 && f1 > (p.t0 - W0) / 1000, { last: f1, expected: exp1 });
-    ok('filed by set and point beside the master recording', j && /[\\/]Set-1[\\/]S1-P002_1-1_GOA\.mp4$/.test(j.localPath), j && j.localPath);
+    ok('filed by set and point in the volleyball clips folder', j && /[\\/]VolleyballClips[\\/].*[\\/]Set-1[\\/]S1-P002_1-1_GOA\.mp4$/.test(j.localPath), j && j.localPath);
     ok('the recording it came from is remembered with the part used', j && j.sourceRecording === 'capture.mp4', j && j.sourceRecording);
     sc = await siteClip(p.eventId);
-    ok('the website has it, linked to its point, playable', sc && ['COMPLETE', 'SERVER_ONLY'].includes(sc.status) && sc.eventId === p.eventId && sc.watchUrl && sc.engine === 'clipper-helper', sc && { status: sc.status, engine: sc.engine });
-    ok('…with the moment and the recording it was cut from (a file name, never a local path)', sc && sc.source && sc.source.recording === 'capture.mp4' && sc.windowStart === p.t0 - 15000 && !/[\\/]/.test(sc.source.recording), sc && sc.source);
+    ok('the website has it, linked to its point, playable, made by the Volleyball Clipper', sc && ['COMPLETE', 'SERVER_ONLY'].includes(sc.status) && sc.eventId === p.eventId && sc.watchUrl && sc.engine === 'volleyball-clipper', sc && { status: sc.status, engine: sc.engine });
+    ok('…with the moment and the recording it was cut from (a file name, never a local path)', sc && sc.source && sc.source.recording === 'capture.mp4' && sc.windowStart === p.t0 - 7000 && !/[\\/]/.test(sc.source.recording), sc && sc.source);
     ok('…nobody has said who earned it yet: pending, no player', sc && sc.attribution.pending === true && sc.players.length === 0, sc && sc.attribution);
     const r2 = [...bucket.keys()].find((k) => k.includes(p.clipId));
     ok('…uploaded to R2 under its set and point', !!r2 && /^volleyball\/[^/]+\/[^/]+\/set-1\/point-2-/.test(r2), r2);
@@ -257,7 +279,7 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
     for (const x of q) qj.push(await waitJob(x.clipId, ['SYNC_COMPLETE', 'CUT_FAILED'], 50000));
     ok('all three were cut and uploaded', qj.every((x) => x && x.syncStatus === 'SYNC_COMPLETE'), qj.map((x) => x && x.syncStatus));
     ok('three different files', new Set(qj.map((x) => x.localPath)).size === 3);
-    ok('each starts 15 s before its own press (±1 s)', q.every((x, i) => near(timeAt(qj[i].localPath, 'first'), (x.t0 - 15000 - W0) / 1000, 1.0)), q.map((x, i) => [timeAt(qj[i].localPath, 'first'), (x.t0 - 15000 - W0) / 1000]));
+    ok('each starts 7 s before its own press (±1 s)', q.every((x, i) => near(timeAt(qj[i].localPath, 'first'), (x.t0 - 7000 - W0) / 1000, 1.0)), q.map((x, i) => [timeAt(qj[i].localPath, 'first'), (x.t0 - 7000 - W0) / 1000]));
     ok('…and the website has one clip per point, each under its own point', (await Promise.all(q.map((x) => siteClip(x.eventId)))).every((c, i) => c && c.eventId === q[i].eventId) && q.every((x) => ingests(x.clipId) === 1), q.map((x) => ingests(x.clipId)));
     // a team point (decided, no name) and one left to assign
     await m1.ev({ eventId: 'attr2', type: 'CORRECT', target: q[1].eventId, patch: { outcome: 'GENERAL', players: null }, reason: 'Point attribution', attribution: true });
@@ -287,14 +309,14 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
     ok('back online: uploaded by itself', j && j.syncStatus === 'SYNC_COMPLETE', j && j.syncStatus);
     ok('…exactly once', ingests(off.clipId) === 1, ingests(off.clipId));
 
-    head('9 · THE HELPER RESTARTED MID-QUEUE — nothing lost, nothing twice');
+    head('9 · THE VOLLEYBALL CLIPPER RESTARTED MID-QUEUE — nothing lost, nothing twice');
     const rp = await pointOf(m1, 'B');
     helper.kill('SIGTERM');
     await new Promise((res) => helper.once('exit', res));
     startHelper();
     ok('it comes back', await helperUp());
     j = await waitJob(rp.clipId, ['SYNC_COMPLETE', 'CUT_FAILED'], 50000);
-    ok('the point pressed before the restart is cut afterwards, from its own moment', j && j.syncStatus === 'SYNC_COMPLETE' && near(timeAt(j.localPath, 'first'), (rp.t0 - 15000 - W0) / 1000, 1.0), j && j.syncStatus);
+    ok('the point pressed before the restart is cut afterwards, from its own moment', j && j.syncStatus === 'SYNC_COMPLETE' && near(timeAt(j.localPath, 'first'), (rp.t0 - 7000 - W0) / 1000, 1.0), j && j.syncStatus);
     await sleep(3000);
     ok('clips finished before the restart are not uploaded again', ingests(p.clipId) === 1 && ingests(off.clipId) === 1, [ingests(p.clipId), ingests(off.clipId)]);
 
@@ -310,13 +332,14 @@ const near = (a, b, tol) => a != null && b != null && Math.abs(a - b) <= tol;
     const old = await job(p.clipId);
     ok('the first match’s clips keep their match, player and file', old.matchId === MID && old.point.players[0].playerId === killer.playerId && fs.existsSync(old.localPath));
 
-    head('11 · A CRICKET PRESS IS STILL A CRICKET CLIP');
-    const ct0 = Date.now();
-    const cr = (await H('POST', '/clip', { json: { eventType: 'FOUR', timestamp: ct0, matchId: 'CRICKET1', ballMeta: { innings: 1, over: 3, ballInOver: 2, striker: 'Rohit Sharma', bowler: 'Jasprit Bumrah' } } })).json;
-    j = await waitJob(cr.clipId, ['LOCAL_SAVED', 'SENDING', 'SENT', 'SYNC_RETRY', 'OFFLINE_PENDING', 'SYNC_COMPLETE', 'CUT_FAILED'], 40000);
-    ok('cut with cricket’s own window (15 s + 3 s) into the cricket folders', j && j.sport === 'cricket' && near(j.clipSeconds, 18, 0.6) && /[\\/]Highlights[\\/]4[\\/]03\.2_FOUR_Rohit-Sharma_vs_Jasprit-Bumrah\.mp4$/.test(j.localPath), j && { sport: j.sport, path: j.localPath, s: j.clipSeconds, st: j.syncStatus, err: j.error });
-    await sleep(2500);
-    ok('…and sent to the cricket ingest, not the volleyball one', ingests(cr.clipId, '/api/clips/ingest') >= 1 && ingests(cr.clipId) === 0, [ingests(cr.clipId, '/api/clips/ingest'), ingests(cr.clipId)]);
+    head('11 · THE VOLLEYBALL CLIPPER NEVER CUTS CRICKET');
+    const before11 = (await H('GET', '/clip-jobs?limit=100')).json.jobs.length;
+    const cr = await H('POST', '/clip', { json: { eventType: 'FOUR', timestamp: Date.now(), matchId: 'CRICKET1', ballMeta: { innings: 1, over: 3, ballInOver: 2, striker: 'Rohit Sharma', bowler: 'Jasprit Bumrah' } } });
+    ok('a cricket press is refused, with the reason (the Cricket Clipper, a different program, cuts those)', cr.status === 400 && /Cricket Clipper/.test(cr.json && cr.json.error), cr);
+    const crs = await H('POST', '/recording-start', { json: { startedAt: Date.now(), matchId: 'CRICKET1', sport: 'cricket' } });
+    ok('…so is a cricket session', crs.status === 400, crs.status);
+    ok('…no job was made, nothing was sent to the cricket ingest', (await H('GET', '/clip-jobs?limit=100')).json.jobs.length === before11 && ingests('CRICKET1', '/api/clips/ingest') === 0 && !netState.hits.some((h) => h.url.startsWith('/api/clips/ingest')));
+    ok('…and the volleyball match is still the one set up', (await H('GET', '/status')).json.matchId === m2.M.matchId);
 
     head('12 · vMIX STOPPED RECORDING — said honestly');
     recorder.kill('SIGINT');

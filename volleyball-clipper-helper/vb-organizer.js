@@ -1,12 +1,12 @@
 // ================================================================
-// 🏐 VOLLEYBALL POINT CLIPS — where one point's clip lives on this PC.
+// 🏐 VOLLEYBALL CLIPPER — where one point's clip lives on this PC.
 //
-// The cricket tree (clipOrganizer.js: Highlights / Batsmen / Bowlers) has
-// no place for a rally, so a volleyball point is filed by what it is —
-// match → set → point — beside the master recording, with the same two
-// rules as cricket:
+// A point is filed by what it is — match → set → point — in the
+// Volleyball Clipper's OWN clips folder (VolleyballClips, beside the vMix
+// recording unless setup says otherwise; never the Cricket Clipper's
+// Clips folder):
 //
-//   <recording folder>/Clips/
+//   <recording folder>/VolleyballClips/
 //     [<Tournament>/]<Match>/
 //        Set-1/S1-P027_15-12_PUN_Kill_7-Arjun-Kumar.mp4   ← the one physical clip
 //        Players/<Team>/<7-Arjun-Kumar>/Set-1/…            ← hard links, + player.json
@@ -19,12 +19,79 @@
 //
 // A folder name is for a person browsing; the player's real id is in
 // player.json and metadata/<clipId>.json, never taken from the name.
+//
+// The few folder helpers this needs are this file's own copies (they were
+// the Cricket Clipper's clipOrganizer.js rules when copied) — nothing here
+// requires a cricket file, so neither clipper can change the other.
 // ================================================================
 const fs = require('fs');
 const path = require('path');
-const organizer = require('./clipOrganizer');
 
-const { sanitizeSegment, matchRootFor, linkOrCopy, writeClipMetadata } = organizer;
+// Windows device names can't be used as folder names, whatever the extension.
+const RESERVED = new Set(['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9']);
+
+// "Shivam Dubé" → "Shivam-Dube", "O'Brien" → "OBrien", "A/B <x>" → "A-B-x".
+// Recognisable to a human, safe on Windows/macOS/Linux, and never empty.
+function sanitizeSegment(value, fallback = 'Unknown') {
+  let s = String(value == null ? '' : value);
+  try { s = s.normalize('NFKD').replace(/[̀-ͯ]/g, ''); } catch (_) { /* very old runtime */ }
+  s = s
+    .replace(/['"`]/g, '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.\s]+$/g, '');
+  if (s.length > 60) s = s.slice(0, 60).replace(/-+$/, '');
+  if (!s) return fallback;
+  if (RESERVED.has(s.toUpperCase())) return `${s}-x`;
+  return s;
+}
+
+// A tournament level only when the match belongs to one; the match's own
+// id in its folder name, so two matches in the same folder never mix.
+function matchFolderSegments(meta) {
+  const segs = [];
+  const tournament = meta && (meta.tournamentName || meta.tournamentId);
+  if (tournament) segs.push(sanitizeSegment(tournament, 'Tournament'));
+  const label = meta && meta.matchLabel ? sanitizeSegment(meta.matchLabel, '') : '';
+  const id = sanitizeSegment((meta && (meta.matchId || meta.tournamentMatchId)) || 'match', 'match');
+  segs.push(label ? `${label}_${id}` : `Match-${id}`);
+  return segs;
+}
+function matchRootFor(clipsRoot, meta) {
+  return path.join(clipsRoot, ...matchFolderSegments(meta));
+}
+
+// Same bytes, two names (a copy only where the disk refuses a hard link).
+async function linkOrCopy(src, dest) {
+  try {
+    const [a, b] = await Promise.all([fs.promises.stat(src), fs.promises.stat(dest).catch(() => null)]);
+    if (b && b.ino && a.ino === b.ino && b.dev === a.dev) return { path: dest, mode: 'link', existing: true };
+    if (b) await fs.promises.unlink(dest).catch(() => {});
+  } catch (_) { /* src missing is reported by the link/copy below */ }
+  try {
+    await fs.promises.link(src, dest);
+    return { path: dest, mode: 'link' };
+  } catch (err) {
+    if (err && err.code === 'EEXIST') return { path: dest, mode: 'link', existing: true };
+    try {
+      await fs.promises.copyFile(src, dest);
+      return { path: dest, mode: 'copy' };
+    } catch (err2) {
+      return { path: dest, mode: 'failed', error: err2.message };
+    }
+  }
+}
+
+// The point, on disk next to its clip — the local answer to "which point,
+// which players, which ids" even if the laptop never goes online again.
+async function writeClipMetadata(matchRoot, record) {
+  try {
+    const dir = path.join(matchRoot, 'metadata');
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, `${record.clipId}.json`), JSON.stringify(record, null, 2));
+  } catch (_) { /* the persistent queue is the real record — this is a convenience */ }
+}
 
 // How the point was won, as a word for a filename / folder.
 const TYPE_WORD = { kill: 'Kill', ace: 'Ace', block: 'Block', opp_error: 'Opp-Error', team: 'Team-Point' };
@@ -115,4 +182,4 @@ async function placePointClip({ clipsRoot, currentPath, meta, previous }) {
   return { primary, filename, links, matchRoot, category: `Set ${int(p.set) || '?'}` };
 }
 
-module.exports = { TYPE_WORD, ensurePointTree, pointFileName, placePointClip, writeClipMetadata };
+module.exports = { TYPE_WORD, sanitizeSegment, matchRootFor, linkOrCopy, writeClipMetadata, ensurePointTree, pointFileName, placePointClip };

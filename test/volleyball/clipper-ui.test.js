@@ -1,7 +1,8 @@
 /* 🎬 The volleyball panel's Clipper, as an operator uses it, in Chromium —
-   the scoring panel on the vMix PC itself, the REAL Clipper Helper (a temp
-   copy of clipper-helper/) next to it, cutting from a recording that is
-   still being written, the REAL website behind both:
+   the scoring panel on the vMix PC itself, the REAL Volleyball Clipper
+   (a temp copy of volleyball-clipper-helper/ — volleyball's own program,
+   localhost:5007, not the Cricket Clipper) next to it, cutting from a
+   recording that is still being written, the REAL website behind both:
 
      • ▶ Start Clipper in the panel → READY only when everything is really
        there (nothing typed: no recording path, no panel link)
@@ -18,6 +19,8 @@
      • Undo takes back the score, not an attribution
      • vMix stops recording → WARNING, and a point then says "could not be
        cut" — never a made-up clip
+     • Quit the Volleyball Clipper → that program closes itself (no
+       launcher link needed, never a cricket one); started again it carries on
      • Stop clipping → STOPPED, no new jobs; a reload resumes by itself
 
      NODE_PATH=$(npm root -g) node test/volleyball/clipper-ui.test.js
@@ -95,16 +98,20 @@ const FAKE_FIREBASE = `(function(){
     recorder = spawn(FFMPEG, ['-v', 'error', '-re', '-f', 'lavfi', '-i', "color=black:s=384x192:r=25,format=yuv420p,geq=lum='16+3*mod(floor(T),60)':cb=128:cr=128",
       '-f', 'lavfi', '-i', 'sine=f=440:r=48000', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', '-keyint_min', '25', '-c:a', 'aac',
       '-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-flush_packets', '1', '-f', 'mp4', path.join(recDir, 'match.mp4')], { stdio: 'ignore' });
-    // the Clipper Helper (set up once on this PC: the recording folder)
-    const hDir = path.join(tmp, 'ClipperHelper');
+    // the Volleyball Clipper (set up once on this PC: the recording folder)
+    const hDir = path.join(tmp, 'VolleyballClipper');
     fs.mkdirSync(hDir);
-    for (const f of ['server.js', 'fmp4.js', 'clipOrganizer.js', 'volleyballOrganizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'clipper-helper', f), path.join(hDir, f));
+    for (const f of ['volleyball-clipper-server.js', 'vb-fmp4.js', 'vb-organizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'volleyball-clipper-helper', f), path.join(hDir, f));
     const hPort = await freePort();
-    fs.writeFileSync(path.join(hDir, 'config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, mainServerUrl: '' }));
-    helper = spawn(process.execPath, [path.join(hDir, 'server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
-    helper.stdout.on('data', (d) => { hLog += d; }); helper.stderr.on('data', (d) => { hLog += d; });
+    fs.writeFileSync(path.join(hDir, 'volleyball-clipper-config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, mainServerUrl: '' }));
     const H = (m, u, o) => call(hPort, m, u, o);
-    for (let i = 0; i < 100; i++) { await sleep(100); try { if ((await H('GET', '/status')).status === 200) break; } catch (e) { /* booting */ } }
+    const startHelper = async () => {
+      helper = spawn(process.execPath, [path.join(hDir, 'volleyball-clipper-server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
+      helper.stdout.on('data', (d) => { hLog += d; }); helper.stderr.on('data', (d) => { hLog += d; });
+      helper.exited = new Promise((r) => helper.once('exit', r));
+      for (let i = 0; i < 100; i++) { await sleep(100); try { if ((await H('GET', '/status')).status === 200) break; } catch (e) { /* booting */ } }
+    };
+    await startHelper();
 
     async function openPanel(viewport) {
       const ctx = await browser.newContext({ viewport: viewport || { width: 1366, height: 768 } });
@@ -112,7 +119,9 @@ const FAKE_FIREBASE = `(function(){
       await page.addInitScript((user) => { window.__fakeUser = user; }, { email: U.email, uid: U.uid, token: 'tok-work' });
       await page.route('https://www.gstatic.com/**', (r) => r.fulfill({ contentType: 'application/javascript', body: FAKE_FIREBASE }));
       await page.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
-      await page.route('http://localhost:5005/**', (r) => r.continue({ url: r.request().url().replace('localhost:5005', '127.0.0.1:' + hPort) }));
+      await page.route('http://localhost:5007/**', (r) => r.continue({ url: r.request().url().replace('localhost:5007', '127.0.0.1:' + hPort) }));
+      // every asl-… link the page opens (the launchers), recorded instead of opened
+      await page.addInitScript(() => { const c = HTMLAnchorElement.prototype.click; window.__asl = []; HTMLAnchorElement.prototype.click = function () { if (/^asl-/.test(this.href)) { window.__asl.push(this.href); return; } return c.call(this); }; });
       page.on('pageerror', (e) => errors.push(String(e)));
       await page.goto(`${base}/volleyball-panel?match=${MID}`);
       return { ctx, page };
@@ -290,6 +299,19 @@ const FAKE_FIREBASE = `(function(){
     await page.click('#clpChip');
     await page.waitForSelector(`.sheet .clprow[data-ev="${stopped.eventId}"] [data-retry]`, { timeout: 8000 }).then(() => ok('…with Retry next to it', true), () => ok('…with Retry next to it', false));
     await page.screenshot({ path: path.join(OUT, 'clipper-ui-warning.png') });
+
+    head('QUIT THE VOLLEYBALL CLIPPER — it closes itself, nothing else');
+    await page.click('.sheet .clpfirst summary');
+    await page.click('.sheet #clpQuit');
+    await page.click('.sheet [data-ok]');
+    const quitDone = await Promise.race([helper.exited.then(() => true), sleep(10000).then(() => false)]);
+    const asl = await page.evaluate(() => window.__asl.slice());
+    ok('the panel’s Quit closes the Volleyball Clipper program (it ends itself)', quitDone, hLog.slice(-300));
+    ok('…without needing its launcher link, and never a cricket asl-clipper:// one', asl.every((h) => /^asl-vb-clipper:/.test(h)) && !asl.some((h) => /stop/.test(h)), asl);
+    ok('…its queue saved on the way out', /Volleyball Clipper stopped \(stopped from the panel\)/.test(hLog) && fs.existsSync(path.join(hDir, 'volleyball-clip-jobs.json')));
+    await startHelper();
+    ok('started again, it carries on (its jobs still there)', (await jobs()).length > 0);
+    await page.waitForFunction(() => window.__vbPanel.CL.model().checks[0].ok, null, { timeout: 15000 }).catch(() => {});
 
     head('STOP CLIPPING');
     await page.click('.sheet #clpStop');

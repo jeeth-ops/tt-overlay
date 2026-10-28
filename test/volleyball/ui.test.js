@@ -1,8 +1,8 @@
 /* 🏐 The volleyball module in a REAL browser (Chromium via Playwright),
    against the REAL server.js (in-memory MongoDB, stand-in Firebase) and the
-   REAL Clipper Helper (clipper-helper/, a temp copy — the app the Cricket
-   Panel uses) cutting from a recording that is still being written, the
-   way vMix writes one:
+   REAL Volleyball Clipper (volleyball-clipper-helper/, a temp copy —
+   volleyball's own program, not the Cricket Clipper) cutting from a
+   recording that is still being written, the way vMix writes one:
 
      dashboard  — two teams and a tournament made through the UI, fixtures
                   generated, the match opened;
@@ -12,7 +12,7 @@
                   number checked against the server's ledger;
      clipper    — on the "recording PC": ▶ Start Clipper, READY only once
                   the recording is really growing; the phone's kill clipped
-                  by relay: the press converted to this PC's clock, 15 s
+                  by relay: the press converted to this PC's clock, 7 s
                   before + 3 s after — proven from the frames of the clip;
                   the attacker named after the point, the clip follows;
      overlay    — 1920×1080, transparent; the bar follows every point;
@@ -108,7 +108,7 @@ const FAKE_FIREBASE = `(function(){
   const browser = await chromium.launch();
   const pageErrors = [];
   const contexts = [];
-  // helper: 'block' (a phone: no Clipper app reachable), a port (the recording PC's Clipper Helper), or null (untouched)
+  // helper: 'block' (a phone: no Clipper app reachable), a port (the recording PC's Volleyball Clipper), or null (untouched)
   async function open(url, { who = 'work', viewport = { width: 1366, height: 768 }, helper = 'block', scheme = 'light', init } = {}) {
     const ctx = await browser.newContext({ viewport, colorScheme: scheme });
     contexts.push(ctx);
@@ -120,8 +120,8 @@ const FAKE_FIREBASE = `(function(){
     await page.route('https://www.gstatic.com/**', (r) => r.fulfill({ contentType: 'application/javascript', body: FAKE_FIREBASE }));
     await page.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
     await page.route('https://fonts.gstatic.com/**', (r) => r.abort());
-    if (helper === 'block') await page.route('http://localhost:5005/**', (r) => r.abort());
-    else if (helper) await page.route('http://localhost:5005/**', (r) => r.continue({ url: r.request().url().replace('localhost:5005', '127.0.0.1:' + helper) }));
+    if (helper === 'block') await page.route('http://localhost:5007/**', (r) => r.abort());
+    else if (helper) await page.route('http://localhost:5007/**', (r) => r.continue({ url: r.request().url().replace('localhost:5007', '127.0.0.1:' + helper) }));
     page.on('pageerror', (e) => pageErrors.push(url.split('?')[0] + ': ' + String(e)));
     await page.goto(base + url);
     return page;
@@ -182,7 +182,7 @@ const FAKE_FIREBASE = `(function(){
     const six = (t) => M.squads[t].filter((p) => !p.libero).slice(0, 6).map((p) => p.playerId);
 
     /* ------------------------------------------------------------ engine + clipper */
-    head('CLIPPER on the recording PC — the real Clipper Helper, vMix recording');
+    head('CLIPPER on the recording PC — the real Volleyball Clipper, vMix recording');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vb-ui-'));
     const recDir = path.join(tmp, 'vMix Recordings');
     fs.mkdirSync(recDir, { recursive: true });
@@ -192,13 +192,13 @@ const FAKE_FIREBASE = `(function(){
     recProc = spawn(FFMPEG, ['-v', 'error', '-re', '-f', 'lavfi', '-i', "color=black:s=384x192:r=25,format=yuv420p,geq=lum='if(lt(X,128),16+3*mod(floor(T),60),if(lt(X,256),16+3*floor(T/60),16+200*(T-floor(T))))':cb=128:cr=128",
       '-f', 'lavfi', '-i', 'sine=f=440:r=48000', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', '-keyint_min', '25', '-c:a', 'aac',
       '-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-flush_packets', '1', '-f', 'mp4', path.join(recDir, 'capture.mp4')], { stdio: 'ignore' });
-    // the Clipper Helper, from a temp copy, set up once for this PC (the recording folder)
-    const hDir = path.join(tmp, 'ClipperHelper');
+    // the Volleyball Clipper, from a temp copy, set up once for this PC (the recording folder)
+    const hDir = path.join(tmp, 'VolleyballClipper');
     fs.mkdirSync(hDir);
-    for (const f of ['server.js', 'fmp4.js', 'clipOrganizer.js', 'volleyballOrganizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'clipper-helper', f), path.join(hDir, f));
+    for (const f of ['volleyball-clipper-server.js', 'vb-fmp4.js', 'vb-organizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'volleyball-clipper-helper', f), path.join(hDir, f));
     const hPort = 5300 + Math.floor(Math.random() * 600);
-    fs.writeFileSync(path.join(hDir, 'config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, mainServerUrl: '' }));
-    helperProc = spawn(process.execPath, [path.join(hDir, 'server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
+    fs.writeFileSync(path.join(hDir, 'volleyball-clipper-config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, mainServerUrl: '' }));
+    helperProc = spawn(process.execPath, [path.join(hDir, 'volleyball-clipper-server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
     helperProc.stdout.on('data', (d) => { hLog += d; }); helperProc.stderr.on('data', (d) => { hLog += d; });
     for (let i = 0; i < 100; i++) { await sleep(100); try { if ((await call(hPort, 'GET', '/status')).status === 200) break; } catch (e) { /* booting */ } }
 
@@ -209,7 +209,7 @@ const FAKE_FIREBASE = `(function(){
     const ready = await clipper.waitForSelector('.clphead .clpword:has-text("READY")', { timeout: 30000 }).then(() => true, () => false);
     ok('▶ Start Clipper → READY: the Clipper app, this match, the recording vMix is writing, the website — all found, nothing typed', ready, await clipper.textContent('#clp').catch(() => ''));
     const hs = (await call(hPort, 'GET', '/status')).json;
-    eq('…the helper is set up for THIS match and THIS website', [hs.matchId, hs.sport, hs.mainServerUrl, hs.currentRecordingFile && path.basename(hs.currentRecordingFile)], [MID, 'volleyball', base, 'capture.mp4']);
+    eq('…the Volleyball Clipper is set up for THIS match and THIS website', [hs.matchId, hs.sport, hs.mainServerUrl, hs.currentRecordingFile && path.basename(hs.currentRecordingFile)], [MID, 'volleyball', base, 'capture.mp4']);
     const ck = await clipper.$$eval('.clpchecks > div', (d) => d.map((x) => x.className));
     ok('…every check ticked', ck.length === 4 && ck.every((c) => c === 'ok'), ck);
     await shot(clipper, 'clipper-ready');
@@ -367,8 +367,8 @@ const FAKE_FIREBASE = `(function(){
       // the press is the TAP (the "Kill" chip); the attacker was named afterwards
       const pressSec = (tPress - W0) / 1000;
       ok(`the attacker was named ${((tAfter - tPress) / 1000).toFixed(1)} s after the tap — the clip still keys on the tap`, tAfter > tPress);
-      ok(`the clip is 18 s long (${dur && dur.toFixed(2)} s): 15 s of the rally + 3 s after`, dur && Math.abs(dur - 18) < 0.8, dur);
-      ok(`it starts 15 s before the press (first frame at ${first.toFixed(2)} s of the recording, press at ${pressSec.toFixed(2)} s)`, Math.abs(first - (pressSec - 15)) <= 1.2, { first, pressSec });
+      ok(`the clip is 10 s long (${dur && dur.toFixed(2)} s): 7 s of the rally + 3 s after`, dur && Math.abs(dur - 10) < 0.8, dur);
+      ok(`it starts 7 s before the press (first frame at ${first.toFixed(2)} s of the recording, press at ${pressSec.toFixed(2)} s)`, Math.abs(first - (pressSec - 7)) <= 1.2, { first, pressSec });
       ok(`it ends 3 s after the press (last frame at ${last.toFixed(2)} s)`, Math.abs(last - (pressSec + 3)) <= 1.2, { last, pressSec });
       eq('the clip belongs to the attacker (named after the point, by id)', clip.players.filter((p) => p.playerId === attacker).map((p) => p.role), ['attacker']);
       eq('…its attribution says so', [clip.attribution.type, clip.attribution.playerId], ['kill', attacker]);

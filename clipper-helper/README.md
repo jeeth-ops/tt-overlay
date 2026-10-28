@@ -1,31 +1,14 @@
-# Clipper Helper v5.3 — Setup (one-time, operator ka apna PC)
+# Clipper Helper v5.2 — Setup (one-time, operator ka apna PC)
 
-## 🏐 v5.3 — Volleyball points bhi (same app, same setup)
-
-Volleyball panel ka **🎬 Clipper** chip isi Clipper Helper ko chalata hai —
-naya program, naya path ya naya link kuch nahi. Jis PC pe cricket ke liye
-setup ho chuka hai (vMix recording folder), wahan volleyball ke liye kuch
-bharna nahi padta.
-
-- **Har point = ek clip:** panel me point dabate hi uska clip job ban jaata
-  hai (`<matchId>_<point eventId>`), vMix recording se **15 sec rally pehle
-  + 3 sec baad = 18 sec** (`config.json` me `volleyball.preRollSeconds` /
-  `volleyball.postRollSeconds` — cricket ke numbers alag hain, ek doosre ko
-  nahi badalte). Same point do baar aaye (outbox, reconnect, Clipper page)
-  to bhi ek hi job.
-- **"Who earned this point?"** — point register hote hi panel poochta hai;
-  scoring kabhi nahi rukti. Player chunte hi clip usi player se (playerId se)
-  link hoti hai — website par aur is PC par bhi:
-  `Clips/<Tournament>/<Match>/Set-1/S1-P027_15-12_PUN_Kill_7-Arjun-Kumar.mp4`
-  + `Players/<Team>/<7-Arjun-Kumar>/Set-1/` (hard link, wahi file) +
-  `metadata/<clipId>.json`. Team point / baad me assign bhi chalta hai.
-- **READY tabhi** jab helper chal raha ho, isi match ke liye set ho, aur vMix
-  ki recording sach me badh rahi ho. Do recordings ek saath likhi ja rahi hon
-  to panel WARNING dikhata hai (`recordingAmbiguous` in `/status`).
-- Upload `/api/volleyball/clips/ingest` par (match ke clip token ke saath);
-  offline me clip local save, net aate hi ek hi baar upload — cricket jaisa.
-- Purana `ClipperHelper.exe` (5.2) volleyball point nahi samajhta — panel
-  WARNING dikhata hai: `npm run build` se naya exe banao.
+> 🏏 **Ye sirf CRICKET ka Clipper hai** (`ClipperHelper.exe`, port 5005,
+> `asl-clipper://`). Volleyball ka Clipper ek **alag program** hai —
+> `volleyball-clipper-helper/` (`VolleyballClipper.exe`, port 5007,
+> `asl-vb-clipper://`), apne alag folder me. Volleyball ki koi file is
+> folder me mat daalna, aur volleyball ka install BAT yahan mat chalana.
+> Cricket ka Start/Stop hamesha usi folder ke `clipper-launch.vbs` se chalta
+> hai jahan `install-clipper-launcher.bat` aakhri baar chalaya gaya tha —
+> folder badla ya kisi aur folder se BAT chala diya, to cricket folder me
+> `install-clipper-launcher.bat` dobara chalao.
 
 ## 🆕 Panel se Start / Stop (koi kaali window nahi)
 

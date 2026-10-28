@@ -1530,7 +1530,7 @@ module.exports = function setupVolleyball(deps) {
   /* ---------- the clipping session: which device clips this match ----------
      One device at a time cuts this match's point clips — the PC that
      records (the scoring panel itself, or the Clipper page on that PC,
-     with the Clipper Helper next to vMix). It says so here and keeps
+     with the Volleyball Clipper next to vMix). It says so here and keeps
      saying how it is doing every few seconds, so every other device can
      show it ("Clipper READY on the vMix PC" on a phone that scores) and a
      second device never clips the same points from another recording. */
@@ -1633,8 +1633,8 @@ module.exports = function setupVolleyball(deps) {
     }
     const eventId = idOk(meta.eventId) ? meta.eventId : (existing && existing.eventId) || null;
     const durationSec = await probeDuration(file);
-    // the Clipper Helper sends everything in X-Ball-Meta (one header — see
-    // clipper-helper/server.js); the Stream Engine's X-Clip-Meta still works
+    // the Volleyball Clipper sends everything in X-Ball-Meta (one header — see
+    // volleyball-clipper-helper/); the Stream Engine's X-Clip-Meta still works
     const cm = (k) => (clipMeta[k] != null ? clipMeta[k] : meta[k]);
     const reqPre = num(cm('preRollSec'), CLIP_PRE_ROLL_SEC);
     const actualPre = cm('actualPreRollSec') != null ? num(cm('actualPreRollSec'), null) : null;
@@ -1644,7 +1644,8 @@ module.exports = function setupVolleyball(deps) {
       durationSec, actualPreRollSec: actualPre, partialPreRoll: actualPre != null ? actualPre < reqPre - 0.5 : !!cm('partialPreRoll'),
       windowStart: num(cm('windowStart'), null), windowEnd: num(cm('windowEnd'), null),
       source: recName || meta.sourceStartSec != null ? { recording: recName, startSec: num(meta.sourceStartSec, null), endSec: num(meta.sourceEndSec, null) } : null,
-      engine: meta.engine === 'clipper-helper' ? 'clipper-helper' : (existing && existing.engine) || 'stream-engine',
+      // 'volleyball-clipper' (VolleyballClipper.exe); 'clipper-helper' = a clip sent by the earlier shared helper
+      engine: ['volleyball-clipper', 'clipper-helper'].includes(meta.engine) ? meta.engine : (existing && existing.engine) || 'stream-engine',
       cutOffline: !!meta.cutOffline,
       r2Status: existing && existing.r2Status === 'uploaded' ? 'uploaded' : 'pending',
       driveStatus: existing && existing.driveStatus === 'uploaded' ? 'uploaded' : 'pending'
