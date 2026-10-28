@@ -1085,6 +1085,8 @@
       setsToWin: setsToWin(rules),
       bestOf: rules.bestOf,
       sets: state.sets.map(function (x) { return { set: x.number, A: x.points.A, B: x.points.B, winner: x.winner, status: x.status, forfeit: !!x.forfeit, deciding: !!x.deciding }; }),
+      // when each set began and ended (the events' own times), who served first, who started on the left
+      setInfo: state.sets.map(function (x) { return { set: x.number, startedAt: x.startedAt || null, endedAt: x.endedAt || null, firstServe: x.firstServe || null, leftSide: x.leftSideAtStart || null }; }),
       serving: state.status === 'in_set' ? state.serving : null,
       server: srv ? person(srv.team, srv.playerId) : null,
       leftSide: state.leftSide,

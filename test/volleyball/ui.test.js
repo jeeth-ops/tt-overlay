@@ -404,39 +404,37 @@ const FAKE_FIREBASE = `(function(){
     await shot(overlay, 'overlay-final-bar');
 
     /* ------------------------------------------------------------ on-air graphics */
-    head('ON-AIR GRAPHICS — picked in the panel, shown on the overlay');
-    const rect = (sel) => overlay.evaluate((q) => { const e = document.querySelector(q); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }, sel);
-    const overlaps = (a, b) => a && b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-    for (const [scene, label] of [['intro', 'Match intro'], ['lineup', 'Starting six'], ['toss', 'Toss result'], ['setSummary', 'Set summary'], ['final', 'Final result'], ['standings', 'Points table'], ['playerStat', null]]) {
-      await panel.click('#gfxBtn');
+    head('ON-AIR GRAPHICS — taken in the panel, shown on the overlay, the score bar steps aside');
+    const onAir = (page, scene) => page.waitForFunction((sc) => { const o = window.__vbOverlay; return o && o.state === 'GRAPHIC_VISIBLE' && o.onAir && o.onAir.scene === sc; }, scene, { timeout: 15000 }).then(() => true, () => false);
+    const barOff = (page) => page.evaluate(() => ['#stage', '#pill', '#corner'].every((q) => { const e = document.querySelector(q); return getComputedStyle(e).visibility === 'hidden' || getComputedStyle(e).display === 'none'; }));
+    const insideFrame = (page) => page.evaluate(() => Array.from(document.querySelectorAll('#gfx .scene *')).every((e) => { const r = e.getBoundingClientRect(); return !r.width || !r.height || (r.left >= -0.5 && r.top >= -0.5 && r.right <= 1920.5 && r.bottom <= 1080.5); }));
+    await panel.click('#gfxBtn');
+    await panel.waitForSelector('.sheet #gfxBody .gtile', { timeout: 8000 });
+    await panel.click('.sheet #gfxDur button[data-v="hold"]');
+    for (const [scene, label] of [['intro', 'Match intro'], ['lineup', 'Starting six'], ['toss', 'Coin toss'], ['setSummary', 'Set result'], ['final', 'Match result'], ['scorecard', 'Match statistics'], ['standings', 'Points table'], ['playerStat', 'Player card']]) {
       if (scene === 'playerStat') await panel.click(`.sheet [data-ps="${attacker}"]`);
-      else await panel.click(`.sheet [data-sc="${scene}"]`);
-      const cls = { intro: 'intro', lineup: 'lineup', toss: 'toss', setSummary: 'res', final: 'res', standings: 'stand', playerStat: 'pcard' }[scene];
-      const shown = await overlay.waitForSelector(`#gfx .scene.${cls}.on`, { timeout: 8000 }).then(() => true, () => false);
-      await sleep(1300);
-      const g = await rect('#gfx .scene.on'), bar = await rect('#wrap'), pill = await rect('#pill');
-      const inside = g && g.x >= 0 && g.y >= 0 && g.x + g.w <= 1920 && g.y + g.h <= 1080;
-      const barShown = await overlay.evaluate(() => !document.body.classList.contains('hide-bar'));
-      ok(`${label || 'Player card'}: on air, inside the frame${barShown ? ', clear of the score bar' : ' (the bar steps aside)'}`, shown && inside && (!barShown || (!overlaps(g, bar) && !overlaps(g, pill))), { shown, g, bar, pill });
-      eq(`${label || 'Player card'}: no team or player name cut short`, await clipped(overlay, '#gfx .scene.on b, #gfx .scene.on .pnm, #na span, #nb span'), []);
+      else await panel.click(`.sheet .gmain[data-t="${scene}"]`);
+      const shown = await onAir(overlay, scene);
+      await sleep(400);
+      ok(`${label}: on air, inside the frame, the score bar off air under it`, shown && await insideFrame(overlay) && await barOff(overlay), { shown });
+      eq(`${label}: no team or player name cut short`, await clipped(overlay, '#gfx .scene [data-fit]'), []);
+      ok(`${label}: the panel says it is on air`, await panel.waitForFunction((l) => new RegExp('ON AIR · ' + l).test(document.querySelector('#gfxAir').textContent), label, { timeout: 5000 }).then(() => true, () => false));
       await shot(overlay, 'overlay-' + scene);
     }
-    const pc = await overlay.textContent('#gfx .scene.on');
-    ok('the player card shows the attacker’s real kills', /Kills/.test(pc) && new RegExp(M.squads.A.find((p) => p.playerId === attacker).name, 'i').test(pc), pc.slice(0, 160));
-    await panel.click('#gfxBtn'); await panel.click('.sheet [data-sc="scorebug"]');
-    await overlay.waitForFunction(() => !document.querySelector('#gfx .scene'), null, { timeout: 8000 }).then(() => ok('“Scoreboard only” clears the graphic', true), () => ok('“Scoreboard only” clears the graphic', false));
+    const pc = await overlay.textContent('#gfx .scene');
+    ok('the player card shows the attacker’s real kills', /Kills/.test(pc) && new RegExp(M.squads.A.find((p) => p.playerId === attacker).name.split(' ').pop(), 'i').test(pc), pc.slice(0, 160));
+    await panel.click('.sheet #gfxAir [data-a="stop"]');
+    await overlay.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && !document.querySelector('#gfx .scene'), null, { timeout: 12000 }).then(() => ok('“Dismiss · back to live” clears the graphic and the bar returns', true), () => ok('“Dismiss · back to live” clears the graphic and the bar returns', false));
 
     const compact = await open(`/volleyball-overlay?match=${MID}&layout=compact`, { who: null, engine: null, viewport: { width: 1920, height: 1080 } });
-    await compact.waitForFunction(() => document.body.classList.contains('ready'), null, { timeout: 15000 });
+    await compact.waitForFunction(() => document.body.classList.contains('ready') && window.__vbOverlay.state === 'OVERLAY_VISIBLE', null, { timeout: 15000 });
     await backdrop(compact);
     eq('compact layout: the team names fit the corner bug', await clipped(compact, '.crow .cn'), []);
-    await panel.click('#gfxBtn'); await panel.click('.sheet [data-sc="lineup"]');
-    await compact.waitForSelector('#gfx .scene.on', { timeout: 8000 });
-    await sleep(1300);
-    const cg = await compact.evaluate(() => { const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }; return { g: r('#gfx .scene.on'), c: r('#corner'), stageShown: getComputedStyle(document.querySelector('#stage')).display !== 'none' }; });
-    ok('compact layout: the corner bug and a graphic never overlap, no bottom bar', !overlaps(cg.g, cg.c) && !cg.stageShown, cg);
+    await panel.click('.sheet .gmain[data-t="lineup"]');
+    ok('compact layout: a graphic takes the corner bug off air, no bottom bar', await onAir(compact, 'lineup') && await barOff(compact));
     await shot(compact, 'overlay-compact-lineup');
-    await panel.click('#gfxBtn'); await panel.click('.sheet [data-sc="scorebug"]');
+    await panel.click('.sheet #gfxAir [data-a="stop"]');
+    await panel.keyboard.press('Escape');
 
     /* ------------------------------------------------------------ report */
     head('PDF REPORT');

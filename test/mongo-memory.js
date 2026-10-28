@@ -191,6 +191,7 @@ class Collection {
             return [v];
         });
         if (idx.sparse && fields.every(f => valuesAt(doc, f).every(x => x === undefined))) return [];
+        if (idx.partial && !matches(doc, idx.partial)) return [];
         let combos = [[]];
         perField.forEach(vals => { combos = combos.flatMap(c => vals.map(v => c.concat([v instanceof ObjectId ? 'oid:' + v.toHexString() : v]))); });
         return combos.map(c => JSON.stringify(c));
@@ -214,9 +215,16 @@ class Collection {
     }
     async createIndex(spec, opts) {
         opts = opts || {};
-        const name = Object.keys(spec).map(k => k + '_' + spec[k]).join('_');
-        if (!this.indexes.some(i => i.name === name)) this.indexes.push({ name, spec, unique: !!opts.unique, sparse: !!opts.sparse });
+        const name = opts.name || Object.keys(spec).map(k => k + '_' + spec[k]).join('_');
+        if (!this.indexes.some(i => i.name === name)) this.indexes.push({ name, spec, unique: !!opts.unique, sparse: !!opts.sparse, partial: opts.partialFilterExpression || null });
         return name;
+    }
+    // like the driver: dropping an index that is not there is an error
+    async dropIndex(name) {
+        const i = this.indexes.findIndex(x => x.name === name);
+        if (i < 0) throw new Error('index not found with name [' + name + ']');
+        this.indexes.splice(i, 1);
+        return { ok: 1 };
     }
     find(q) {
         let rows = this.docs.filter(d => matches(d, q || {}));

@@ -38,6 +38,7 @@ const E = require('./volleyball-engine.js');
 const Stats = require('./volleyball-stats.js');
 const Standings = require('./volleyball-standings.js');
 const Report = require('./volleyball-report.js');
+const G = require('./volleyball-graphics.js');
 
 const LEASE_TTL_MS = 30 * 1000;            // a controller silent this long can be replaced without "take over"
 const LEDGER_CACHE_MAX = 300;
@@ -45,6 +46,7 @@ const CLIP_RETRY_INTERVAL_MS = 15 * 1000;
 const CLIP_MAX_RETRIES = 12;
 const REPORT_MAX_ATTEMPTS = 5;
 const MAX_LOGO_BYTES = 600 * 1024;
+const MAX_PHOTO_BYTES = 400 * 1024;        // a player's portrait for the starting six and the player card
 const CLIP_PRE_ROLL_SEC = 7;               // what the panel asks the local clip engine for
 const CLIP_POST_ROLL_SEC = 3;
 
@@ -97,8 +99,12 @@ module.exports = function setupVolleyball(deps) {
     await c.players.createIndex({ ownerUid: 1, nameKey: 1 });
     await c.matches.createIndex({ matchId: 1 }, { unique: true });
     await c.matches.createIndex({ tournamentId: 1, scheduledAt: 1 });
-    // a generated fixture exists once per tournament, however often "generate" is pressed
-    await c.matches.createIndex({ tournamentId: 1, fixtureKey: 1 }, { unique: true, sparse: true });
+    // a generated fixture exists once per tournament, however often "generate"
+    // is pressed — and only a generated one has a key: a partial index (the
+    // first version's compound SPARSE index still indexed a hand-made match's
+    // missing key as null, so a tournament could hold only one of those)
+    try { await c.matches.dropIndex('tournamentId_1_fixtureKey_1'); } catch (e) { /* not there (a new database, or already replaced) */ }
+    await c.matches.createIndex({ tournamentId: 1, fixtureKey: 1 }, { name: 'tournament_fixture_once', unique: true, partialFilterExpression: { fixtureKey: { $type: 'string' } } });
     await c.matches.createIndex({ 'teamA.teamId': 1, completedAt: -1 });
     await c.matches.createIndex({ 'teamB.teamId': 1, completedAt: -1 });
     // THE idempotency guarantees: one row per event, one event per sequence number
@@ -170,24 +176,35 @@ module.exports = function setupVolleyball(deps) {
   const byOf = (user, extra) => Object.assign({ uid: user ? user.uid : null, email: user ? user.email : null }, extra || {});
 
   /* ------------------------------------------------------------ teams + players */
-  function cleanLogo(input) {
+  function cleanLogo(input, maxBytes) {
     if (input == null || input === '') return null;
     const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(input));
     if (!m) return undefined;              // undefined = "invalid", null = "none"
     const bytes = Buffer.from(m[2], 'base64');
-    if (!bytes.length || bytes.length > MAX_LOGO_BYTES) return undefined;
+    if (!bytes.length || bytes.length > (maxBytes || MAX_LOGO_BYTES)) return undefined;
     return { type: m[1], data: m[2], bytes: bytes.length };
   }
+  const photoUrl = (p) => (p && p.photoV ? `/api/volleyball/players/${p.playerId}/photo?v=${p.photoV}` : null);
   function publicTeam(t, opts) {
     if (!t) return null;
     return {
       teamId: t.teamId, name: t.name, shortName: t.shortName || '', colors: t.colors || {}, city: t.city || '',
       logo: t.logo ? `/api/volleyball/teams/${t.teamId}/logo?v=${t.logoV || 1}` : null,
       players: (t.players || []).filter((p) => p.active !== false || (opts && opts.all)).map((p) => ({
-        playerId: p.playerId, name: p.name, number: p.number, role: p.role || '', libero: !!p.libero, captain: !!p.captain, active: p.active !== false
+        playerId: p.playerId, name: p.name, number: p.number, role: p.role || '', libero: !!p.libero, captain: !!p.captain, active: p.active !== false, photo: photoUrl(p)
       })),
       updatedAt: t.updatedAt || 0
     };
+  }
+  // The portraits of a match's two squads, from the teams' current rosters
+  // (a photo added during a match shows at once) — { playerId: url }.
+  async function photosOf(c, m) {
+    const ids = [m && m.teamA && m.teamA.teamId, m && m.teamB && m.teamB.teamId].filter(Boolean);
+    if (!ids.length) return {};
+    const teams = await c.teams.find({ teamId: { $in: ids } }).toArray();
+    const out = {};
+    teams.forEach((t) => (t.players || []).forEach((p) => { const u = photoUrl(p); if (u) out[p.playerId] = u; }));
+    return out;
   }
   function teamSnapshot(t) {
     return { teamId: t.teamId, name: t.name, shortName: t.shortName || abbr(t.name), colors: Object.assign({}, t.colors || {}), logoV: t.logo ? (t.logoV || 1) : 0 };
@@ -227,6 +244,12 @@ module.exports = function setupVolleyball(deps) {
       const number = str(raw.number, 3).replace(/[^0-9]/g, '');
       out.push({ playerId, name, number, role: E.ROLES[raw.role] ? raw.role : (raw.libero ? 'L' : ''), libero: !!raw.libero, captain: !!raw.captain, active: raw.active !== false });
     }
+    // a portrait belongs to the player (vbPlayers), whichever team they are in
+    if (out.length) {
+      const docs = await c.players.find({ playerId: { $in: out.map((p) => p.playerId) } }).toArray();
+      const pv = new Map(docs.filter((d) => d.photoV).map((d) => [d.playerId, d.photoV]));
+      out.forEach((p) => { if (pv.has(p.playerId)) p.photoV = pv.get(p.playerId); });
+    }
     const numbers = new Map();
     out.filter((p) => p.active && p.number !== '').forEach((p) => {
       if (numbers.has(p.number)) errors.push(`Jersey #${p.number} is used by both ${numbers.get(p.number)} and ${p.name}`);
@@ -243,6 +266,44 @@ module.exports = function setupVolleyball(deps) {
     res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
     res.send(Buffer.from(t.logo.data, 'base64'));
   }));
+
+  // A player's portrait — only ever one the team's manager uploaded; a
+  // player without one gets a designed card with their number, never a
+  // stand-in picture.
+  app.get('/api/volleyball/players/:playerId/photo', openRoute(async (req, res, user, c) => {
+    const p = await c.players.findOne({ playerId: String(req.params.playerId) });
+    if (!p || !p.photo || !p.photo.data) return res.status(404).end();
+    res.set('Content-Type', p.photo.type);
+    res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.send(Buffer.from(p.photo.data, 'base64'));
+  }));
+  app.put('/api/volleyball/teams/:teamId/players/:playerId/photo', requireCreator(async (req, res, user, c) => {
+    const t = await c.teams.findOne({ teamId: String(req.params.teamId) });
+    if (!t) return res.status(404).json({ success: false, error: 'No such team' });
+    if (!canManage(user, t)) return res.status(403).json({ success: false, error: 'Not your team' });
+    const pid = String(req.params.playerId);
+    if (!(t.players || []).some((p) => p.playerId === pid)) return res.status(404).json({ success: false, error: 'That player is not in this team' });
+    const photo = cleanLogo(req.body && req.body.photo, MAX_PHOTO_BYTES);
+    if (photo === undefined) return res.status(400).json({ success: false, error: 'The photo must be a PNG, JPEG or WebP under 400 KB' });
+    const doc = await c.players.findOne({ playerId: pid });
+    if (!doc) return res.status(404).json({ success: false, error: 'No such player' });
+    const photoV = photo ? (doc.photoV || 0) + 1 : 0;
+    await c.players.updateOne({ playerId: pid }, { $set: { photo, photoV, updatedAt: Date.now() } });
+    // every roster the player is in shows the new portrait
+    const teams = await c.teams.find({ 'players.playerId': pid }).toArray();
+    for (const tm of teams) {
+      const players = (tm.players || []).map((p) => (p.playerId === pid ? Object.assign({}, p, { photoV }) : p));
+      await c.teams.updateOne({ teamId: tm.teamId }, { $set: { players, updatedAt: Date.now() } });
+      await announceTeamMatches(c, tm.teamId);
+    }
+    await audit(c, { action: photo ? 'player.photo' : 'player.photo.remove', teamId: t.teamId, by: byOf(user), details: { playerId: pid, bytes: photo ? photo.bytes : 0 } });
+    res.json({ success: true, photo: photo ? `/api/volleyball/players/${pid}/photo?v=${photoV}` : null });
+  }));
+  // the overlays of a team's coming and running matches pick up a new look
+  async function announceTeamMatches(c, teamId) {
+    const ms = await c.matches.find({ $or: [{ 'teamA.teamId': teamId }, { 'teamB.teamId': teamId }], status: { $in: ['scheduled', 'live'] } }).toArray();
+    ms.forEach((m) => broadcastMatchDoc(m));
+  }
 
   app.post('/api/volleyball/teams', requireCreator(async (req, res, user, c) => {
     const b = req.body || {};
@@ -295,7 +356,11 @@ module.exports = function setupVolleyball(deps) {
       const upd = { [`team${side}`]: snap, updatedAt: Date.now() };
       if (b.players) upd[`squads.${side}`] = squadOf(next);
       await c.matches.updateMany({ [`team${side}.teamId`]: t.teamId, status: 'scheduled' }, { $set: upd });
+      // a match being played keeps its squad, but its graphics show the
+      // team's new name, colours and logo at once
+      await c.matches.updateMany({ [`team${side}.teamId`]: t.teamId, status: 'live' }, { $set: { [`team${side}`]: snap, updatedAt: Date.now() } });
     }
+    await announceTeamMatches(c, t.teamId);
     await audit(c, { action: 'team.update', teamId: t.teamId, by: byOf(user), details: { fields: Object.keys(set) } });
     res.json({ success: true, team: publicTeam(next, { all: true }) });
   }));
@@ -326,7 +391,7 @@ module.exports = function setupVolleyball(deps) {
       logo: t.logo ? `/api/volleyball/tournaments/${t.tournamentId}/logo?v=${t.logoV || 1}` : null,
       organizer: t.organizer || '', visibility: visibilityOf(t), status: t.status || 'upcoming', completedAt: t.completedAt || null,
       format: t.format, rules: t.rules, pointsPolicy: t.pointsPolicy, tiebreakers: t.tiebreakers, rulesLocked: !!t.rulesLocked,
-      teamIds: t.teamIds || [], createdAt: t.createdAt, updatedAt: t.updatedAt,
+      teamIds: t.teamIds || [], createdAt: t.createdAt, updatedAt: t.updatedAt, broadcast: G.normalizeStyle(t.broadcast),
       canManage: manage, createdBy: manage ? t.createdBy : undefined, archived: manage ? !!t.archived : undefined,
       driveFolderId: manage ? t.driveFolderId || null : undefined
     };
@@ -403,6 +468,22 @@ module.exports = function setupVolleyball(deps) {
     await audit(c, { action: 'tournament.create', tournamentId: doc.tournamentId, by: byOf(user), details: { name: doc.name, visibility: visibilityOf(doc) } });
     invalidateDirectory();
     res.json({ success: true, tournament: publicTournament(doc, user) });
+  }));
+
+  // The broadcast look of every match of the tournament (colours, type,
+  // backdrop, motion, times on screen): saved here, and the overlays on air
+  // follow it at once.
+  app.put('/api/volleyball/tournaments/:tid/broadcast', requireCreator(async (req, res, user, c) => {
+    const t = await c.tournaments.findOne({ tournamentId: String(req.params.tid) });
+    if (!t) return res.status(404).json({ success: false, error: 'No such tournament' });
+    if (!canManage(user, t)) return res.status(403).json({ success: false, error: 'Not your tournament' });
+    const b = req.body && typeof req.body.style === 'object' ? req.body.style : null;
+    if (!b) return res.status(400).json({ success: false, error: 'No broadcast settings sent' });
+    const style = G.normalizeStyle(Object.assign({}, G.normalizeStyle(t.broadcast), b));
+    await c.tournaments.updateOne({ tournamentId: t.tournamentId }, { $set: { broadcast: style, updatedAt: Date.now() } });
+    await audit(c, { action: 'tournament.broadcast', tournamentId: t.tournamentId, by: byOf(user), details: { style } });
+    nsp.to(troom(t.tournamentId)).emit('vb:style', { tournamentId: t.tournamentId, style });
+    res.json({ success: true, style });
   }));
 
   app.put('/api/volleyball/tournaments/:tid', requireCreator(async (req, res, user, c) => {
@@ -519,7 +600,7 @@ module.exports = function setupVolleyball(deps) {
       summary: m.summary || null, result: m.result || null, eventSeq: m.eventSeq || 0,
       startedAt: m.startedAt || null, completedAt: m.completedAt || null,
       report: m.report ? { status: m.report.status, version: m.report.version || 0, generatedAt: m.report.generatedAt || null, stale: !!m.report.stale, url: m.report.status === 'ready' || m.report.version ? `/api/volleyball/matches/${m.matchId}/report.pdf` : null } : null,
-      lease: publicLease(m.lease), squads: m.squads || { A: [], B: [] }, graphic: m.graphic || null
+      lease: publicLease(m.lease), squads: m.squads || { A: [], B: [] }, graphic: G.publicState(airOf(m), Date.now())
     };
     if (manage) { o.clipToken = m.clipToken; o.overlayKey = m.overlayKey; o.canManage = true; }
     return o;
@@ -536,9 +617,9 @@ module.exports = function setupVolleyball(deps) {
   }
   async function newMatchDoc(c, t, o) {
     const now = Date.now();
-    return {
+    const doc = {
       matchId: newId('vbm'), tournamentId: t.tournamentId, ownerUid: t.ownerUid, matchNo: await nextMatchNo(c, t.tournamentId),
-      title: str(o.title, 80), stage: o.stage || { type: 'league' }, fixtureKey: o.fixtureKey || undefined, source: o.source || null,
+      title: str(o.title, 80), stage: o.stage || { type: 'league' }, source: o.source || null,
       teamA: o.teamA ? teamSnapshot(o.teamA) : null, teamB: o.teamB ? teamSnapshot(o.teamB) : null,
       squads: { A: o.teamA ? squadOf(o.teamA) : [], B: o.teamB ? squadOf(o.teamB) : [] },
       scheduledAt: o.scheduledAt || null, venue: str(o.venue || t.venue, 120), notes: str(o.notes, 400),
@@ -547,6 +628,9 @@ module.exports = function setupVolleyball(deps) {
       clipToken: crypto.randomBytes(18).toString('hex'), overlayKey: crypto.randomBytes(9).toString('hex'),
       createdAt: now, updatedAt: now
     };
+    // a hand-made match has no fixture key at all (the driver would store an undefined one as null)
+    if (o.fixtureKey) doc.fixtureKey = o.fixtureKey;
+    return doc;
   }
   function cleanStage(s) {
     s = s && typeof s === 'object' ? s : {};
@@ -638,7 +722,8 @@ module.exports = function setupVolleyball(deps) {
   app.get('/api/volleyball/matches/:mid', openRoute(async (req, res, user, c) => {
     const a = await matchAccess(c, user, req.params.mid, req.query.key);
     if (!a.m) return res.status(404).json({ success: false, error: 'Match not found' });
-    const out = { success: true, match: publicMatch(a.m, a.manage), tournament: publicTournament(a.t, user) };
+    const graphic = await currentAir(c, a.m);
+    const out = { success: true, match: Object.assign(publicMatch(a.m, a.manage), { graphic: G.publicState(graphic, Date.now()) }), tournament: publicTournament(a.t, user), photos: await photosOf(c, a.m) };
     if (req.query.timeline === '1') {
       const L = await getLedger(c, a.m);
       out.timeline = publicTimeline(L, a.manage);
@@ -946,6 +1031,7 @@ module.exports = function setupVolleyball(deps) {
       const entry = L.timeline[L.timeline.length - 1];
       const pubEntry = Object.assign({}, entry); delete pubEntry.by;
       nsp.to(room(m.matchId)).emit('vb:update', { matchId: m.matchId, seq: L.seq, status, summary, entry: pubEntry, event: publicEvent(chk.pending.event), full: !!E.META[ev.type] || !!CORRECTION_TYPES.has(ev.type), at: Date.now() });
+      if (m.graphic && m.graphic.scene === 'timeout') afterEventAir(c, m.matchId);
       if (prevStatus !== status || status === 'completed') {
         invalidateStandings(m.tournamentId); invalidateDirectory();
       }
@@ -1604,7 +1690,7 @@ module.exports = function setupVolleyball(deps) {
   /* ------------------------------------------------------------ pages */
   const page = (file) => (req, res) => deps.sendHtmlNoCache(res, path.join(deps.rootDir, file));
   app.get('/volleyball', page('volleyball.html'));
-  app.get('/volleyball-templates', page('volleyball.html'));
+  app.get('/volleyball-templates', page('volleyball-templates.html'));
   app.get('/volleyball-panel', page('volleyball-panel.html'));
   app.get('/volleyball-overlay', page('volleyball-overlay.html'));
   app.get('/volleyball-clipper', page('volleyball-clipper.html'));
@@ -1623,9 +1709,165 @@ module.exports = function setupVolleyball(deps) {
     if (!m) return;
     nsp.to(room(m.matchId)).emit('vb:match', { matchId: m.matchId, match: publicMatch(m, false) });
   }
-  // On-air graphics: one at a time per match, the state kept on the match
-  // so an overlay that reloads picks up what is on air.
-  const SCENES = new Set(['scorebug', 'intro', 'lineup', 'toss', 'setSummary', 'final', 'playerStat', 'standings', 'none']);
+  const troom = (tournamentId) => 't:' + tournamentId;
+
+  /* ---------- on-air graphics (see volleyball-graphics.js) ----------
+     One state per match, kept on the match: an overlay that reloads, a
+     vMix that restarts, or this server coming back up all pick up what is
+     on air. The server ends a timed graphic itself (a timer, and on every
+     read for one that ran out while it was down); commands for one match
+     run one after another, and one aimed at a graphic that has since been
+     replaced is refused as stale. */
+  let airSeq = Date.now();                 // only ever goes up — across restarts too
+  const nextAirSeq = () => ++airSeq;
+  const airTimers = new Map();             // matchId -> the timer that ends the timed graphic on air
+  const airChains = new Map();             // matchId -> its queue of graphic commands
+  function airSerial(matchId, fn) {
+    const run = (airChains.get(matchId) || Promise.resolve()).then(fn, fn);
+    const tail = run.then(() => {}, () => {});
+    airChains.set(matchId, tail);
+    tail.then(() => { if (airChains.get(matchId) === tail) airChains.delete(matchId); });
+    return run;
+  }
+  // the state as saved (one from before this kind of state existed is simply "nothing on air")
+  function airOf(m) {
+    const g = m && m.graphic;
+    if (!g || typeof g !== 'object' || typeof g.seq !== 'number') return G.idle();
+    if (g.seq > airSeq) airSeq = g.seq;
+    return g;
+  }
+  async function setAir(c, m, next) {
+    await c.matches.updateOne({ matchId: m.matchId }, { $set: { graphic: next } });
+    m.graphic = next;
+    armAir(c, m.matchId, next);
+    nsp.to(room(m.matchId)).emit('vb:graphic', { matchId: m.matchId, graphic: G.publicState(next, Date.now()) });
+    return next;
+  }
+  function armAir(c, matchId, g) {
+    clearTimeout(airTimers.get(matchId));
+    airTimers.delete(matchId);
+    if (!g || !g.scene || g.expiresAt == null) return;
+    const timer = setTimeout(() => {
+      airTimers.delete(matchId);
+      airSerial(matchId, async () => {
+        const m = await loadMatch(c, matchId);
+        const cur = airOf(m);
+        if (!m || cur.id !== g.id || cur.seq !== g.seq) return;   // stopped, replaced or changed since
+        const ended = G.settle(cur, Date.now(), nextAirSeq);
+        if (ended) await setAir(c, m, ended); else armAir(c, matchId, cur);
+      }).catch((e) => log('graphic timer error', e.message || e));
+    }, Math.max(0, g.expiresAt - Date.now()) + 15);
+    if (timer.unref) timer.unref();
+    airTimers.set(matchId, timer);
+  }
+  // what is on air now — a timed graphic that ran out is ended (and said so)
+  async function currentAir(c, m) {
+    const cur = airOf(m);
+    if (!cur.scene || cur.expiresAt == null) return cur;
+    if (Date.now() < cur.expiresAt) { if (!airTimers.has(m.matchId)) armAir(c, m.matchId, cur); return cur; }
+    return airSerial(m.matchId, async () => {
+      const fresh = await loadMatch(c, m.matchId);
+      const now = airOf(fresh);
+      const ended = G.settle(now, Date.now(), nextAirSeq);
+      return ended ? setAir(c, fresh, ended) : now;
+    });
+  }
+  // what a graphic needs from the match, checked before it goes on air
+  async function sceneContext(c, m, t, scene) {
+    const L = await getLedger(c, m);
+    const ctx = { m, t, L, st: L.state, s: E.summary(L.setup, L.state) };
+    if (scene === 'standings') {
+      const [teams, matches] = await Promise.all([c.teams.find({ teamId: { $in: t.teamIds || [] } }).toArray(), c.matches.find({ tournamentId: t.tournamentId }).toArray()]);
+      ctx.standings = standingsOf(t, teams, matches);
+    }
+    return ctx;
+  }
+  // { error } when the match has nothing true to show yet, else { data } as it will be shown
+  function sceneCheck(scene, data, ctx) {
+    const { m, st, s, L } = ctx;
+    const name = (side) => (m['team' + side] && m['team' + side].name) || 'Team ' + side;
+    if (!m.teamA || !m.teamB) return { error: 'Both teams must be known first' };
+    const started = st.sets.length > 0;
+    switch (scene) {
+      case 'intro': return { data: {} };
+      case 'toss': {
+        const last = st.rules.bestOf;
+        const set = data.set || (last > 1 && st.tosses[last] && (s.nextDeciding || s.deciding || st.sets.length >= last) ? last : 1);
+        if (!st.tosses[set]) return { error: set === 1 ? 'No toss recorded yet — record the toss in the panel first' : 'The deciding-set toss is not recorded yet' };
+        return { data: { set } };
+      }
+      case 'lineup': {
+        const set = data.set || (s.status === 'in_set' ? s.set : (s.nextSet || st.sets.length || 1));
+        const lu = st.lineups[set] || {};
+        const want = data.team ? [data.team] : ['A', 'B'];
+        const missing = want.filter((x) => !(Array.isArray(lu[x]) && lu[x].length === 6));
+        if (missing.length) return { error: `${missing.map(name).join(' and ')}: no starting six saved for set ${set} yet` };
+        return { data: data.team ? { set, team: data.team } : { set } };
+      }
+      case 'setStart': {
+        if (s.status === 'completed' || s.status === 'abandoned') return { error: 'The match is over' };
+        const set = s.status === 'in_set' ? s.set : (s.nextSet || 1);
+        if (data.set && data.set !== set) return { error: `Set ${set} is the one being played next` };
+        return { data: { set } };
+      }
+      case 'rotation':
+        if (s.status !== 'in_set' || !s.positions) return { error: 'The rotation shows while a set is being played' };
+        return { data: {} };
+      case 'timeout': {
+        if (s.status !== 'in_set') return { error: 'No time-out is running' };
+        const to = G.runningTimeout(L.timeline, st.rules, Date.now());
+        if (!to) return { error: 'No time-out is running' };
+        return { data: { team: to.team || null, technical: !!to.technical, at: to.at }, untilAt: to.endsAt };
+      }
+      case 'playerStat': {
+        const all = [].concat((m.squads && m.squads.A) || [], (m.squads && m.squads.B) || []);
+        if (!data.playerId || !all.some((p) => p.playerId === data.playerId)) return { error: 'Choose a player from either squad' };
+        return { data: { playerId: data.playerId } };
+      }
+      case 'setSummary': {
+        const done = st.sets.filter((x) => x.status === 'completed');
+        if (!done.length) return { error: 'No set has finished yet' };
+        const set = data.set || done[done.length - 1].number;
+        if (!done.some((x) => x.number === set)) return { error: `Set ${set} has not finished` };
+        return { data: { set } };
+      }
+      case 'final':
+      case 'scorecard':
+        if (!started) return { error: 'The match has not started yet' };
+        return { data: {} };
+      case 'standings': {
+        const sd = ctx.standings;
+        const groups = sd && !sd.knockoutOnly ? (sd.groups || []).filter((g) => g.rows && g.rows.length) : [];
+        if (!groups.length) return { error: sd && sd.knockoutOnly ? 'A knockout tournament has no points table' : 'No points table for this tournament' };
+        const ids = [m.teamA.teamId, m.teamB.teamId];
+        const g = (data.group && groups.find((x) => x.name === data.group)) || groups.find((x) => x.rows.some((r) => ids.includes(r.teamId))) || groups[0];
+        return { data: g.name ? { group: g.name } : {} };
+      }
+      default: return { error: 'Unknown graphic' };
+    }
+  }
+  // After a scoring event: a time-out graphic goes when play is back on
+  // (or the time-out was undone) — the live score returns for the rally.
+  function afterEventAir(c, matchId) {
+    return airSerial(matchId, async () => {
+      const m = await loadMatch(c, matchId);
+      const cur = airOf(m);
+      if (!m || cur.scene !== 'timeout') return;
+      const L = await getLedger(c, m);
+      if (L.state.status === 'in_set' && G.runningTimeout(L.timeline, L.state.rules, Date.now())) return;
+      const r = G.applyCommand(cur, { action: 'stop', id: cur.id, reason: 'play-resumed' }, { nextSeq: nextAirSeq }, Date.now());
+      if (r.ok && r.next) await setAir(c, m, r.next);
+    }).catch((e) => log('graphic after-event error', e.message || e));
+  }
+  // timed graphics of matches whose timer this process never armed (a restart)
+  async function graphicSweep() {
+    const c = await col();
+    if (!c) return;
+    const ms = await c.matches.find({ 'graphic.expiresAt': { $gt: 0 } }).toArray();
+    for (const m of ms) await currentAir(c, m).catch(() => {});
+  }
+  setTimeout(() => { graphicSweep().catch(() => {}); }, 3000).unref();
+  setInterval(() => { graphicSweep().catch((e) => log('graphic sweep error', e.message || e)); }, 60 * 1000).unref();
 
   nsp.on('connection', (socket) => {
     socket.data.user = null;
@@ -1656,9 +1898,11 @@ module.exports = function setupVolleyball(deps) {
         const a = await matchAccess(c, socket.data.user, d && d.matchId, d && d.key);
         if (!a.m) return reply({ ok: false, error: 'not-found' });
         socket.join(room(a.m.matchId));
+        if (a.t) socket.join(troom(a.t.tournamentId));
         const L = await getLedger(c, a.m);
-        reply({ ok: true, match: publicMatch(a.m, a.manage), summary: E.summary(L.setup, L.state), seq: L.seq, timeline: d && d.timeline ? publicTimeline(L, a.manage) : undefined,
-          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic: a.m.graphic || null, now: Date.now() });
+        const graphic = G.publicState(await currentAir(c, a.m), Date.now());
+        reply({ ok: true, match: Object.assign(publicMatch(a.m, a.manage), { graphic }), summary: E.summary(L.setup, L.state), seq: L.seq, timeline: d && d.timeline ? publicTimeline(L, a.manage) : undefined,
+          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic, style: G.normalizeStyle(a.t && a.t.broadcast), photos: await photosOf(c, a.m), now: Date.now() });
       } catch (e) { log('join error', e.message || e); reply({ ok: false, error: 'join-failed' }); }
     });
 
@@ -1670,8 +1914,9 @@ module.exports = function setupVolleyball(deps) {
         const a = await matchAccess(c, socket.data.user, d && d.matchId, d && d.key);
         if (!a.m) return reply({ ok: false, error: 'not-found' });
         const L = await getLedger(c, a.m);
-        reply({ ok: true, match: publicMatch(a.m, a.manage), seq: L.seq, summary: E.summary(L.setup, L.state), timeline: publicTimeline(L, a.manage),
-          events: a.manage ? L.events.map(publicEvent) : undefined, graphic: a.m.graphic || null, invalid: L.invalid.map((x) => ({ eventId: x.eventId, error: x.invalid.error })), now: Date.now() });
+        const graphic = G.publicState(await currentAir(c, a.m), Date.now());
+        reply({ ok: true, match: Object.assign(publicMatch(a.m, a.manage), { graphic }), seq: L.seq, summary: E.summary(L.setup, L.state), timeline: publicTimeline(L, a.manage),
+          events: a.manage ? L.events.map(publicEvent) : undefined, graphic, style: G.normalizeStyle(a.t && a.t.broadcast), invalid: L.invalid.map((x) => ({ eventId: x.eventId, error: x.invalid.error })), now: Date.now() });
       } catch (e) { reply({ ok: false, error: 'sync-failed' }); }
     });
 
@@ -1701,20 +1946,31 @@ module.exports = function setupVolleyball(deps) {
       } catch (e) { reply({ ok: false }); }
     });
 
+    // take / stop / live / clean / next / duration — see applyCommand in volleyball-graphics.js
     socket.on('vb:graphic', async (d, fn) => {
       const reply = ack(fn);
       try {
         const user = await authed || socket.data.user;
         const c = await col();
-        const m = c && await loadMatch(c, d && d.matchId);
-        if (!m) return reply({ ok: false, error: 'not-found' });
-        if (!canManage(user, await tournamentOf(c, m))) return reply({ ok: false, error: 'not-authorised' });
-        const scene = SCENES.has(d.scene) ? d.scene : 'scorebug';
-        const graphic = { scene, data: d.data && typeof d.data === 'object' ? JSON.parse(JSON.stringify(d.data).slice(0, 20000)) : null, at: Date.now(), id: crypto.randomBytes(6).toString('hex'), durationSec: Math.max(0, Math.min(120, num(d.durationSec, 0))) };
-        await c.matches.updateOne({ matchId: m.matchId }, { $set: { graphic } });
-        nsp.to(room(m.matchId)).emit('vb:graphic', { matchId: m.matchId, graphic });
-        reply({ ok: true, graphic });
-      } catch (e) { reply({ ok: false, error: 'graphic-failed' }); }
+        if (!c) return reply({ ok: false, error: 'db-unavailable' });
+        d = d && typeof d === 'object' ? d : {};
+        const m0 = await loadMatch(c, d.matchId);
+        if (!m0) return reply({ ok: false, error: 'not-found' });
+        const t = await tournamentOf(c, m0);
+        if (!canManage(user, t)) return reply({ ok: false, error: 'not-authorised' });
+        const r = await airSerial(m0.matchId, async () => {
+          const m = await loadMatch(c, m0.matchId);
+          let cur = airOf(m);
+          const ended = G.settle(cur, Date.now(), nextAirSeq);
+          if (ended) cur = await setAir(c, m, ended);
+          const scene = (!d.action || d.action === 'take') && G.SCENES[d.scene] ? d.scene : null;
+          const ctx = scene ? await sceneContext(c, m, t, scene) : null;
+          const out = G.applyCommand(cur, d, { style: t && t.broadcast, nextSeq: nextAirSeq, check: ctx ? (sc, data) => sceneCheck(sc, data, ctx) : null }, Date.now());
+          if (out.ok && out.next) cur = await setAir(c, m, out.next);
+          return Object.assign({}, out, { graphic: G.publicState(cur, Date.now()) });
+        });
+        reply(r.ok ? { ok: true, same: !!r.same, graphic: r.graphic } : { ok: false, error: r.error, stale: !!r.stale, graphic: r.graphic });
+      } catch (e) { log('graphic error', e.stack || e); reply({ ok: false, error: 'Could not change the graphic — try again' }); }
     });
   });
 
