@@ -615,6 +615,17 @@
   }
   .mcard.featured .mc-go{ padding:10px 18px; background:#ef4444; border-color:#ef4444; color:#fff; font-size:13px; box-shadow:0 8px 18px -8px rgba(239,68,68,.8); }
   .mcard.is-off{ opacity:.82; }
+  /* 🔒 Upcoming fixture: visible, but not clickable — no pointer cursor, no
+     hover lift/glow, no press-down, and a muted, dashed "Not started" pill. */
+  .mcard.is-upcoming{ cursor:default; -webkit-user-select:none; user-select:none; }
+  .mcard.is-upcoming:hover,
+  .mcard.is-upcoming:active{ transform:translateZ(0); border-color:color-mix(in srgb, var(--ca) 22%, var(--border)); }
+  .mcard.is-upcoming:hover::after{ opacity:0; }
+  .mcard.is-upcoming:hover .mc-logo,
+  .mcard.is-upcoming:hover .mc-go-arrow{ transform:none; }
+  .mcard.is-upcoming .mc-go{ background:var(--panel-2); color:var(--text-dim); border:1px dashed var(--border); }
+  .mcard.is-upcoming .mc-go-label{ display:inline; }
+  .mcard.is-upcoming .mc-go-arrow{ display:inline-flex; align-items:center; opacity:.8; }
   /* 🔒 a locked match's code — shown to the owner only (see showOwnerLockCodes) */
   .mc-lockcode{ display:inline-flex; align-items:center; gap:8px; margin-top:8px; padding:5px 10px; border-radius:10px; border:1px dashed #f59e0b; background:rgba(245,158,11,.10); font-size:11.5px; font-weight:700; color:var(--text-dim); cursor:copy; white-space:nowrap; max-width:100%; }
   .mc-lockcode b{ font-family:ui-monospace, Menlo, Consolas, monospace; font-size:14px; letter-spacing:2px; color:#d97706; white-space:nowrap; }
@@ -1387,10 +1398,22 @@ function matchCardHtml(m, { href, status, featured = false }){
   const aria = [label, `${teamLabel(A)} versus ${teamLabel(B)}`, MATCH_STATUS_LABEL[status],
     isUpcoming ? '' : scoreSay(A, m.scoreA || {}), isUpcoming ? '' : scoreSay(B, m.scoreB || {}), (done || isUpcoming) ? result : '', m.venue, date]
     .filter(Boolean).join('. ');
-  const go = featured ? 'Watch Live' : (done ? 'Scorecard' : 'Follow');
+  // 🔒 An upcoming fixture has no scorecard to open yet — it is shown, not
+  // opened. Its pill says so instead of promising "Follow".
+  const LOCK_ICON = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+  const go = isUpcoming ? 'Not started' : featured ? 'Watch Live' : (done ? 'Scorecard' : 'Follow');
+  const goArrow = isUpcoming ? LOCK_ICON : '→';
   const style = [ca && `--ca:${ca}`, cb && `--cb:${cb}`].filter(Boolean).join(';');
-  return `<a class="mcard${featured ? ' featured' : ''}${status === 'abandoned' ? ' is-off' : ''}" href="${escapeHtml(href)}"
-      data-goto-match="${escapeHtml(m.matchId)}"${!done && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}${m.roomId ? ` data-room="${escapeHtml(m.roomId)}"` : ''}
+  // Only a match that is live, in progress or finished is a link. An upcoming
+  // one is a plain <div>: no href, no data-goto-*, no click takeover — it can
+  // be seen but not opened. (data-room stays so the owner's match-code chip
+  // still attaches to it.)
+  const tag = isUpcoming ? 'div' : 'a';
+  const openAttrs = isUpcoming
+    ? 'role="group" aria-disabled="true"'
+    : `href="${escapeHtml(href)}" data-goto-match="${escapeHtml(m.matchId)}"${!done && m.roomId ? ` data-goto-room="${escapeHtml(m.roomId)}"` : ''}`;
+  return `<${tag} class="mcard${featured ? ' featured' : ''}${status === 'abandoned' ? ' is-off' : ''}${isUpcoming ? ' is-upcoming' : ''}" ${openAttrs}
+      ${m.roomId ? `data-room="${escapeHtml(m.roomId)}"` : ''}
       ${style ? `style="${style}"` : ''} aria-label="${escapeHtml(aria)}">
     <div class="mc-top">
       <span class="mc-label">${label ? `<span class="mc-label-t">${escapeHtml(label)}</span>` : ''}${fmt ? `<span class="mc-fmt">${escapeHtml(fmt)}</span>` : ''}</span>
@@ -1403,10 +1426,10 @@ function matchCardHtml(m, { href, status, featured = false }){
           <div class="mc-result${done ? '' : ' pending'}">${escapeHtml(result)}</div>
           ${meta ? `<div class="mc-meta">${m.venue ? PIN_ICON : ''}<span>${meta}</span></div>` : ''}
         </div>
-        <span class="mc-go" aria-hidden="true"><span class="mc-go-label">${go}</span><span class="mc-go-arrow">→</span></span>
+        <span class="mc-go" aria-hidden="true"><span class="mc-go-label">${go}</span><span class="mc-go-arrow">${goArrow}</span></span>
       </div>
     </div>
-  </a>`;
+  </${tag}>`;
 }
 // 📷 IMPORT SCORECARD — the owner's way in to /import-scorecard for this
 // tournament. The page and every call it makes are owner-only on the server
@@ -1992,11 +2015,12 @@ function renderPortal(data, token, opts){
     : group('Completed', null, '<div class="mc-empty">No completed matches yet.</div>', false);
 
   // Fixtures scheduled from the panel (📅 Schedule Upcoming Match), soonest
-  // first. Each card already points at the match's own live room, so the
-  // same link becomes the live scorecard the moment the panel starts it.
+  // first. These cards are NOT links — an upcoming match can't be opened.
+  // The moment the panel starts it, its room goes live, the filter above
+  // drops it from this group, and it reappears under Live as an openable card.
   const upcomingHtml = upcoming.length
     ? group('Upcoming', upcoming.length, upcoming.map(m =>
-        matchCardHtml(m, { href: m.roomId ? `/cricket-scorecard?room=${encodeURIComponent(m.roomId)}` : '#', status: 'upcoming' })).join(''))
+        matchCardHtml(m, { href: '', status: 'upcoming' })).join(''))
     : group('Upcoming', null, '<div class="mc-empty">No fixtures scheduled yet.</div>', false);
 
   const matchesPanel = `<div class="tab-panel active" data-panel="matches">
