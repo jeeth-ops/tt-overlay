@@ -17,36 +17,96 @@
   id that scored the point, credited the statistic and cut the clip.
 -->
 <style>
-  main { padding: 16px 0 60px; }
-  .hero { padding: 20px; }
-  .hero .meta { color: var(--mute); font-size: 13px; text-align: center; }
-  .vs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; margin-top: 14px; }
-  .side { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  /* the whole width of the screen, in the two teams' colours (--tA / --tB, set from the match) */
+  main.wrap { max-width: 1640px; padding: 16px clamp(12px, 2.4vw, 36px) 60px; }
+  .hero { position: relative; overflow: hidden; border-radius: 26px; padding: clamp(18px, 3vw, 36px) clamp(16px, 3vw, 40px) clamp(20px, 3vw, 34px); color: #fff;
+    background: linear-gradient(105deg, color-mix(in srgb, var(--tA) 82%, #000) 0%, color-mix(in srgb, var(--tA) 34%, #0b0e14) 40%, color-mix(in srgb, var(--tB) 34%, #0b0e14) 60%, color-mix(in srgb, var(--tB) 82%, #000) 100%);
+    box-shadow: 0 26px 60px -32px rgba(0, 0, 0, .65), 0 0 0 1px rgba(255, 255, 255, .06) inset; }
+  .hero::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(55% 130% at 50% -25%, rgba(255, 255, 255, .18), transparent 62%), repeating-linear-gradient(115deg, rgba(255, 255, 255, .025) 0 2px, transparent 2px 14px); }
+  .hero::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: linear-gradient(90deg, var(--tA) 0 50%, var(--tB) 50% 100%); }
+  .hero > * { position: relative; }
+  .hero .meta { color: rgba(255, 255, 255, .78); font-size: 13px; text-align: center; display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hero .badge { background: rgba(255, 255, 255, .14); color: #fff; }
+  .hero .badge.live { background: #ff3b30; color: #fff; } .hero .badge.live::before { background: #fff; }
+  .hero .badge.done { background: rgba(52, 199, 89, .24); color: #c9f7d6; }
+  .hero .badge.warn { background: rgba(255, 159, 10, .26); color: #ffe2b3; }
+  .vs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: clamp(12px, 3vw, 40px); margin-top: 18px; }
+  .side { display: flex; align-items: center; gap: clamp(12px, 1.6vw, 20px); min-width: 0; }
   .side.r { flex-direction: row-reverse; text-align: right; }
-  .side .nm { font-size: clamp(17px, 2.6vw, 24px); font-weight: 800; letter-spacing: -.02em; min-width: 0; }
-  .side .nm small { display: block; font-size: 12.5px; font-weight: 600; color: var(--mute); letter-spacing: 0; }
-  .score { display: flex; align-items: center; gap: 10px; font-size: clamp(34px, 6vw, 54px); font-weight: 800; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-  .score i { font-style: normal; color: var(--mute); font-weight: 600; font-size: .6em; }
-  .score .w { color: var(--ink); } .score .l { color: var(--mute); }
+  .side .logo.lg { width: clamp(58px, 7vw, 92px); height: clamp(58px, 7vw, 92px); border-radius: 24px; font-size: clamp(18px, 2vw, 26px); box-shadow: 0 12px 30px rgba(0, 0, 0, .35), 0 0 0 3px rgba(255, 255, 255, .2); }
+  .side .nm { font-size: clamp(18px, 3vw, 36px); font-weight: 800; letter-spacing: -.02em; min-width: 0; text-shadow: 0 2px 14px rgba(0, 0, 0, .3); }
+  .side .nm small { display: block; font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, .7); letter-spacing: 0; text-shadow: none; }
+  .score { display: flex; align-items: center; gap: 12px; font-size: clamp(42px, 7.5vw, 84px); font-weight: 800; letter-spacing: -.04em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .score i { font-style: normal; color: rgba(255, 255, 255, .45); font-weight: 600; font-size: .55em; }
+  .score .w { color: #fff; } .score .l { color: rgba(255, 255, 255, .45); }
   @media (max-width: 600px) {
     .vs { gap: 8px; }
     .side, .side.r { flex-direction: column; text-align: center; gap: 6px; }
     .side .nm { font-size: 15px; }
     .side .nm.ellipsis { white-space: normal; overflow-wrap: anywhere; }
     .side .nm small { display: none; }
-    .side .logo.lg { width: 48px; height: 48px; border-radius: 14px; font-size: 15px; }
+    .side .logo.lg { width: 50px; height: 50px; border-radius: 15px; font-size: 15px; }
+    .hero { border-radius: 20px; }
   }
-  .live-now { margin-top: 12px; text-align: center; font-weight: 700; }
-  .live-now b { font-size: 22px; font-variant-numeric: tabular-nums; }
-  .setchips { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-  .setchips span { padding: 4px 10px; border-radius: 99px; background: var(--fill); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .tabs { display: flex; justify-content: center; margin: 16px 0 6px; }
+  .live-now { margin-top: 14px; text-align: center; font-weight: 700; color: rgba(255, 255, 255, .92); }
+  .live-now b { font-size: 24px; font-variant-numeric: tabular-nums; color: #fff; }
+  .setchips { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .setchips span { padding: 5px 12px; border-radius: 99px; background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .16); font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .7); }
+  .setchips span small { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-right: 6px; opacity: .75; }
+  .setchips span b { color: #fff; }
+  .setchips span.won { background: color-mix(in srgb, var(--tc) 55%, rgba(0, 0, 0, .25)); border-color: color-mix(in srgb, var(--tc) 70%, #fff 10%); color: rgba(255, 255, 255, .8); }
+  .hero .acts { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .tabs { display: flex; justify-content: center; margin: 18px 0 10px; }
   .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 860px) { .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+  .duo { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
+  .tables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .duo { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 1360px) { .tables { grid-template-columns: minmax(0, 1fr); } }
+  .card-h { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .card-h h3 { flex: 1; min-width: 0; }
+  /* match leaders */
+  .leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .lead { position: relative; overflow: hidden; border-radius: var(--r); padding: 14px 16px 14px 20px; background: linear-gradient(135deg, color-mix(in srgb, var(--tc) 14%, var(--card)), var(--card) 70%); box-shadow: var(--shadow), 0 0 0 1px var(--line); min-width: 0; }
+  .lead::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--tc); }
+  .lead .k { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--mute); }
+  .lead .v { font-size: 30px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.15; margin-top: 4px; }
+  .lead .who { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; font-size: 14px; min-width: 0; }
+  .lead .who span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  @media (max-width: 600px) {
+    .leaders { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .lead { padding: 12px 12px 12px 16px; } .lead .v { font-size: 24px; } .lead .who { font-size: 13px; }
+    .pcard-h { flex-wrap: wrap; } .pcard-h .tot { width: 100%; justify-content: flex-start; }
+  }
+  /* the points won, as one bar in the two colours */
+  .split { margin-top: 14px; }
+  .split .lbls { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+  .split .bar { display: flex; height: 12px; border-radius: 99px; overflow: hidden; background: var(--fill); gap: 2px; }
+  .split .bar i { display: block; height: 100%; }
+  /* set scores */
+  .sets td.tm { font-weight: 700; border-left: 4px solid var(--tc); }
+  .sets td.won { background: color-mix(in srgb, var(--tc) 15%, transparent); font-weight: 800; }
+  .sets td.lost { color: var(--mute); }
+  .sets td.tot { font-size: 16px; font-weight: 800; }
+  /* the players, per team */
+  .pcard { padding: 0; overflow: hidden; }
+  .pcard-h { display: flex; align-items: center; gap: 12px; padding: 14px 16px; color: #fff; background: linear-gradient(100deg, color-mix(in srgb, var(--tc) 88%, #000), color-mix(in srgb, var(--tc) 52%, #000)); }
+  .pcard-h .logo { box-shadow: 0 0 0 2px rgba(255, 255, 255, .25); }
+  .pcard-h h3 { flex: 1; min-width: 0; font-size: 17px; }
+  .pcard-h .tot { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .pcard-h .tot span { padding: 3px 9px; border-radius: 99px; background: rgba(255, 255, 255, .16); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pcard .tbl-wrap { border-radius: 0; box-shadow: none; }
+  .ptbl th, .ptbl td { padding-left: 8px; padding-right: 8px; }
+  .ptbl td:first-child, .ptbl th:first-child { padding-left: 14px; }
+  .ptbl tr.top td { background: color-mix(in srgb, var(--tc) 7%, transparent); }
+  .jer { display: inline-grid; place-items: center; min-width: 28px; height: 24px; padding: 0 6px; border-radius: 7px; background: var(--tc); color: var(--on); font-weight: 800; font-size: 12.5px; }
+  tr.dim .jer { background: var(--fill); color: var(--mute); }
   .cmp-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) minmax(110px, 170px) minmax(0, 1fr) 54px; gap: 10px; align-items: center; padding: 7px 0; font-variant-numeric: tabular-nums; }
   .cmp-row .lbl { text-align: center; font-size: 12.5px; color: var(--mute); font-weight: 600; }
-  .cmp-row .v { text-align: center; font-weight: 800; }
-  .cmp-row .bar { height: 8px; border-radius: 99px; background: var(--fill); overflow: hidden; display: flex; }
+  .cmp-row .v { text-align: center; font-weight: 800; font-size: 15px; }
+  .cmp-row .v.lead-v { color: var(--tc); }
+  @media (max-width: 600px) { .cmp-row { grid-template-columns: 30px minmax(0, 1fr) 92px minmax(0, 1fr) 30px; gap: 6px; } .cmp-row .lbl { font-size: 11.5px; } }
+  .cmp-row .bar { height: 10px; border-radius: 99px; background: var(--fill); overflow: hidden; display: flex; }
   .cmp-row .bar.l { justify-content: flex-end; }
   .cmp-row .bar i { display: block; height: 100%; border-radius: 99px; }
   /* a team's own colour, lifted on a dark page so a navy team stays readable */
@@ -63,10 +123,6 @@
   .rally .tm { width: 12px; height: 12px; border-radius: 4px; }
   .rally.void { opacity: .5; text-decoration: line-through; }
   .rally.ev { color: var(--mute); grid-template-columns: 62px 18px minmax(0, 1fr); }
-  .cliplist { display: grid; gap: 14px; margin-top: 12px; }
-  .cliplist video { width: 100%; border-radius: 12px; background: #000; aspect-ratio: 16 / 9; }
-  .cliphead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 6px; }
-  .wait-clip { aspect-ratio: 16 / 9; border-radius: 12px; background: var(--fill); display: grid; place-items: center; color: var(--mute); font-weight: 600; text-align: center; padding: 10px; }
   .form { display: inline-flex; gap: 3px; }
   .form i { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 800; color: #fff; }
   .form i.W { background: var(--green); } .form i.L { background: var(--red); }
@@ -142,12 +198,14 @@
     const sets = s.setsWon || { A: 0, B: 0 };
     const w = s.winner || (m.result && m.result.winner);
     const stage = m.stage ? [m.stage.group ? 'Group ' + m.stage.group : '', m.stage.round].filter(Boolean).join(' · ') : '';
-    const setChips = (s.sets || []).filter((x) => x.status === 'completed').map((x) => `<span title="Set ${x.set}">${x.A}–${x.B}${x.forfeit ? ' (forfeit)' : ''}</span>`).join('');
+    const setChips = (s.sets || []).filter((x) => x.status === 'completed').map((x) => `<span class="${x.winner ? 'won' : ''}" style="--tc:${esc(color(x.winner || 'A'))}" title="Set ${x.set}${x.winner ? ' — ' + esc(team(x.winner).name) : ''}"><small>Set ${x.set}</small><b>${x.A}–${x.B}</b>${x.forfeit ? ' (forfeit)' : ''}</span>`).join('');
     const nowLine = live && s.status === 'in_set' ? `<div class="live-now">Set ${s.set}${s.deciding ? ' (deciding)' : ''} · <b>${s.points.A}–${s.points.B}</b>${s.serving ? ` · ${esc(team(s.serving).shortName || team(s.serving).name)} serving` : ''}${s.matchPoint ? ' · <span class="badge live">Match point</span>' : s.setPoint ? ' · <span class="badge warn">Set point</span>' : ''}</div>`
       : live && s.status === 'set_break' ? '<div class="live-now muted">Between sets</div>' : '';
     const resultLine = done && w ? `<div class="live-now">${esc(team(w).name)} won ${Math.max(sets.A, sets.B)}–${Math.min(sets.A, sets.B)}${s.forfeit ? ' (forfeit)' : ''}</div>` : '';
+    $('#main').style.setProperty('--tA', color('A'));
+    $('#main').style.setProperty('--tB', color('B'));
     $('#main').innerHTML = `
-      <div class="card hero">
+      <div class="hero">
         <div class="meta">${badge} ${esc([stage, m.matchNo ? 'Match ' + m.matchNo : '', m.venue, m.scheduledAt ? VB.fmtDate(m.scheduledAt) : ''].filter(Boolean).join(' · '))}</div>
         <div class="vs">
           <div class="side">${VB.logoHtml(team('A'), 'lg')}<div class="nm ellipsis">${esc(team('A').name)}<small>${esc(team('A').city || '')}</small></div></div>
@@ -155,7 +213,7 @@
           <div class="side r">${VB.logoHtml(team('B'), 'lg')}<div class="nm ellipsis">${esc(team('B').name)}<small>${esc(team('B').city || '')}</small></div></div>
         </div>
         ${setChips ? `<div class="setchips">${setChips}</div>` : ''}${nowLine}${resultLine}
-        <div class="row wrapr" style="justify-content:center;margin-top:14px;gap:8px">${reportHtml()}</div>
+        <div class="acts">${reportHtml()}</div>
       </div>
       <div class="tabs"><div class="seg" id="tabs">${[['card', 'Scorecard'], ['points', 'Point by point'], ['teams', 'Teams']].map(([k, l]) => `<button data-t="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join('')}</div></div>
       <div id="tab"></div>`;
@@ -175,26 +233,48 @@
     const st = S.stats, s = S.summary || {};
     if (!st) { $('#tab').innerHTML = '<div class="card empty"><b>No statistics yet</b>They appear as soon as the first point is scored.</div>'; return; }
     const doneSets = (s.sets || []);
-    const setTable = doneSets.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Team</th>${doneSets.map((x) => `<th class="c">Set ${x.set}</th>`).join('')}<th class="c">Sets</th><th class="c">Points</th></tr></thead><tbody>
-      ${['A', 'B'].map((t) => `<tr><td><b>${esc(team(t).name)}</b></td>${doneSets.map((x) => `<td class="c" style="${x.winner === t ? 'font-weight:800' : 'color:var(--mute)'}">${x[t]}${x.status !== 'completed' ? '*' : ''}</td>`).join('')}<td class="c"><b>${s.setsWon ? s.setsWon[t] : 0}</b></td><td class="c">${st.teams[t].points}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const tcs = (t) => `--tc:${esc(color(t))}`;
+    const setTable = doneSets.length ? `<div class="card"><div class="card-h"><h3>Set scores</h3></div><div class="tbl-wrap"><table class="tbl sets"><thead><tr><th>Team</th>${doneSets.map((x) => `<th class="c">Set ${x.set}</th>`).join('')}<th class="c">Sets</th><th class="c">Points</th></tr></thead><tbody>
+      ${['A', 'B'].map((t) => `<tr style="${tcs(t)}"><td class="tm"><span class="tcol" style="${tcs(t)}">${esc(team(t).shortName || team(t).name)}</span></td>${doneSets.map((x) => `<td class="c ${x.winner === t ? 'won' : x.winner ? 'lost' : ''}">${x[t]}${x.status !== 'completed' ? '*' : ''}</td>`).join('')}<td class="c tot">${s.setsWon ? s.setsWon[t] : 0}</td><td class="c">${st.teams[t].points}</td></tr>`).join('')}</tbody></table></div>
+      ${doneSets.some((x) => x.status !== 'completed') ? '<p class="tiny muted" style="margin-top:8px">* set in progress</p>' : ''}${splitHtml(st.teams.A.points, st.teams.B.points)}</div>` : '';
     const T = st.teams;
     const rows = [['Attack points', T.A.byCategory.attack, T.B.byCategory.attack], ['Block points', T.A.byCategory.block, T.B.byCategory.block], ['Serve points', T.A.byCategory.serve, T.B.byCategory.serve],
       ['Opponent errors', T.A.byCategory.opponentError, T.B.byCategory.opponentError], ['Side-out points', T.A.sideOutPoints, T.B.sideOutPoints], ['Break points', T.A.breakPoints, T.B.breakPoints],
       ['Longest run', T.A.longestRun, T.B.longestRun], ['Errors made', T.A.errorsCommitted, T.B.errorsCommitted], ['Time-outs', T.A.timeouts, T.B.timeouts], ['Substitutions', T.A.substitutions, T.B.substitutions]];
-    const cmp = `<div class="card"><div class="row"><b class="grow tcol" style="--tc:${esc(color('A'))}">${esc(team('A').shortName || team('A').name)}</b><h3>Team comparison</h3><b class="grow tcol" style="text-align:right;--tc:${esc(color('B'))}">${esc(team('B').shortName || team('B').name)}</b></div>
-      ${rows.map(([l, a, b]) => { const mx = Math.max(a, b, 1); return `<div class="cmp-row"><span class="v">${a}</span><span class="bar l"><i class="tfill" style="width:${a / mx * 100}%;--tc:${esc(color('A'))}"></i></span><span class="lbl">${esc(l)}</span><span class="bar"><i class="tfill" style="width:${b / mx * 100}%;--tc:${esc(color('B'))}"></i></span><span class="v">${b}</span></div>`; }).join('')}</div>`;
-    $('#tab').innerHTML = `<div class="stack">${setTable}${cmp}<div class="grid-2">${['A', 'B'].map(playerTable).join('')}</div>
+    const cmp = `<div class="card"><div class="card-h">${VB.logoHtml(team('A'), 'sm')}<b class="tcol" style="${tcs('A')}">${esc(team('A').shortName || team('A').name)}</b><h3 style="text-align:center">Team comparison</h3><b class="tcol" style="${tcs('B')}">${esc(team('B').shortName || team('B').name)}</b>${VB.logoHtml(team('B'), 'sm')}</div>
+      ${rows.map(([l, a, b]) => { const mx = Math.max(a, b, 1); const fewer = /Errors/.test(l); const la = fewer ? a < b : a > b, lb = fewer ? b < a : b > a; return `<div class="cmp-row"><span class="v ${la ? 'lead-v tcol' : ''}" style="${tcs('A')}">${a}</span><span class="bar l"><i class="tfill" style="width:${a / mx * 100}%;${tcs('A')}"></i></span><span class="lbl">${esc(l)}</span><span class="bar"><i class="tfill" style="width:${b / mx * 100}%;${tcs('B')}"></i></span><span class="v ${lb ? 'lead-v tcol' : ''}" style="${tcs('B')}">${b}</span></div>`; }).join('')}</div>`;
+    $('#tab').innerHTML = `<div class="stack">${leadersHtml()}<div class="duo">${setTable || '<div></div>'}${cmp}</div><div class="tables">${['A', 'B'].map(playerTable).join('')}</div>
       <p class="tiny muted">Statistics are derived from the saved points. A kill, block or ace is only credited when the scorer recorded who made it; 🎬 opens the clips of the points a player is part of.</p></div>`;
     $$('[data-clips]').forEach((b) => b.onclick = () => playerClips(b.dataset.clips));
     $$('[data-player]').forEach((b) => b.onclick = () => playerHistory(b.dataset.player));
   }
+  function splitHtml(a, b) {
+    if (!(a + b)) return '';
+    const pa = Math.round(a / (a + b) * 100);
+    return `<div class="split"><div class="lbls"><span class="tcol" style="--tc:${esc(color('A'))}">${esc(team('A').shortName || team('A').name)} ${a} · ${pa}%</span><span class="muted">Points won</span><span class="tcol" style="--tc:${esc(color('B'))}">${100 - pa}% · ${b} ${esc(team('B').shortName || team('B').name)}</span></div>
+      <div class="bar"><i class="tfill" style="width:${a / (a + b) * 100}%;--tc:${esc(color('A'))}"></i><i class="tfill" style="flex:1;--tc:${esc(color('B'))}"></i></div></div>`;
+  }
+  // The match's leaders: the best in each, from the saved points (a tie → the one with more points).
+  function leadersHtml() {
+    const all = Object.values(S.stats.players);
+    const tiles = [['Top scorer', (p) => p.points, 'points'], ['Most kills', (p) => p.attack.kills, 'kills'], ['Most blocks', (p) => p.block.points, 'blocks'], ['Most aces', (p) => p.serve.aces, 'aces'], ['Most digs', (p) => p.digs, 'digs']];
+    const shown = tiles.map(([k, f, unit]) => [k, f, unit, all.filter((p) => f(p) > 0).sort((a, b) => f(b) - f(a) || b.points - a.points)[0]]).filter((x) => x[3]);
+    if (!shown.length) return '';
+    return `<div class="leaders">${shown.map(([k, f, unit, best]) => {
+      const c = color(best.team);
+      return `<div class="lead" style="--tc:${esc(c)}"><div class="k">${k}</div><div class="v">${r1(f(best))} <span class="small muted" style="font-weight:600;letter-spacing:0">${unit}</span></div><div class="who"><span class="jer" style="--tc:${esc(c)};--on:${esc(VB.onColor(c))}">${esc(best.number)}</span><span>${esc(best.name)}</span><span class="tiny muted">${esc(team(best.team).shortName || team(best.team).name)}</span></div></div>`;
+    }).join('')}</div>`;
+  }
   function playerTable(side) {
-    const st = S.stats;
+    const st = S.stats, c = color(side), on = VB.onColor(c);
     const list = Object.values(st.players).filter((p) => p.team === side).sort((a, b) => (b.setsPlayed > 0) - (a.setsPlayed > 0) || b.points - a.points || (parseInt(a.number, 10) || 99) - (parseInt(b.number, 10) || 99));
-    return `<div class="card" style="padding:0;overflow:hidden"><div class="row" style="padding:12px 14px">${VB.logoHtml(team(side), 'sm')}<h3 class="grow ellipsis">${esc(team(side).name)}</h3></div>
-      <div class="tbl-wrap" style="border-radius:0;box-shadow:none"><table class="tbl"><thead><tr><th>#</th><th>Player</th><th class="c" title="Sets played">Sets</th><th class="c" title="Points">Pts</th><th class="c" title="Attack kills">K</th><th class="c" title="Attack errors (incl. blocked)">AE</th><th class="c" title="Attack efficiency (kills − errors) / attempts">Eff</th><th class="c" title="Service aces">Ace</th><th class="c" title="Service errors">SE</th><th class="c" title="Block points (solo + share of assists)">Blk</th><th class="c" title="Digs">Dig</th><th class="c" title="Reception errors">RE</th><th class="c">Clips</th></tr></thead><tbody>
-      ${list.map((p) => { const n = S.clipCounts[p.playerId] || 0; return `<tr class="${p.setsPlayed ? '' : 'dim'}"><td>${esc(p.number)}</td><td><button class="pname" data-player="${esc(p.playerId)}">${esc(p.name)}</button>${p.captain ? ' <span class="badge">C</span>' : ''}${p.libero ? ' <span class="badge">L</span>' : ''}${p.sanctions.length ? ` <span class="badge warn" title="${esc(p.sanctions.join(', '))}">${p.sanctions.length}🟨</span>` : ''}</td>
-        <td class="c">${p.setsPlayed}</td><td class="c"><b>${r1(p.points)}</b></td><td class="c">${p.attack.kills}</td><td class="c">${p.attack.errors}</td><td class="c">${p.attack.attempts ? pct(p.attack.efficiency) : '–'}</td><td class="c">${p.serve.aces}</td><td class="c">${p.serve.errors}</td><td class="c">${r1(p.block.points)}</td><td class="c">${p.digs}</td><td class="c">${p.reception.errors}</td>
+    const top = list.length && list[0].points > 0 ? list[0].playerId : null;
+    const T = st.teams[side];
+    return `<div class="card pcard" style="--tc:${esc(c)}"><div class="pcard-h">${VB.logoHtml(team(side), 'sm')}<h3 class="ellipsis">${esc(team(side).name)}</h3>
+        <div class="tot"><span>${T.points} pts</span><span>${T.byCategory.attack} attack</span><span>${T.byCategory.block} block</span><span>${T.byCategory.serve} serve</span></div></div>
+      <div class="tbl-wrap"><table class="tbl ptbl"><thead><tr><th>#</th><th>Player</th><th class="c" title="Sets played">Sets</th><th class="c" title="Points">Pts</th><th class="c" title="Attack kills">K</th><th class="c" title="Attack errors (incl. blocked)">AE</th><th class="c" title="Attack efficiency (kills − errors) / attempts">Eff</th><th class="c" title="Service aces">Ace</th><th class="c" title="Service errors">SE</th><th class="c" title="Block points (solo + share of assists)">Blk</th><th class="c" title="Digs">Dig</th><th class="c" title="Reception errors">RE</th><th class="c">Clips</th></tr></thead><tbody>
+      ${list.map((p) => { const n = S.clipCounts[p.playerId] || 0; return `<tr class="${p.setsPlayed ? '' : 'dim'}${p.playerId === top ? ' top' : ''}"><td><span class="jer" style="--on:${esc(on)}">${esc(p.number)}</span></td><td><button class="pname" data-player="${esc(p.playerId)}">${esc(p.name)}</button>${p.captain ? ' <span class="badge">C</span>' : ''}${p.libero ? ' <span class="badge">L</span>' : ''}${p.sanctions.length ? ` <span class="badge warn" title="${esc(p.sanctions.join(', '))}">${p.sanctions.length}🟨</span>` : ''}</td>
+        <td class="c">${p.setsPlayed}</td><td class="c"><b class="${p.points ? 'tcol' : ''}">${r1(p.points)}</b></td><td class="c">${p.attack.kills}</td><td class="c">${p.attack.errors}</td><td class="c">${p.attack.attempts ? pct(p.attack.efficiency) : '–'}</td><td class="c">${p.serve.aces}</td><td class="c">${p.serve.errors}</td><td class="c">${r1(p.block.points)}</td><td class="c">${p.digs}</td><td class="c">${p.reception.errors}</td>
         <td class="c">${n ? `<button class="vid" data-clips="${esc(p.playerId)}" title="${n} clip${n === 1 ? '' : 's'} of ${esc(p.name)}">🎬 ${n}</button>` : '<span class="muted">–</span>'}</td></tr>`; }).join('')}
       </tbody></table></div></div>`;
   }
@@ -202,20 +282,53 @@
   // 🎬 A player's clips — the points that player is part of, from the server.
   async function playerClips(pid) {
     const p = player(pid);
-    const sh = VB.sheet(`<div class="row"><h3 class="grow">${esc(p ? `#${p.number} ${p.name}` : 'Player')} · clips</h3><button class="btn sm" data-close>Close</button></div><div class="cliplist" id="cl"><div class="skel" style="height:200px"></div></div>`, { wide: true });
+    const sh = VB.sheet(`<div class="row"><h3 class="grow">${esc(p ? `#${p.number} ${p.name}` : 'Player')} · clips</h3><button class="btn sm" data-close>Close</button></div><div class="vclips" id="cl"><div class="skel" style="height:120px"></div></div>`, { wide: true });
     const r = await api('GET', `/api/volleyball/matches/${encodeURIComponent(matchId)}/clips?playerId=${encodeURIComponent(pid)}${qa}`);
     const el = $('#cl', sh.el);
     if (!r.ok) { el.innerHTML = `<div class="empty"><b>Could not load the clips</b>${esc(r.json.error || '')}</div>`; return; }
     const list = (r.json.clips || []).slice().sort((a, b) => (a.set || 0) - (b.set || 0) || (a.pointNo || 0) - (b.pointNo || 0));
     if (!list.length) { el.innerHTML = '<div class="empty"><b>No clips for this player</b>Their points did not get a clip (no recording at the time).</div>'; return; }
-    el.innerHTML = list.map((c) => {
-      const role = (c.players.find((x) => x.playerId === pid) || {}).role || '';
-      const sc = c.scoreNow || c.scoreAtTrigger;
-      const head = `<div class="cliphead"><b>Set ${esc(c.set || '?')}${sc ? ` · ${sc.A}–${sc.B}` : ''}</b><span class="badge">${esc(OUT[c.outcome] || 'Point')}</span>${c.team ? `<span class="small">to ${esc(team(c.team).shortName || team(c.team).name)}</span>` : ''}<span class="small muted">${esc(role)}</span>${c.actual && c.actual.partialPreRoll ? `<span class="badge warn">${esc(c.actual.preRollSec)} s before the point</span>` : ''}</div>`;
-      return `<div>${head}${c.watchUrl ? `<video controls playsinline preload="none" ${c.posterUrl ? `poster="${esc(c.posterUrl)}"` : ''} src="${esc(c.watchUrl)}${mq()}"></video>` : `<div class="wait-clip">${esc(c.displayStatus)}${c.status === 'UNAVAILABLE' ? '' : ' — the clip is on its way'}</div>`}</div>`;
+    const sub = (c) => { const role = (c.players.find((x) => x.playerId === pid) || {}).role || ''; return [OUT[c.outcome] || 'Point', c.team ? `to ${team(c.team).shortName || team(c.team).name}` : '', role].filter(Boolean).join(' · '); };
+    el.innerHTML = clipRows(list, sub);
+    wireClipRows(el, list, (c) => `${p ? `#${p.number} ${p.name}` : 'Player'} · ${sub(c)}`);
+  }
+  // 🎬 Clip rows (like the cricket scorecard's): badge, the point, how it was
+  // won; a tap opens the clip player, the list playing as a playlist.
+  const BADGE = { ATTACK_KILL: 'K', BLOCK: 'B', ACE: 'A', PENALTY: 'P', GENERAL: '•' };
+  const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+  const ICON_DL = '<svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>';
+  const dlUrl = (c) => c.watchUrl ? c.watchUrl + (mq() ? mq() + '&' : '?') + 'download=1' : null;
+  const scoreOf = (c) => c.scoreNow || c.scoreAtTrigger;
+  function clipRows(list, subOf) {
+    let set = null;
+    return list.map((c, i) => {
+      const sc = scoreOf(c), tc = color(c.team);
+      const group = c.set !== set ? `<div class="vclip-group">Set ${esc((set = c.set) || '?')}</div>` : '';
+      const ok = !!c.watchUrl;
+      const dur = c.actual && c.actual.durationSec ? `${Math.round(c.actual.durationSec)} s` : '';
+      const short = c.actual && c.actual.partialPreRoll ? ` · ${esc(c.actual.preRollSec)} s before the point` : '';
+      return `${group}<div class="vclip${ok ? '' : ' off'}" data-i="${i}" ${ok ? 'role="button" tabindex="0"' : ''} aria-label="Watch set ${esc(c.set || '?')}${sc ? ` ${sc.A}–${sc.B}` : ''}">
+        <span class="vclip-badge" style="--tc:${esc(tc)};--on:${esc(VB.onColor(tc))}">${esc(BADGE[c.outcome] || (/ERROR|FAULT|OUT|IN|HITS|CONTACT/.test(c.outcome || '') ? 'E' : '•'))}</span>
+        <span class="vclip-info"><b>Set ${esc(c.set || '?')}${sc ? ` · ${sc.A}–${sc.B}` : ''}</b><span>${esc(subOf(c))}${short}${ok ? '' : ` · ${esc(c.displayStatus)}`}</span></span>
+        ${dur ? `<span class="vclip-dur">${dur}</span>` : ''}
+        ${ok ? `<a class="vclip-dl" href="${esc(dlUrl(c))}" download title="Download" aria-label="Download">${ICON_DL}</a><span class="vclip-play" aria-hidden="true">${ICON_PLAY}</span>` : ''}</div>`;
     }).join('');
-    // one plays at a time
-    $$('video', el).forEach((v) => v.addEventListener('play', () => $$('video', el).forEach((o) => { if (o !== v) o.pause(); })));
+  }
+  function playList(list, titleOf, i) {
+    const ready = list.filter((c) => c.watchUrl);
+    VB.playClips(ready.map((c) => {
+      const sc = scoreOf(c);
+      return { sources: [c.playbackUrl, c.watchUrl + mq()], poster: c.posterUrl || null, download: dlUrl(c),
+        title: `Set ${c.set || '?'}${sc ? ` · ${sc.A}–${sc.B}` : ''} · ${team(c.team).name || ''}`, sub: titleOf(c) };
+    }), Math.max(0, ready.indexOf(list[i])));
+  }
+  function wireClipRows(el, list, titleOf) {
+    $$('.vclip[data-i]', el).forEach((row) => {
+      if (row.classList.contains('off')) return;
+      const go = () => playList(list, titleOf, +row.dataset.i);
+      row.addEventListener('click', (e) => { if (!e.target.closest('.vclip-dl')) go(); });
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
   }
   async function playerHistory(pid) {
     const p = player(pid);
@@ -248,8 +361,10 @@
       return `<div class="section-title">Set ${n}</div><div class="list">${items.map((e) => line(e, clipByEvent.get(e.eventId))).join('')}</div>`;
     }).join('') + '<p class="tiny muted" style="margin-top:10px">Newest first. A struck-through point was taken back by the scorer.</p>';
     $$('[data-play]').forEach((b) => b.onclick = () => {
-      const c = S.clips.find((x) => x.clipId === b.dataset.play);
-      if (c) VB.sheet(`<div class="row"><h3 class="grow">Set ${esc(c.set)} · ${c.scoreNow ? `${c.scoreNow.A}–${c.scoreNow.B}` : ''}</h3><button class="btn sm" data-close>Close</button></div><video controls autoplay playsinline src="${esc(c.watchUrl)}${mq()}" style="width:100%;border-radius:12px;background:#000;margin-top:12px"></video>`, { wide: true });
+      // the match's clips in point order — Previous / Next walk through the match
+      const list = S.clips.filter((x) => x.watchUrl && !x.eventVoided).slice().sort((a, x) => (a.set || 0) - (x.set || 0) || (a.pointNo || 0) - (x.pointNo || 0));
+      const i = list.findIndex((x) => x.clipId === b.dataset.play);
+      if (i >= 0) playList(list, (c) => OUT[c.outcome] || 'Point', i);
     });
   }
   function line(e, clip) {

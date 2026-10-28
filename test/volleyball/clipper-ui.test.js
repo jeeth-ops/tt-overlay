@@ -257,6 +257,19 @@ const FAKE_FIREBASE = `(function(){
     for (let i = 0; i < 20; i++) { c = await clipOf(later.eventId); if (c && c.attribution && c.attribution.playerId === out) break; await sleep(400); }
     ok('…assigned to that player — the earlier clips keep their own players', c && c.attribution.playerId === out && (await clipOf(p1.eventId)).attribution.playerId === killer, c && c.attribution);
 
+    head('▶ A POINT’S CLIP — the clip player, like the cricket scorecard');
+    const sheetWasOpen = (await page.locator('.sheet .clprow').count()) > 0;
+    if (!sheetWasOpen) await page.click('#clpChip');
+    const hasPlay = await page.waitForSelector(`.sheet .clprow[data-ev="${p1.eventId}"] [data-play]`, { timeout: 15000 }).then(() => true, () => false);
+    if (hasPlay) await page.click(`.sheet .clprow[data-ev="${p1.eventId}"] [data-play]`);
+    const vok = hasPlay && await page.waitForSelector('.vcp.open .vcp-stage.is-ready', { timeout: 10000 }).then(() => true, () => false);
+    ok('▶ on a point’s clip opens the clip player and the clip plays', vok && /Set 1/.test(await page.textContent('.vcp-title')), { hasPlay, title: vok && await page.textContent('.vcp-title') });
+    await page.screenshot({ path: path.join(OUT, 'clipper-ui-player.png') });
+    await page.keyboard.press('Escape');
+    const closed = await page.waitForSelector('.vcp.open', { state: 'detached', timeout: 3000 }).then(() => true, () => false);
+    ok('…Escape closes only the player — the Clipper sheet stays open', closed && (await page.locator('.sheet .clprow').count()) > 0);
+    if (!sheetWasOpen) { await page.keyboard.press('Escape'); await sleep(400); }
+
     head('UNDO TAKES BACK THE SCORE, NOT AN ATTRIBUTION');
     const before = (await lastRally()).after.score;
     await page.click('#undo');
