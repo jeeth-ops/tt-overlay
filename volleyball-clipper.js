@@ -585,12 +585,20 @@
     VB.$$('[data-play]', el).forEach(function (b) { b.onclick = function () { if (opts.onPlay) opts.onPlay(b.dataset.play); }; });
   }
   // A point's clip, played in a sheet (the website's own authorised link).
+  // A point's clip in the clip player (VB.playClips) — the recent clips
+  // play as a playlist in point order, from the website's own authorised link.
   function play(ctl, eventId, teamOf) {
-    var r = ctl.row(eventId);
-    if (!r || !r.watchUrl) return;
-    var t = teamOf ? teamOf(r.team) : { name: r.team };
-    VB.sheet('<h3>Set ' + (r.set || '?') + ' · point ' + (r.pointNo || '?') + ' · ' + esc(t.name) + '</h3><video class="clpvid" src="' + esc(r.watchUrl) + '" controls autoplay playsinline></video>'
-      + '<div class="foot"><a class="btn" href="' + esc(r.watchUrl + (r.watchUrl.indexOf('?') >= 0 ? '&' : '?') + 'download=1') + '" download>Download</a><button class="btn" data-close>Close</button></div>', { wide: true });
+    var list = ctl.recent(40).filter(function (r) { return r.watchUrl && !r.voided; }).reverse();
+    var i = list.map(function (r) { return r.eventId; }).indexOf(eventId);
+    if (i < 0) return;
+    VB.playClips(list.map(function (r) {
+      var t = teamOf ? teamOf(r.team) : { name: r.team };
+      var at = r.attribution || {}, lead = (at.players || [])[0];
+      var a = (at.type ? TYPES[at.type] || '' : '') + (lead && lead.name ? ' — ' + (lead.number ? '#' + lead.number + ' ' : '') + lead.name : '');
+      return { sources: [r.watchUrl], download: r.watchUrl + (r.watchUrl.indexOf('?') >= 0 ? '&' : '?') + 'download=1',
+        title: 'Set ' + (r.set || '?') + (r.score ? ' · ' + r.score.A + '–' + r.score.B : '') + ' · ' + (t.name || ''),
+        sub: ['Point ' + (r.pointNo || '?'), a, r.seconds ? Number(r.seconds).toFixed(1) + ' s' : ''].filter(Boolean).join(' · ') };
+    }), i);
   }
 
   window.VBClipper = { create: create, attributionOf: attributionOf, TYPES: TYPES, HELPER: HELPER, chip: chip, paint: paint, play: play };

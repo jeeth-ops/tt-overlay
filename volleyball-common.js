@@ -240,6 +240,136 @@
     try { var a = document.createElement('textarea'); a.value = text; a.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(a); a.select(); var ok = document.execCommand('copy'); a.remove(); return Promise.resolve(ok); }
     catch (e) { return Promise.resolve(false); }
   };
+  /* 🎬 THE CLIP PLAYER — the cricket scorecard's player, for volleyball:
+     the page dims and blurs, the player card rises in, a branded loader
+     holds the 16:9 frame until the video can play (then it fades in —
+     nothing jumps), a stall shows a small "Buffering…", a failure says so
+     with Try again / Download. One <video>, reused for every open; closing
+     pauses at once and drops the download after the card has gone. A list
+     plays as a playlist: Previous / Next (and ← →) step through it.
+
+     VB.playClips([{ sources: [url, fallbackUrl], title, sub, poster, download }], index) */
+  var cp = null;
+  function cpBuild() {
+    var root = document.createElement('div');
+    root.className = 'vcp';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.setAttribute('aria-label', 'Clip player');
+    root.innerHTML = '<div class="vcp-card"><div class="vcp-head"><div class="vcp-t"><b class="vcp-title"></b><span class="vcp-sub"></span></div>'
+      + '<button class="vcp-x" type="button" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>'
+      + '<div class="vcp-stage"><video controls playsinline webkit-playsinline preload="metadata"></video>'
+      + '<div class="vcp-loader" role="status" aria-live="polite"><div class="vcp-brand" role="img" aria-label="AllSportsLive"></div><div class="vcp-lt">Loading your clip…</div><div class="vcp-bar" aria-hidden="true"></div><div class="vcp-ls"></div></div>'
+      + '<div class="vcp-error" role="alert"><b>This clip didn’t load</b><span class="vcp-es"></span><div class="vcp-acts"><button class="vcp-btn vcp-retry" type="button">↻ Try again</button><a class="vcp-btn ghost vcp-edl" download>Download instead</a></div></div></div>'
+      + '<div class="vcp-foot"><button class="vcp-nb vcp-prev" type="button" aria-label="Previous clip"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><span class="vcp-pos"></span>'
+      + '<button class="vcp-nb vcp-next" type="button" aria-label="Next clip"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><span class="grow"></span>'
+      + '<a class="vcp-dl" download><svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>Download</a></div></div>';
+    document.body.appendChild(root);
+    var q = function (s) { return root.querySelector(s); };
+    cp = { root: root, video: q('video'), stage: q('.vcp-stage'), items: [], i: 0, src: 0, token: 0, slow: null, buf: null, cleanup: null, back: null };
+    var v = cp.video;
+    var ready = function () { cpState('ready'); clearTimeout(cp.slow); };
+    v.addEventListener('loadeddata', ready);   // fires even when autoplay is blocked
+    v.addEventListener('canplay', ready);
+    v.addEventListener('error', function () {
+      if (!v.getAttribute('src') || !cp.root.classList.contains('open')) return;
+      var it = cp.items[cp.i];
+      if (cp.src < it.sources.length - 1) { cp.src++; cpLoad(); return; }   // direct link → the website's own route
+      clearTimeout(cp.slow);
+      q('.vcp-es').textContent = navigator.onLine === false ? 'You seem to be offline. Reconnect and try again.' : 'The clip could not be loaded right now. Try again, or download it.';
+      cpState('error');
+    });
+    v.addEventListener('waiting', function () {
+      clearTimeout(cp.buf);
+      cp.buf = setTimeout(function () { if (cp.stage.classList.contains('is-ready') && !v.paused) { q('.vcp-lt').textContent = 'Buffering…'; cp.stage.classList.add('is-buffering'); } }, 700);   // brief hiccups never flash an overlay
+    });
+    var unbuffer = function () { clearTimeout(cp.buf); cp.stage.classList.remove('is-buffering'); };
+    ['playing', 'pause', 'seeked'].forEach(function (e) { v.addEventListener(e, unbuffer); });
+    q('.vcp-x').addEventListener('click', cpClose);
+    root.addEventListener('mousedown', function (e) { if (e.target === root) cpClose(); });
+    q('.vcp-retry').addEventListener('click', function () { cp.src = 0; v.removeAttribute('src'); v.load(); cpLoad(); });
+    q('.vcp-prev').addEventListener('click', function () { cpGo(-1); });
+    q('.vcp-next').addEventListener('click', function () { cpGo(1); });
+    // above any sheet underneath (whose own Escape would close it instead)
+    window.addEventListener('keydown', function (e) {
+      if (!cp.root.classList.contains('open')) return;
+      if (e.key === 'Escape') cpClose();
+      else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.target !== v) cpGo(e.key === 'ArrowLeft' ? -1 : 1);
+      else return;
+      e.preventDefault(); e.stopImmediatePropagation();
+    }, true);
+  }
+  function cpState(s) {   // 'loading' | 'ready' | 'error'
+    cp.stage.classList.toggle('is-ready', s === 'ready');
+    cp.stage.classList.toggle('is-error', s === 'error');
+    if (s !== 'ready') cp.stage.classList.remove('is-buffering');
+  }
+  function cpLoad() {
+    var v = cp.video, it = cp.items[cp.i], my = ++cp.token;
+    cpState('loading');
+    cp.root.querySelector('.vcp-lt').textContent = 'Loading your clip…';
+    cp.root.querySelector('.vcp-ls').textContent = '';
+    clearTimeout(cp.slow);
+    cp.slow = setTimeout(function () { if (my === cp.token) cp.root.querySelector('.vcp-ls').textContent = 'Slow connection — still loading…'; }, 6000);
+    v.preload = 'auto';
+    if (v.getAttribute('src') !== it.sources[cp.src] || v.error) { v.src = it.sources[cp.src]; v.load(); }
+    else if (v.readyState >= 2) cpState('ready');
+    var p = v.play();
+    if (p && p.catch) p.catch(function () { /* autoplay blocked — the controls still work */ });
+  }
+  function cpShow() {
+    var it = cp.items[cp.i], q = function (s) { return cp.root.querySelector(s); }, n = cp.items.length;
+    q('.vcp-title').textContent = it.title || 'Clip';
+    q('.vcp-sub').textContent = it.sub || '';
+    q('.vcp-pos').textContent = n > 1 ? (cp.i + 1) + ' / ' + n : '';
+    q('.vcp-prev').hidden = q('.vcp-next').hidden = n < 2;
+    q('.vcp-prev').disabled = cp.i === 0;
+    q('.vcp-next').disabled = cp.i === n - 1;
+    [q('.vcp-dl'), q('.vcp-edl')].forEach(function (a) { if (it.download) { a.href = it.download; a.hidden = false; } else { a.removeAttribute('href'); a.hidden = true; } });
+    if (it.poster) { cp.video.poster = it.poster; q('.vcp-loader').style.setProperty('--vcp-poster', 'url("' + String(it.poster).replace(/"/g, '%22') + '")'); }
+    else { cp.video.removeAttribute('poster'); q('.vcp-loader').style.removeProperty('--vcp-poster'); }
+    cp.src = 0;
+    cpLoad();
+  }
+  function cpGo(d) {
+    var j = cp.i + d;
+    if (j < 0 || j >= cp.items.length || j === cp.i) return;
+    cp.i = j;
+    cp.video.pause();
+    cpShow();
+  }
+  function cpClose() {
+    if (!cp || !cp.root.classList.contains('open')) return;
+    cp.token++;
+    clearTimeout(cp.slow); clearTimeout(cp.buf);
+    cp.video.pause();   // sound stops at once; the frame stays while the card leaves
+    cp.root.classList.remove('open');
+    document.documentElement.classList.remove('vcp-on');
+    if (cp.back && document.contains(cp.back)) try { cp.back.focus({ preventScroll: true }); } catch (e) { /* gone */ }
+    cp.back = null;
+    clearTimeout(cp.cleanup);
+    cp.cleanup = setTimeout(function () {   // after the exit: abort the download, back to the loading state
+      if (cp.root.classList.contains('open')) return;
+      cp.video.removeAttribute('src'); cp.video.removeAttribute('poster'); cp.video.load();
+      cpState('loading');
+    }, 320);
+  }
+  VB.playClips = function (items, index) {
+    items = (items || []).filter(function (x) { return x && x.sources && x.sources.filter(Boolean).length; })
+      .map(function (x) { return Object.assign({}, x, { sources: x.sources.filter(Boolean) }); });
+    if (!items.length) return;
+    if (!cp) cpBuild();
+    clearTimeout(cp.cleanup);
+    if (!cp.root.classList.contains('open')) cp.back = document.activeElement;
+    cp.items = items;
+    cp.i = Math.max(0, Math.min(items.length - 1, index || 0));
+    cpShow();
+    cp.root.classList.add('open');
+    document.documentElement.classList.add('vcp-on');
+    cp.root.querySelector('.vcp-x').focus({ preventScroll: true });
+  };
+  VB.closeClips = cpClose;
+
   VB.applyTheme = function () {
     var t = VB.store.get('vb_theme', 'auto');
     if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = t;

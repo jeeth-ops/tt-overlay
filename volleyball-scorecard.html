@@ -63,10 +63,6 @@
   .rally .tm { width: 12px; height: 12px; border-radius: 4px; }
   .rally.void { opacity: .5; text-decoration: line-through; }
   .rally.ev { color: var(--mute); grid-template-columns: 62px 18px minmax(0, 1fr); }
-  .cliplist { display: grid; gap: 14px; margin-top: 12px; }
-  .cliplist video { width: 100%; border-radius: 12px; background: #000; aspect-ratio: 16 / 9; }
-  .cliphead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; margin-bottom: 6px; }
-  .wait-clip { aspect-ratio: 16 / 9; border-radius: 12px; background: var(--fill); display: grid; place-items: center; color: var(--mute); font-weight: 600; text-align: center; padding: 10px; }
   .form { display: inline-flex; gap: 3px; }
   .form i { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 800; color: #fff; }
   .form i.W { background: var(--green); } .form i.L { background: var(--red); }
@@ -202,20 +198,53 @@
   // 🎬 A player's clips — the points that player is part of, from the server.
   async function playerClips(pid) {
     const p = player(pid);
-    const sh = VB.sheet(`<div class="row"><h3 class="grow">${esc(p ? `#${p.number} ${p.name}` : 'Player')} · clips</h3><button class="btn sm" data-close>Close</button></div><div class="cliplist" id="cl"><div class="skel" style="height:200px"></div></div>`, { wide: true });
+    const sh = VB.sheet(`<div class="row"><h3 class="grow">${esc(p ? `#${p.number} ${p.name}` : 'Player')} · clips</h3><button class="btn sm" data-close>Close</button></div><div class="vclips" id="cl"><div class="skel" style="height:120px"></div></div>`, { wide: true });
     const r = await api('GET', `/api/volleyball/matches/${encodeURIComponent(matchId)}/clips?playerId=${encodeURIComponent(pid)}${qa}`);
     const el = $('#cl', sh.el);
     if (!r.ok) { el.innerHTML = `<div class="empty"><b>Could not load the clips</b>${esc(r.json.error || '')}</div>`; return; }
     const list = (r.json.clips || []).slice().sort((a, b) => (a.set || 0) - (b.set || 0) || (a.pointNo || 0) - (b.pointNo || 0));
     if (!list.length) { el.innerHTML = '<div class="empty"><b>No clips for this player</b>Their points did not get a clip (no recording at the time).</div>'; return; }
-    el.innerHTML = list.map((c) => {
-      const role = (c.players.find((x) => x.playerId === pid) || {}).role || '';
-      const sc = c.scoreNow || c.scoreAtTrigger;
-      const head = `<div class="cliphead"><b>Set ${esc(c.set || '?')}${sc ? ` · ${sc.A}–${sc.B}` : ''}</b><span class="badge">${esc(OUT[c.outcome] || 'Point')}</span>${c.team ? `<span class="small">to ${esc(team(c.team).shortName || team(c.team).name)}</span>` : ''}<span class="small muted">${esc(role)}</span>${c.actual && c.actual.partialPreRoll ? `<span class="badge warn">${esc(c.actual.preRollSec)} s before the point</span>` : ''}</div>`;
-      return `<div>${head}${c.watchUrl ? `<video controls playsinline preload="none" ${c.posterUrl ? `poster="${esc(c.posterUrl)}"` : ''} src="${esc(c.watchUrl)}${mq()}"></video>` : `<div class="wait-clip">${esc(c.displayStatus)}${c.status === 'UNAVAILABLE' ? '' : ' — the clip is on its way'}</div>`}</div>`;
+    const sub = (c) => { const role = (c.players.find((x) => x.playerId === pid) || {}).role || ''; return [OUT[c.outcome] || 'Point', c.team ? `to ${team(c.team).shortName || team(c.team).name}` : '', role].filter(Boolean).join(' · '); };
+    el.innerHTML = clipRows(list, sub);
+    wireClipRows(el, list, (c) => `${p ? `#${p.number} ${p.name}` : 'Player'} · ${sub(c)}`);
+  }
+  // 🎬 Clip rows (like the cricket scorecard's): badge, the point, how it was
+  // won; a tap opens the clip player, the list playing as a playlist.
+  const BADGE = { ATTACK_KILL: 'K', BLOCK: 'B', ACE: 'A', PENALTY: 'P', GENERAL: '•' };
+  const ICON_PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+  const ICON_DL = '<svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>';
+  const dlUrl = (c) => c.watchUrl ? c.watchUrl + (mq() ? mq() + '&' : '?') + 'download=1' : null;
+  const scoreOf = (c) => c.scoreNow || c.scoreAtTrigger;
+  function clipRows(list, subOf) {
+    let set = null;
+    return list.map((c, i) => {
+      const sc = scoreOf(c), tc = color(c.team);
+      const group = c.set !== set ? `<div class="vclip-group">Set ${esc((set = c.set) || '?')}</div>` : '';
+      const ok = !!c.watchUrl;
+      const dur = c.actual && c.actual.durationSec ? `${Math.round(c.actual.durationSec)} s` : '';
+      const short = c.actual && c.actual.partialPreRoll ? ` · ${esc(c.actual.preRollSec)} s before the point` : '';
+      return `${group}<div class="vclip${ok ? '' : ' off'}" data-i="${i}" ${ok ? 'role="button" tabindex="0"' : ''} aria-label="Watch set ${esc(c.set || '?')}${sc ? ` ${sc.A}–${sc.B}` : ''}">
+        <span class="vclip-badge" style="--tc:${esc(tc)};--on:${esc(VB.onColor(tc))}">${esc(BADGE[c.outcome] || (/ERROR|FAULT|OUT|IN|HITS|CONTACT/.test(c.outcome || '') ? 'E' : '•'))}</span>
+        <span class="vclip-info"><b>Set ${esc(c.set || '?')}${sc ? ` · ${sc.A}–${sc.B}` : ''}</b><span>${esc(subOf(c))}${short}${ok ? '' : ` · ${esc(c.displayStatus)}`}</span></span>
+        ${dur ? `<span class="vclip-dur">${dur}</span>` : ''}
+        ${ok ? `<a class="vclip-dl" href="${esc(dlUrl(c))}" download title="Download" aria-label="Download">${ICON_DL}</a><span class="vclip-play" aria-hidden="true">${ICON_PLAY}</span>` : ''}</div>`;
     }).join('');
-    // one plays at a time
-    $$('video', el).forEach((v) => v.addEventListener('play', () => $$('video', el).forEach((o) => { if (o !== v) o.pause(); })));
+  }
+  function playList(list, titleOf, i) {
+    const ready = list.filter((c) => c.watchUrl);
+    VB.playClips(ready.map((c) => {
+      const sc = scoreOf(c);
+      return { sources: [c.playbackUrl, c.watchUrl + mq()], poster: c.posterUrl || null, download: dlUrl(c),
+        title: `Set ${c.set || '?'}${sc ? ` · ${sc.A}–${sc.B}` : ''} · ${team(c.team).name || ''}`, sub: titleOf(c) };
+    }), Math.max(0, ready.indexOf(list[i])));
+  }
+  function wireClipRows(el, list, titleOf) {
+    $$('.vclip[data-i]', el).forEach((row) => {
+      if (row.classList.contains('off')) return;
+      const go = () => playList(list, titleOf, +row.dataset.i);
+      row.addEventListener('click', (e) => { if (!e.target.closest('.vclip-dl')) go(); });
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
   }
   async function playerHistory(pid) {
     const p = player(pid);
@@ -248,8 +277,10 @@
       return `<div class="section-title">Set ${n}</div><div class="list">${items.map((e) => line(e, clipByEvent.get(e.eventId))).join('')}</div>`;
     }).join('') + '<p class="tiny muted" style="margin-top:10px">Newest first. A struck-through point was taken back by the scorer.</p>';
     $$('[data-play]').forEach((b) => b.onclick = () => {
-      const c = S.clips.find((x) => x.clipId === b.dataset.play);
-      if (c) VB.sheet(`<div class="row"><h3 class="grow">Set ${esc(c.set)} · ${c.scoreNow ? `${c.scoreNow.A}–${c.scoreNow.B}` : ''}</h3><button class="btn sm" data-close>Close</button></div><video controls autoplay playsinline src="${esc(c.watchUrl)}${mq()}" style="width:100%;border-radius:12px;background:#000;margin-top:12px"></video>`, { wide: true });
+      // the match's clips in point order — Previous / Next walk through the match
+      const list = S.clips.filter((x) => x.watchUrl && !x.eventVoided).slice().sort((a, x) => (a.set || 0) - (x.set || 0) || (a.pointNo || 0) - (x.pointNo || 0));
+      const i = list.findIndex((x) => x.clipId === b.dataset.play);
+      if (i >= 0) playList(list, (c) => OUT[c.outcome] || 'Point', i);
     });
   }
   function line(e, clip) {
