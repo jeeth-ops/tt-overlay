@@ -9,53 +9,23 @@
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <!--
-  🎬 THE VOLLEYBALL CLIPPER — runs in a browser on the PC that records.
+  🎬 THE VOLLEYBALL CLIPPER PAGE — for the PC that records (vMix + the
+  Clipper Helper) when the match is scored on ANOTHER device (a phone or
+  a tablet). When the scoring panel runs on the vMix PC itself, its own
+  🎬 Clipper button does all of this and this page is not needed.
 
-  Every point scored makes ONE clip: 7 s before the press + 3 s after it,
-  finalised 3 s after the press, cut by the local Stream Engine
-  (127.0.0.1:5006) from the match's master recording and sent to
-  /api/volleyball/clips/ingest under the point's own event id — the same
-  id the score, the statistics and the player's video icon use.
-
-  This page:
-    - shows whether the Stream Engine on THIS PC is running and recording
-      this match, and starts / stops that recording (with the volleyball
-      overlay on the picture);
-    - clips points scored on ANOTHER device (a phone or tablet running the
-      panel): it hears each saved point over the /volleyball socket and
-      converts the press time — stamped on the server's clock — to this
-      PC's clock;
-    - lists every point clip with its honest state, the players it is
-      linked to, playback, retry and manual linking.
+  Same Clipper as the panel (volleyball-clipper.js): ▶ Start Clipper, the
+  readiness checks, the recent clips. Every point scored on the other
+  device reaches this page over the match feed, stamped on the server's
+  clock; it is converted to this PC's clock (measured offset below) and
+  handed to the helper, which cuts it from the vMix recording.
 -->
 <style>
   .topbar .title { font-weight: 700; font-size: 15px; min-width: 0; }
   .topbar .title small { display: block; font-weight: 500; color: var(--mute); font-size: 12px; }
   main { padding: 16px 0 60px; }
-  .cols { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px; align-items: start; }
-  @media (max-width: 980px) { .cols { grid-template-columns: minmax(0, 1fr); } }
-  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; font-size: 13.5px; }
-  .kv > span:nth-child(odd) { color: var(--mute); }
-  .kv > span:nth-child(even) { min-width: 0; overflow-wrap: anywhere; }
-  .big-status { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--fill); font-weight: 700; }
-  .big-status .dot { width: 12px; height: 12px; }
-  .preview { width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; background: #000; object-fit: contain; display: block; }
-  .clip { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 14px; }
-  .clip .pt { text-align: center; }
-  .clip .pt b { display: block; font-size: 22px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-  .clip .pt small { color: var(--mute); font-size: 11.5px; font-weight: 600; }
-  .clip .who { font-size: 13px; color: var(--mute); margin-top: 3px; }
-  .clip .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-  .clip.voided { opacity: .55; }
-  .team-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; vertical-align: 1px; margin-right: 4px; }
-  .steps { counter-reset: st; display: grid; gap: 10px; }
-  .steps > div { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; }
-  .steps > div::before { counter-increment: st; content: counter(st); width: 26px; height: 26px; border-radius: 50%; background: var(--fill2); display: grid; place-items: center; font-weight: 800; font-size: 13px; }
-  .steps > div.ok::before { content: '✓'; background: var(--green); color: #fff; }
-  video.player { width: 100%; max-height: 70vh; border-radius: 12px; background: #000; }
-  .pick { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; }
-  .pick:hover { background: var(--fill); }
-  .pick input { width: 18px; height: 18px; }
+  .clipcard { max-width: 1040px; margin: 0 auto; }
+  .note { margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -68,25 +38,17 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/volleyball-common.js"></script>
+<script src="/volleyball-engine.js"></script>
+<script src="/volleyball-clipper.js"></script>
 <script>
 (function () {
   'use strict';
-  const { $, $$, esc, toast, api } = VB;
-  const ENGINE = 'http://127.0.0.1:5006';
-  const PRE = 7, POST = 3;
-  const RELAY_MAX_AGE_MS = 15 * 60 * 1000;     // older presses are not clipped by the relay
+  const { $, esc, toast, api } = VB;
+  const E = window.VolleyballEngine;
   const qs = new URLSearchParams(location.search);
-  const PREFS_KEY = 'vb_clipper_prefs';
-  const C = {
-    matchId: qs.get('match'), match: null, tournament: null, socket: null, connected: false, timeline: [],
-    engine: { ok: null, status: null, info: null, audio: [], video: [], checkedAt: 0 },
-    jobs: new Map(), clips: [], fired: new Set(), relay: VB.store.get('vb_clip_relay', true),
-    prefs: Object.assign({ resolution: '1080p', videoMode: '25p', audio: '', cameraId: '', cameraLabel: '', nativeCamera: '' }, VB.store.get(PREFS_KEY, {})),
-    cams: [], preview: false, relayed: 0, launched: false
-  };
+  const C = { matchId: qs.get('match'), match: null, tournament: null, socket: null, connected: false, L: null, CL: null };
   if (!C.matchId) { $('#main').innerHTML = '<div class="card empty" style="max-width:520px;margin:30px auto"><b>No match chosen</b>Open the Clipper from a match in the <a href="/volleyball">volleyball dashboard</a>.</div>'; return; }
 
-  /* =============================== boot */
   async function boot() {
     const user = await VB.authReady;
     if (!user) return gate('Sign in to clip', 'The Clipper works for the account that runs the tournament.', true);
@@ -95,366 +57,85 @@
     C.socket.on('connect', onConnect);
     C.socket.on('disconnect', () => { C.connected = false; renderChips(); });
     C.socket.on('vb:update', onUpdate);
-    C.socket.on('vb:clip', (d) => { if (d.matchId === C.matchId) refreshClipsSoon(); });
-    C.socket.on('vb:match', (d) => { if (d.matchId === C.matchId && d.match) { C.match = Object.assign(C.match || {}, d.match, { clipToken: C.match.clipToken, overlayKey: C.match.overlayKey, canManage: C.match.canManage }); renderTitle(); } });
-    pollEngine();
-    pollJobs();
-    setInterval(() => { if (document.visibilityState === 'visible') VB.syncClock().then(renderClock); }, 5 * 60000);
+    C.socket.on('vb:match', (d) => { if (d.matchId === C.matchId && d.match && C.match) { C.match = Object.assign(C.match, d.match, { clipToken: C.match.clipToken, overlayKey: C.match.overlayKey, canManage: C.match.canManage }); renderTitle(); } });
+    // the press is converted with this offset — kept fresh through a long match
+    setInterval(() => { if (document.visibilityState === 'visible') VB.syncClock().then(paint); }, 5 * 60000);
   }
   function gate(title, text, signIn) {
     $('#main').innerHTML = `<div class="card" style="max-width:520px;margin:30px auto;text-align:center"><div style="font-size:40px">🎬</div><h2 style="margin:6px 0">${esc(title)}</h2><p class="muted">${esc(text)}</p>
       ${signIn ? '<button class="btn primary" style="margin-top:14px" id="gsi">Sign in with Google</button>' : '<a class="btn" style="margin-top:14px" href="/volleyball">Volleyball dashboard</a>'}</div>`;
     if ($('#gsi')) $('#gsi').onclick = () => VB.signIn().then(() => location.reload());
   }
+  const setupOf = (m) => {
+    const side = (s) => ({ teamId: m['team' + s] && m['team' + s].teamId, name: m['team' + s] ? m['team' + s].name : 'Team ' + s, shortName: m['team' + s] && m['team' + s].shortName, players: (m.squads && m.squads[s]) || [] });
+    return { teams: { A: side('A'), B: side('B') }, rules: m.rules };
+  };
   async function onConnect() {
     C.connected = true;
-    const r = await VB.ack(C.socket, 'vb:join', { matchId: C.matchId, timeline: true }, 15000);
+    const r = await VB.ack(C.socket, 'vb:join', { matchId: C.matchId, events: true, timeline: true }, 15000);
     if (!r.ok) return gate('Match not found', 'It may have been deleted, or this account cannot open it.');
-    if (!r.match.canManage) return gate('Not your match', 'Only the account that runs this tournament can record and clip it.');
-    const first = !C.match;
-    C.match = r.match; C.timeline = r.timeline || [];
-    if (first) { renderShell(); loadTournament(); }
-    renderTitle(); renderChips();
-    await refreshClips();
-    catchUp();
+    if (!r.match.canManage) return gate('Not your match', 'Only the account that runs this tournament can clip it.');
+    C.match = r.match;
+    C.L = new E.Ledger(setupOf(C.match), r.events || []);
+    if (!C.CL) {
+      $('#main').innerHTML = `<div class="card clipcard"><div id="clp"></div><p class="tiny muted note" id="clock"></p></div>`;
+      loadTournament();
+      C.CL = VBClipper.create({
+        matchId: C.matchId, role: 'clipper', socket: C.socket, toast, label: 'Clipper page · ' + deviceName(),
+        getMatch: () => C.match, getTournament: () => C.tournament, getTimeline: () => (C.L ? C.L.timeline : []),
+        playerOf: (t, id) => (C.L ? C.L.setup.teams[t].byId[id] || null : null),
+        onChange: paint
+      });
+    } else C.CL.refresh();
+    renderTitle(); renderChips(); paint();
   }
+  function deviceName() { const ua = navigator.userAgent; return /Windows/.test(ua) ? 'Windows PC' : /Mac OS X/.test(ua) ? 'Mac' : 'this PC'; }
   async function loadTournament() {
     const r = await api('GET', `/api/volleyball/tournaments/${C.match.tournamentId}`);
     if (r.ok) { C.tournament = r.json.tournament; renderTitle(); }
   }
-
-  /* =============================== the Stream Engine on this PC */
-  async function engineFetch(path, opts, ms) {
-    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms || 3000);
-    try {
-      const r = await fetch(ENGINE + path, Object.assign({ signal: ctl.signal, cache: 'no-store' }, opts || {}));
-      const j = await r.json().catch(() => ({}));
-      return Object.assign({ httpOk: r.ok }, j);
-    } finally { clearTimeout(t); }
-  }
-  const post = (path, body, ms) => engineFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }, ms);
-  let engineTimer = null;
-  async function pollEngine(force) {
-    clearTimeout(engineTimer);
-    try {
-      const [st, info] = await Promise.all([engineFetch('/status', null, 5000), engineFetch(`/recording-info?matchId=${encodeURIComponent(C.matchId)}`, null, 3000)]);
-      const first = !C.engine.ok;
-      C.engine = Object.assign(C.engine, { ok: true, status: st, info, checkedAt: Date.now() });
-      if (first || force) loadDevices();
-      if (first && C.match) catchUp();
-    } catch (e) { C.engine = Object.assign(C.engine, { ok: false, status: null, info: null, checkedAt: Date.now() }); }
-    renderEngine(); renderChips();
-    engineTimer = setTimeout(pollEngine, document.visibilityState === 'visible' ? 4000 : 15000);
-  }
-  async function loadDevices() {
-    try {
-      const [a, v] = await Promise.all([engineFetch('/audio-devices', null, 8000), engineFetch('/video-devices', null, 8000)]);
-      C.engine.audio = (a.devices || []).map((d) => (typeof d === 'string' ? d : d.name || d.label || '')).filter(Boolean);
-      C.engine.video = (v.devices || []).map((d) => (typeof d === 'string' ? d : d.name || d.label || '')).filter(Boolean);
-    } catch (e) { /* lists stay empty — the engine says why in /status */ }
-    renderEngine();
-  }
-  // Browser cameras for the Live Output window (labels need permission once).
-  async function listCameras(ask) {
-    try {
-      if (ask) { const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); s.getTracks().forEach((t) => t.stop()); }
-      const all = await navigator.mediaDevices.enumerateDevices();
-      C.cams = all.filter((d) => d.kind === 'videoinput').map((d, i) => ({ id: d.deviceId, label: d.label || '', name: d.label || `Camera ${i + 1}` }));
-    } catch (e) { toast('The browser did not allow the camera list: ' + (e.message || e.name), 'err'); }
-    renderEngine();
-  }
-  const recState = () => {
-    const rec = C.engine.status && C.engine.status.recorder;
-    const info = C.engine.info || {};
-    const mine = !!(rec && rec.matchId === C.matchId && (rec.state === 'recording' || rec.state === 'starting'));
-    return { rec, mine, other: !!(rec && rec.matchId && rec.matchId !== C.matchId && rec.state !== 'idle'), registered: !!info.registered };
-  };
-  const native = () => !!(C.engine.status && C.engine.status.nativeProgramFeed);
-  function savePrefs() { VB.store.set(PREFS_KEY, C.prefs); }
-
-  async function openLiveOutput() {
-    const p = C.prefs;
-    const key = C.tournament && C.tournament.visibility === 'private' ? C.match.overlayKey : undefined;
-    const r = await post('/capture-window/launch', { matchId: C.matchId, sport: 'volleyball', overlayKey: key, videoDeviceId: p.cameraId, videoLabel: p.cameraLabel, origin: location.origin, width: screen.availWidth, height: screen.availHeight }, 8000).catch(() => ({ success: false, error: 'The Stream Engine is not reachable' }));
-    if (r.success) { C.launched = true; toast('Live Output window opened by the Stream Engine'); return renderEngine(); }
-    // the popup fallback (no Chrome/Edge found by the engine, or not Windows)
-    const url = `/volleyball-live-output?match=${encodeURIComponent(C.matchId)}&video=${encodeURIComponent(p.cameraId)}&videoLabel=${encodeURIComponent(p.cameraLabel)}${key ? '&key=' + key : ''}`;
-    const w = window.open(url, 'vbLiveOutput', `popup=yes,toolbar=no,location=no,menubar=no,status=no,left=0,top=0,width=${screen.availWidth},height=${screen.availHeight}`);
-    if (!w) return toast('The browser blocked the Live Output popup — allow popups for this site', 'err');
-    toast('Live Output opened as a popup (' + (r.error || 'engine window unavailable') + ')');
-    C.launched = true; renderEngine();
-  }
-  async function startRecording() {
-    const p = C.prefs;
-    if (!p.audio) return toast('Choose the audio device first', 'err');
-    if (native() && !p.nativeCamera) return toast('Choose the camera first', 'err');
-    const key = C.tournament && C.tournament.visibility === 'private' ? C.match.overlayKey : undefined;
-    const btn = $('#recStart'); if (btn) btn.disabled = true;
-    const r = await post('/recording-start', { matchId: C.matchId, sport: 'volleyball', overlayKey: key, tournamentId: C.match.tournamentId, mainServerUrl: location.origin,
-      recordingResolution: p.resolution, videoMode: p.videoMode, audioDeviceName: p.audio, cameraDeviceName: native() ? p.nativeCamera : undefined }, 20000).catch(() => ({ success: false, error: 'The Stream Engine is not reachable' }));
-    if (btn) btn.disabled = false;
-    if (!r.success) toast('Recording not started: ' + (r.error || 'unknown error'), 'err');
-    else if (r.masterRecording && !r.masterRecording.ok) toast('The engine registered the match but the recording did not start: ' + r.masterRecording.error, 'err');
-    else toast('🔴 Recording — every point is clipped from it');
-    pollEngine();
-  }
-  async function stopRecording() {
-    if (!await VB.confirm('Stop recording?', 'Points scored after this are not clipped until recording starts again. Clips already made are kept.', 'Stop recording', true)) return;
-    const r = await post('/recording-stop', { matchId: C.matchId }).catch(() => ({ success: false }));
-    toast(r.success ? 'Recording stopped' : 'Could not reach the Stream Engine', r.success ? '' : 'err');
-    pollEngine();
-  }
-
-  /* =============================== relay: points scored on another device */
+  // A point scored on the other device: to the helper at once (with the
+  // press on this PC's clock); the match itself is then brought up to date.
   function onUpdate(u) {
-    if (!u || u.matchId !== C.matchId) return;
-    if (u.entry) C.timeline.push(u.entry);
-    if (u.full) VB.ack(C.socket, 'vb:sync', { matchId: C.matchId }, 15000).then((r) => { if (r.ok) { C.timeline = r.timeline || []; refreshClipsSoon(); } });
-    if (C.relay && u.event && u.event.type === 'RALLY') relayPoint(u.event, u.entry);
+    if (!u || u.matchId !== C.matchId || !C.L) return;
+    if (u.event && u.event.type === 'RALLY' && C.CL) C.CL.remotePoint(u.event, u.entry);
+    resync();
   }
-  // Points saved while this page was away (a reconnect) — only those the
-  // running recording can hold, and only ones no device has clipped.
-  function catchUp() {
-    if (!C.relay) return;
-    const rec = recState();
-    const since = rec.mine && rec.rec && rec.rec.session && rec.rec.session.startedAt ? rec.rec.session.startedAt : null;
-    if (!since) return;
-    const have = new Map(C.clips.map((x) => [x.eventId, x]));
-    C.timeline.filter((e) => e.type === 'RALLY' && !e.voided && !e.invalid && e.at).forEach((e) => {
-      const local = e.at - VB.clock.offset;
-      const known = have.get(e.eventId);
-      if (local - PRE * 1000 < since || Date.now() - local > RELAY_MAX_AGE_MS) return;
-      if (known && known.status !== 'UNAVAILABLE') return;
-      relayPoint({ eventId: e.eventId, type: 'RALLY', at: e.at, winner: e.team }, e);
+  let syncTimer = null;
+  function resync() {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(async () => {
+      if (!C.socket || !C.connected) return;
+      const r = await VB.ack(C.socket, 'vb:sync', { matchId: C.matchId });
+      if (r.ok) { C.match = Object.assign(C.match, r.match); C.L = new E.Ledger(setupOf(C.match), r.events || []); if (C.CL) C.CL.reconcile(); paint(); }
+    }, 120);
+  }
+  const teamOf = (t) => (C.match && C.match['team' + t]) || { name: 'Team ' + t };
+  const short = (name) => { const w = String(name || '').trim().split(/\s+/); return w.length > 1 ? w[0][0] + '. ' + w[w.length - 1] : (name || ''); };
+  let raf = 0;
+  function paint() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const el = $('#clp');
+      if (!el || !C.CL) return;
+      VBClipper.paint(C.CL, el, { teamOf, short, canAssign: false, onPlay: (eventId) => VBClipper.play(C.CL, eventId, teamOf) });
+      renderChips();
+      const o = VB.clock.offset, rtt = VB.clock.rtt;
+      $('#clock').textContent = (rtt == null ? 'The server clock is not measured yet.' : `Points scored on another device are converted to this PC’s clock: it is ${Math.abs(o) < 50 ? 'in step with' : (Math.abs(o) / 1000).toFixed(2) + ' s ' + (o > 0 ? 'behind' : 'ahead of')} the server (measured to ±${Math.round(rtt / 2)} ms).`)
+        + ' Assign who earned each point in the scoring panel — the clip follows it.';
     });
   }
-  async function relayPoint(ev, entry) {
-    if (C.fired.has(ev.eventId)) return;
-    C.fired.add(ev.eventId);
-    const t0 = Math.round(ev.at - VB.clock.offset);           // the press, on this PC's clock
-    if (!Number.isFinite(t0) || Date.now() - t0 > RELAY_MAX_AGE_MS) return;
-    const clipId = `${C.matchId}_${ev.eventId}`;
-    const team = ev.winner;
-    const score = entry && entry.after ? entry.after.score : null;
-    const set = entry && entry.after ? entry.after.set : null;
-    const meta = { sport: 'volleyball', vbClipToken: C.match.clipToken, eventId: ev.eventId, tournamentId: C.match.tournamentId, set, pointNo: entry ? entry.pointNo : null,
-      team, teamName: C.match['team' + team] ? C.match['team' + team].name : team, score, relay: true };
-    let status = 'REQUESTED', error = null;
-    try {
-      const r = await post('/clip', { matchId: C.matchId, eventType: 'VBPOINT', timestamp: t0, clipId, sport: 'volleyball', preRollSec: PRE, postRollSec: POST, ballMeta: meta }, 3000);
-      if (!r.success) { status = 'UNAVAILABLE'; error = r.error || 'The Stream Engine refused the clip'; }
-    } catch (e) { status = 'UNAVAILABLE'; error = 'The Stream Engine is not reachable on the clipper PC'; }
-    C.relayed += 1;
-    await api('POST', `/api/volleyball/matches/${C.matchId}/clips`, { clipId, eventId: ev.eventId, status, error, t0: ev.at, preRollSec: PRE, postRollSec: POST, team,
-      scoreAtTrigger: score ? Object.assign({ set }, score) : undefined, engine: 'stream-engine', sourceSessionId: 'clipper:' + VB.deviceId() });
-    refreshClipsSoon();
-    if (status === 'REQUESTED') pollJobs();
-  }
-
-  /* =============================== clip jobs (local) + clips (server) */
-  let jobsTimer = null;
-  async function pollJobs() {
-    clearTimeout(jobsTimer);
-    let active = false;
-    try {
-      const r = await engineFetch('/clip-jobs', null, 3000);
-      for (const j of (r.jobs || []).filter((x) => x.matchId === C.matchId)) {
-        const before = C.jobs.get(j.clipId);
-        C.jobs.set(j.clipId, j);
-        if (['WAITING_FOR_POSTROLL', 'CUTTING', 'PROCESSING', 'FORWARDING', 'RETRY_PENDING'].includes(j.status)) active = true;
-        // the website cannot see this PC: tell it how the cut is going
-        if (!before || before.status !== j.status) {
-          const known = C.clips.find((x) => x.clipId === j.clipId);
-          if (known) api('POST', `/api/volleyball/clips/${encodeURIComponent(j.clipId)}/local`, { status: j.status, error: j.error || null });
-        }
-      }
-      renderClips();
-    } catch (e) { /* engine not running — its card says so */ }
-    jobsTimer = setTimeout(pollJobs, active ? 1500 : 6000);
-  }
-  let clipsTimer = null;
-  function refreshClipsSoon() { clearTimeout(clipsTimer); clipsTimer = setTimeout(refreshClips, 400); }
-  async function refreshClips() {
-    const r = await api('GET', `/api/volleyball/matches/${C.matchId}/clips`);
-    if (r.ok) { C.clips = r.json.clips || []; renderClips(); }
-  }
-
-  /* =============================== rendering */
   function renderTitle() {
     const m = C.match; if (!m) return;
-    $('#title').innerHTML = `${esc(m.teamA ? m.teamA.name : 'TBD')} v ${esc(m.teamB ? m.teamB.name : 'TBD')}<small>${esc([C.tournament && C.tournament.name, m.matchNo ? 'Match ' + m.matchNo : '', 'Clips: ' + PRE + ' s before + ' + POST + ' s after each point'].filter(Boolean).join(' · '))}</small>`;
+    $('#title').innerHTML = `${esc(m.teamA ? m.teamA.name : 'TBD')} v ${esc(m.teamB ? m.teamB.name : 'TBD')}<small>${esc([C.tournament && C.tournament.name, m.matchNo ? 'Match ' + m.matchNo : '', 'Clips every point from this PC’s vMix recording'].filter(Boolean).join(' · '))}</small>`;
     document.title = `${m.teamA ? m.teamA.shortName : ''} v ${m.teamB ? m.teamB.shortName : ''} · Volleyball Clipper`;
   }
   function renderChips() {
-    const rs = recState();
-    $('#chips').innerHTML = (C.connected ? '<span class="chip"><span class="dot ok"></span>Website</span>' : '<span class="chip"><span class="dot bad"></span>Website offline</span>')
-      + (C.engine.ok ? `<span class="chip"><span class="dot ${rs.mine ? 'ok' : 'wait'}"></span>${rs.mine ? 'Recording' : 'Engine · not recording'}</span>` : '<span class="chip"><span class="dot bad"></span>No Stream Engine</span>');
+    const conn = C.connected ? '<span class="chip"><span class="dot ok"></span>Live</span>' : '<span class="chip"><span class="dot bad"></span>Offline</span>';
+    $('#chips').innerHTML = (C.CL ? VBClipper.chip(C.CL) : '') + conn;
+    const c = $('#clpChip'); if (c) c.onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
   }
-  function renderShell() {
-    $('#main').innerHTML = `<div class="cols">
-      <div class="stack">
-        <div class="card" id="engineCard"></div>
-        <div class="card"><h3>Points from another device</h3>
-          <div class="row" style="margin-top:10px"><div class="grow small">Clip points scored on a phone or tablet (the panel there cannot reach this PC’s engine). Each press is converted from the server’s clock to this PC’s.</div><button class="switch" id="relay" role="switch" aria-checked="${C.relay}" aria-label="Clip points from another device"></button></div>
-          <p class="tiny muted" style="margin-top:8px" id="clock"></p></div>
-      </div>
-      <div class="stack">
-        <div class="card" style="padding:0;overflow:hidden">
-          <div class="row" style="padding:14px 16px"><h3 class="grow">Point clips</h3><span class="small muted" id="clipCount"></span><a class="btn sm" href="/volleyball/match/${esc(C.matchId)}" target="_blank" rel="noopener">Scorecard ↗</a></div>
-          <div id="clips" class="list" style="border-radius:0;box-shadow:none;border-top:1px solid var(--line)"></div>
-        </div>
-      </div></div>`;
-    $('#relay').onclick = () => { C.relay = !C.relay; VB.store.set('vb_clip_relay', C.relay); $('#relay').setAttribute('aria-checked', C.relay); if (C.relay) catchUp(); };
-    renderClock(); renderEngine(); renderClips();
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) listCameras(false);
-  }
-  function renderClock() {
-    const el = $('#clock'); if (!el) return;
-    const o = VB.clock.offset, rtt = VB.clock.rtt;
-    el.textContent = rtt == null ? 'Server clock not measured yet.' : `This PC’s clock is ${Math.abs(o) < 50 ? 'in step with' : (Math.abs(o) / 1000).toFixed(2) + ' s ' + (o > 0 ? 'behind' : 'ahead of')} the server (measured to ±${Math.round(rtt / 2)} ms).${C.relayed ? ` ${C.relayed} point${C.relayed === 1 ? '' : 's'} relayed.` : ''}`;
-  }
-  let engineKey = '';
-  function renderEngine() {
-    const el = $('#engineCard'); if (!el) return;
-    // redrawn only when something that matters changed (a redraw closes an open list)
-    const s0 = C.engine.status || {}, r0 = s0.recorder || {};
-    const key = JSON.stringify([C.engine.ok, recState().mine, recState().other, r0.matchId, r0.lastError, s0.ffmpegAvailable, s0.nativeProgramFeed, s0.platform, C.engine.audio, C.engine.video, C.cams, C.launched, C.preview, C.prefs]);
-    if (key === engineKey) return renderEngineFigures();
-    engineKey = key;
-    if (C.engine.ok === null) { el.innerHTML = '<h3>Stream Engine</h3><div class="skel" style="height:60px;margin-top:10px"></div>'; return; }
-    if (!C.engine.ok) {
-      el.innerHTML = `<h3>Stream Engine</h3><div class="big-status" style="margin-top:10px"><span class="dot bad"></span>Not running on this PC</div>
-        <p class="small muted" style="margin-top:10px">Clips are cut on the PC that records. Start the Stream Engine here (<b>stream-engine\\start.bat</b>, or <code>npm start</code> in the <code>stream-engine</code> folder) — it listens on 127.0.0.1:5006, which only this PC can reach.</p>
-        <div class="foot" style="justify-content:flex-start"><button class="btn" id="retry">Check again</button></div>`;
-      $('#retry').onclick = () => pollEngine(true);
-      return;
-    }
-    const st = C.engine.status || {}, rs = recState(), rec = rs.rec || {}, p = C.prefs;
-    const opt = (list, cur) => list.map((x) => `<option ${x === cur ? 'selected' : ''}>${esc(x)}</option>`).join('');
-    const nat = native();
-    el.innerHTML = `<h3>Stream Engine</h3>
-      <div class="big-status" style="margin-top:10px"><span class="dot ${rs.mine ? 'ok' : rs.other ? 'bad' : 'wait'}"></span>${rs.mine ? 'Recording this match' : rs.other ? 'Recording ANOTHER match' : 'Running · not recording this match'}</div>
-      ${rs.other ? `<div class="banner warn" style="margin-top:10px">The recorder is busy with match ${esc(rec.matchId)}. Starting here stops that recording first.</div>` : ''}
-      ${rec.lastError ? `<div class="banner bad" style="margin-top:10px">${esc(rec.lastError)}</div>` : ''}
-      ${st.ffmpegAvailable === false ? '<div class="banner bad" style="margin-top:10px">ffmpeg is missing — clips cannot be cut. See stream-engine/bin/README.md.</div>' : ''}
-      <div class="kv" style="margin-top:12px"><span>Recording</span><span id="recFig"></span>
-        <span>Disk</span><span id="diskFig"></span><span>Capture</span><span>${nat ? 'Native program feed (camera + overlay in the engine)' : 'Live Output window (camera + volleyball overlay)'}</span>
-        <span>Platform</span><span>${esc(st.platform || '')}${st.nativeCaptureSupported === false ? ' — recording needs Windows' : ''}</span></div>
-      <div class="section-title">Set up</div>
-      <div class="steps">
-        ${nat ? `<div><div class="field"><span>Camera (capture device)</span><select class="input" id="ncam"><option value="">Choose…</option>${opt(C.engine.video, p.nativeCamera)}</select></div></div>`
-          : `<div class="${C.launched ? 'ok' : ''}"><div class="stack" style="gap:8px"><div class="field"><span>Camera for the Live Output window</span><select class="input" id="cam"><option value="">Default camera</option>${C.cams.map((c) => `<option value="${esc(c.id)}" data-label="${esc(c.label)}" ${c.id === p.cameraId || (c.label && c.label === p.cameraLabel) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
-              <div class="row wrapr"><button class="btn sm" id="cams">${C.cams.length ? 'Refresh cameras' : 'List cameras'}</button><button class="btn sm primary" id="lo">Open Live Output window</button></div></div></div>`}
-        <div><div class="stack" style="gap:8px"><div class="grid2"><div class="field"><span>Audio device</span><select class="input" id="aud"><option value="">Choose…</option>${opt(C.engine.audio, p.audio)}</select></div>
-          <div class="field"><span>Quality</span><select class="input" id="res">${['1080p', '720p'].map((x) => `<option ${x === p.resolution ? 'selected' : ''}>${x}</option>`).join('')}</select></div></div>
-          <div class="field"><span>Video mode</span><select class="input" id="vm">${['25p', '50p', '50i', '30p', '60p'].map((x) => `<option ${x === p.videoMode ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-          ${!C.engine.audio.length ? '<p class="tiny muted">The engine lists no audio device on this PC — the recording needs one (Windows dshow).</p>' : ''}</div></div>
-        <div class="${rs.mine ? 'ok' : ''}"><div class="row wrapr">${rs.mine ? '<button class="btn danger" id="recStop">Stop recording</button>' : '<button class="btn green" id="recStart">Start recording this match</button>'}<button class="btn sm ghost" id="pv">${C.preview ? 'Hide preview' : 'Preview'}</button></div></div>
-      </div>
-      ${C.preview ? `<img class="preview" id="pvImg" alt="What the engine records" style="margin-top:12px">` : ''}`;
-    const bind = (id, k, label) => { const s = $('#' + id); if (s) s.onchange = () => { C.prefs[k] = s.value; if (label) C.prefs.cameraLabel = s.selectedOptions[0] && s.selectedOptions[0].dataset.label || ''; savePrefs(); }; };
-    bind('aud', 'audio'); bind('res', 'resolution'); bind('vm', 'videoMode'); bind('ncam', 'nativeCamera'); bind('cam', 'cameraId', true);
-    if ($('#cams')) $('#cams').onclick = () => listCameras(true);
-    if ($('#lo')) $('#lo').onclick = openLiveOutput;
-    if ($('#recStart')) $('#recStart').onclick = startRecording;
-    if ($('#recStop')) $('#recStop').onclick = stopRecording;
-    $('#pv').onclick = () => { C.preview = !C.preview; renderEngine(); if (C.preview) refreshPreview(); };
-    if (C.preview) refreshPreview(true);
-    renderEngineFigures();
-  }
-  // the figures that change every few seconds, in place
-  function renderEngineFigures() {
-    const rec = recState().rec || {};
-    const size = rec.sizeBytes ? (rec.sizeBytes / 1048576).toFixed(0) + ' MB' : '–';
-    const d = rec.durationSec;
-    const dur = d ? `${Math.floor(d / 3600)}:${String(Math.floor(d / 60) % 60).padStart(2, '0')}:${String(d % 60).padStart(2, '0')}` : '–';
-    const free = C.engine.info && C.engine.info.diskFreeBytes ? (C.engine.info.diskFreeBytes / 1073741824).toFixed(1) + ' GB free' : '–';
-    const parts = rec.segmentCount ? `${rec.segmentCount} part${rec.segmentCount === 1 ? '' : 's'}` : '';
-    const live = rec.state === 'recording' || rec.state === 'starting';
-    if ($('#recFig')) $('#recFig').textContent = live ? [dur, size, parts].filter((x) => x && x !== '–').join(' · ') || 'Starting…' : `Not recording${rec.matchId && rec.matchId === C.matchId && parts ? ` (${parts} of this match on disk)` : ''}`;
-    if ($('#diskFig')) $('#diskFig').textContent = free;
-  }
-  let pvTimer = null;
-  function refreshPreview(keep) {
-    clearTimeout(pvTimer);
-    const img = $('#pvImg'); if (!img || !C.preview) return;
-    if (!keep || !img.src) img.src = `${ENGINE}/capture-preview?matchId=${encodeURIComponent(C.matchId)}&t=${Date.now()}`;
-    img.onerror = () => { img.alt = 'No picture yet — open the Live Output window / start recording'; };
-    pvTimer = setTimeout(() => { if ($('#pvImg')) $('#pvImg').src = `${ENGINE}/capture-preview?matchId=${encodeURIComponent(C.matchId)}&t=${Date.now()}`; refreshPreview(true); }, 3000);
-  }
-  const LOCAL_TEXT = { WAITING_FOR_POSTROLL: 'Waiting for post-roll', CUTTING: 'Processing', PROCESSING: 'Processing', LOCAL_SAVED: 'Saved locally', LOCAL_ONLY: 'Saved locally', FORWARDING: 'Uploading', RETRY_PENDING: 'Upload pending', COMPLETE: 'Upload complete', FAILED_PERMANENT: 'Failed' };
-  function statusOf(clip) {
-    const job = C.jobs.get(clip.clipId);
-    // the website's word is final once it has the file; before that, this PC knows best
-    if (job && ['REQUESTED', 'UNAVAILABLE'].includes(clip.status) && LOCAL_TEXT[job.status]) return LOCAL_TEXT[job.status];
-    return clip.displayStatus;
-  }
-  function badgeClass(t) {
-    if (/complete|saved on the website/i.test(t)) return 'done';
-    if (/fail|unavailable/i.test(t)) return 'live';
-    if (/saved locally/i.test(t)) return '';
-    return 'warn';
-  }
-  function playerName(pid) {
-    for (const s of ['A', 'B']) { const p = ((C.match.squads || {})[s] || []).find((x) => x.playerId === pid); if (p) return `#${p.number} ${p.name}`; }
-    return 'Unknown player';
-  }
-  function renderClips() {
-    const el = $('#clips'); if (!el || !C.match) return;
-    const list = C.clips.slice().sort((a, b) => (b.set || 0) - (a.set || 0) || (b.pointNo || 0) - (a.pointNo || 0) || (b.createdAt || 0) - (a.createdAt || 0));
-    $('#clipCount').textContent = list.length ? `${list.length} clip${list.length === 1 ? '' : 's'}` : '';
-    if (!list.length) { el.innerHTML = '<div class="empty"><b>No point clips yet</b>Each point scored while this match records gets a 10-second clip.</div>'; return; }
-    el.innerHTML = list.map((c) => {
-      const t = statusOf(c), team = c.team ? C.match['team' + c.team] : null;
-      const sc = c.scoreNow || (c.scoreAtTrigger ? { A: c.scoreAtTrigger.A, B: c.scoreAtTrigger.B } : null);
-      const job = C.jobs.get(c.clipId);
-      const short = c.actual && c.actual.partialPreRoll ? `<span class="badge warn" title="The recording began less than ${PRE} s before the press">Only ${esc(c.actual.preRollSec)} s before the press</span>` : '';
-      const canRetry = /fail|pending/i.test(t) && c.status !== 'UNAVAILABLE';
-      return `<div class="clip ${c.eventVoided ? 'voided' : ''}" data-id="${esc(c.clipId)}">
-        <div class="pt"><b>${sc ? `${sc.A}–${sc.B}` : '–'}</b><small>${c.set ? 'Set ' + c.set : ''}${c.pointNo ? ' · Pt ' + c.pointNo : ''}</small></div>
-        <div style="min-width:0"><div class="row wrapr" style="gap:6px"><span class="badge ${badgeClass(t)}">${esc(t)}</span>${short}${c.eventVoided ? '<span class="badge">Point undone</span>' : ''}
-          ${team ? `<span class="small"><span class="team-dot" style="background:${esc(VB.teamColor(team))}"></span>${esc(team.name)}</span>` : ''}${c.actual && c.actual.durationSec ? `<span class="small muted">${esc(c.actual.durationSec)} s</span>` : ''}</div>
-          <div class="who ellipsis">${c.players.length ? c.players.map((p) => esc(playerName(p.playerId)) + ` <span class="tiny">(${esc(p.role)})</span>`).join(', ') : 'No player linked — add the scorer in the panel or link one here'}</div>
-          ${c.error || (job && job.error) ? `<div class="tiny" style="color:var(--red);margin-top:3px">${esc(c.error || job.error)}</div>` : ''}</div>
-        <div class="acts">${c.watchUrl ? '<button class="btn xs" data-play>▶ Play</button>' : ''}<button class="btn xs" data-link>Players</button>${canRetry ? '<button class="btn xs" data-retry>Retry</button>' : ''}</div></div>`;
-    }).join('');
-    $$('[data-play]', el).forEach((b) => b.onclick = () => play(clipOf(b)));
-    $$('[data-link]', el).forEach((b) => b.onclick = () => linkSheet(clipOf(b)));
-    $$('[data-retry]', el).forEach((b) => b.onclick = async () => { const c = clipOf(b); const r = await api('POST', `/api/volleyball/clips/${encodeURIComponent(c.clipId)}/retry`); toast(r.ok ? 'Retrying the upload' : (r.json.error || 'Could not retry'), r.ok ? '' : 'err'); refreshClipsSoon(); });
-  }
-  const clipOf = (b) => C.clips.find((x) => x.clipId === b.closest('[data-id]').dataset.id);
-  function play(c) {
-    if (!c) return;
-    // a video request carries no sign-in header: the match key opens a private match's clip
-    const src = c.watchUrl + (C.match.overlayKey ? '?key=' + encodeURIComponent(C.match.overlayKey) : '');
-    VB.sheet(`<h3>Set ${esc(c.set || '')} · point ${esc(c.pointNo || '')}</h3><video class="player" controls autoplay playsinline preload="metadata" src="${esc(src)}" style="margin-top:12px"></video>
-      <div class="foot"><a class="btn" href="${esc(src + (src.includes('?') ? '&' : '?') + 'download=1')}">Download</a><button class="btn primary" data-close>Close</button></div>`, { wide: true });
-  }
-  function linkSheet(c) {
-    if (!c) return;
-    const derived = new Set(c.players.filter((p) => p.source === 'point').map((p) => p.playerId));
-    const manual = new Set(c.players.filter((p) => p.source === 'manual').map((p) => p.playerId));
-    const side = (s) => `<div class="section-title">${esc(C.match['team' + s] ? C.match['team' + s].name : 'Team ' + s)}</div>` + ((C.match.squads || {})[s] || []).map((p) => {
-      const on = derived.has(p.playerId) || manual.has(p.playerId);
-      return `<label class="pick"><input type="checkbox" data-pid="${esc(p.playerId)}" ${on ? 'checked' : ''}><span class="grow">#${esc(p.number)} ${esc(p.name)}</span>${derived.has(p.playerId) ? '<span class="badge">from the point</span>' : ''}</label>`;
-    }).join('');
-    const sh = VB.sheet(`<h3>Players in this clip</h3><p class="small muted" style="margin-top:6px">The players named in the point come from the scoring; add anyone else the clip shows (they get it under their video icon), or take one off.</p>
-      <div class="grid2" style="margin-top:6px"><div>${side('A')}</div><div>${side('B')}</div></div>
-      <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="save">Save</button></div>`, { wide: true });
-    $('#save', sh.el).onclick = async () => {
-      const links = [], unlinked = [];
-      $$('[data-pid]', sh.el).forEach((i) => {
-        const id = i.dataset.pid;
-        if (i.checked && !derived.has(id)) links.push({ playerId: id, role: 'linked' });
-        if (!i.checked && derived.has(id)) unlinked.push(id);
-      });
-      const r = await api('POST', `/api/volleyball/clips/${encodeURIComponent(c.clipId)}/players`, { links, unlinked });
-      if (!r.ok) return toast(r.json.error || 'Not saved', 'err');
-      sh.close(); toast('Saved'); refreshClips();
-    };
-  }
-
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { pollEngine(); refreshClips(); } });
+  window.__vbClipper = C;   // test hook
   VB.on('auth', (u) => { if (!u) gate('Signed out', 'Sign in again to keep clipping.', true); });
   boot();
 })();

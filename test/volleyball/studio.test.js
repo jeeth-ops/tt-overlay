@@ -11,6 +11,15 @@
      • a team's colours saved here reach the live overlay at once
      • the panel: the on-air chip counts down, its sheet takes / dismisses,
        the links sheet never grows sideways (screenshot 1 of the report)
+     • ON AIR is the outputs' word: with no programme output (the studio's
+       own monitor does not count) the studio says nothing shows it; a
+       card goes "Taking to air…" → "● ON AIR" only once a real output
+       (a vMix-like overlay page) has it up
+     • the live overlay by hand, from the studio and from the panel: take
+       the score bar off air (a point does not bring it back), the corner
+       bug on air, hide everything / restore, Automatic again — each
+       checked on the real output page
+     • the time on screen: 10 s ends by itself; an unavailable card says why
      • no page error; no sideways scrolling at desktop or phone width
 
      NODE_PATH=$(npm root -g) node test/volleyball/studio.test.js
@@ -45,6 +54,7 @@ function call(port, method, url, { json, token, headers } = {}) {
   });
 }
 const U = { uid: 'u-work', email: 'workallsportslive@gmail.com', email_verified: true };
+async function until(fn, ms) { const end = Date.now() + (ms || 8000); while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(60); } return null; }
 const FAKE_FIREBASE = `(function(){
   if (window.firebase) return;
   var u = window.__fakeUser || null;
@@ -115,7 +125,8 @@ const FAKE_FIREBASE = `(function(){
     await page.click('#take');
     ok('Take to air: the real overlay shows it', await pg().waitForFunction(() => window.__vbOverlay.state === 'GRAPHIC_VISIBLE' && window.__vbOverlay.onAir.scene === 'lineup', null, { timeout: 15000 }).then(() => true, () => false));
     ok('…the server says so', (await api('GET', `/api/volleyball/matches/${M.matchId}`)).json.match.graphic.scene === 'lineup');
-    ok('…and the studio marks it ON AIR with its time left', await page.waitForFunction(() => /ON AIR · Starting six/.test(document.querySelector('#airBox').textContent) && /\d+ s/.test(document.querySelector('#airBox').textContent), null, { timeout: 8000 }).then(() => true, () => false));
+    ok('…and the studio marks it on air with its time left', await page.waitForFunction(() => /Starting six.*is on air/.test(document.querySelector('#airBox').textContent) && /\d+ s/.test(document.querySelector('#airBox').textContent), null, { timeout: 8000 }).then(() => true, () => false));
+    ok('…saying that no programme output shows it — its own ON AIR monitor does not count', /No overlay output is connected/.test(await page.textContent('#airBox')) && /1 monitor \(not counted\)/.test(await page.textContent('#airBox')) && /monitor=1/.test(await page.getAttribute('#pgFrame', 'src')), await page.textContent('#airBox'));
     await page.screenshot({ path: path.join(OUT, 'studio-onair.png') });
     await page.click('#airBox [data-a="stop"]');
     ok('Dismiss: the live score returns on air', await air(pg(), 'OVERLAY_VISIBLE'));
@@ -151,6 +162,35 @@ const FAKE_FIREBASE = `(function(){
     await page.$eval(`${cardA} [data-c="primary"]`, (e) => { e.value = '#16a34a'; e.dispatchEvent(new Event('input', { bubbles: true })); });
     await page.click(`${cardA} [data-save]`);
     ok('a team colour saved here reaches the live overlay at once', await pg().waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--ca').trim() === 'rgb(22,163,74)', null, { timeout: 8000 }).then(() => true, () => false));
+    head('THE STUDIO — THE LIVE OVERLAY BY HAND, on a real output');
+    // a programme output, like vMix: the overlay link in a window of its own
+    let { ctx: progCtx, page: prog } = await open(`/volleyball-overlay?match=${M.matchId}`, { signedIn: false, viewport: { width: 1920, height: 1080 } });
+    const progAir = (st) => prog.waitForFunction((x) => window.__vbOverlay && window.__vbOverlay.state === x, st, { timeout: 12000 }).then(() => true, () => false);
+    ok('the output shows the score bar', await progAir('OVERLAY_VISIBLE'));
+    ok('the studio: "Live score bar is on air" — from that output', await page.waitForFunction(() => /Live score bar is on air/.test(document.querySelector('#airBox').textContent) && document.querySelector('#airBox .airbox.k-live'), null, { timeout: 10000 }).then(() => true, () => false), await page.textContent('#airBox'));
+    ok('…its card: ● ON AIR · Automatic', /● ON AIR · Automatic/.test(await page.textContent('.tpl[data-k="bar"] .st')), await page.textContent('.tpl[data-k="bar"] .st'));
+    await page.click('.tpl[data-k="bar"]');
+    await page.click('#selAct #lvOff');
+    ok('TAKE OFF AIR from the studio: the output takes the bar off', await progAir('IDLE'));
+    ok('…the card says OFF AIR, the mode Manual', await page.waitForFunction(() => /OFF AIR/.test(document.querySelector('.tpl[data-k="bar"] .st').textContent) && document.querySelector('#oMode [data-m="manual"]').getAttribute('aria-pressed') === 'true', null, { timeout: 8000 }).then(() => true, () => false));
+    ok('…and the server keeps it', (await api('GET', `/api/volleyball/matches/${M.matchId}`)).json.match.graphic.live.layout === null);
+    await ev({ type: 'RALLY', winner: 'B', outcome: 'GENERAL' });
+    await sleep(1500);
+    ok('…a point scored does not bring it back', (await prog.evaluate(() => window.__vbOverlay.state)) === 'IDLE');
+    await page.click('.tpl[data-k="compact"]');
+    await page.click('#selAct #lvOn');
+    ok('TAKE ON AIR the corner bug: the output shows the corner bug', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'compact', null, { timeout: 12000 }).then(() => true, () => false));
+    ok('…the studio\'s ON AIR monitor shows the same', await pg().waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'compact', null, { timeout: 12000 }).then(() => true, () => false));
+    ok('…its card: ● ON AIR · Manual', await page.waitForFunction(() => /● ON AIR · Manual/.test(document.querySelector('.tpl[data-k="compact"] .st').textContent), null, { timeout: 8000 }).then(() => true, () => false), await page.textContent('.tpl[data-k="compact"] .st'));
+    await page.screenshot({ path: path.join(OUT, 'studio-live-corner.png') });
+    await page.click('#airBox [data-a="clean"]');
+    ok('HIDE EVERYTHING: the output shows nothing', await progAir('IDLE'));
+    ok('…"Everything is hidden" with Restore live overlay', await page.waitForFunction(() => /Everything is hidden/.test(document.querySelector('#airBox').textContent) && document.querySelector('#airBox [data-a="live"]'), null, { timeout: 8000 }).then(() => true, () => false));
+    await page.click('#airBox [data-a="live"]');
+    ok('RESTORE LIVE OVERLAY: the corner bug again', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'compact', null, { timeout: 12000 }).then(() => true, () => false));
+    await page.click('#oMode [data-m="auto"]');
+    ok('AUTOMATIC: the tournament\'s score bar again', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'bar', null, { timeout: 15000 }).then(() => true, () => false));
+
     ok('no sideways scrolling (desktop)', await noSideways(page));
     await page.setViewportSize({ width: 390, height: 844 });
     await sleep(400);
@@ -166,11 +206,76 @@ const FAKE_FIREBASE = `(function(){
     await page.waitForSelector('#gfxBody .gtile', { timeout: 8000 });
     await page.click('#gfxDur button[data-v="hold"]');
     await page.click('#gfxBody [data-t="intro"]');
-    ok('take from the panel: ON AIR in its sheet', await page.waitForFunction(() => /ON AIR · Match intro/.test(document.querySelector('#gfxAir').textContent), null, { timeout: 8000 }).then(() => true, () => false));
-    ok('…held (no count-down)', /Held until you dismiss it/.test(await page.textContent('#gfxAir')));
+    ok('take from the panel: ON AIR in its sheet (the output has it up)', await page.waitForFunction(() => /Match intro is on air/.test(document.querySelector('#gfxAir').textContent) && document.querySelector('#gfxAir .airbox.k-on'), null, { timeout: 12000 }).then(() => true, () => false), await page.textContent('#gfxAir'));
+    ok('…held (no count-down)', /held until dismissed/.test(await page.textContent('#gfxAir')));
     ok('…and on the chip', /On air · Match intro · hold/.test(await page.textContent('#air')));
+    ok('…its card says ● ON AIR, with a Take off', /● ON AIR/.test(await page.textContent('.gtile[data-sc="intro"]')) && !!(await page.$('.gtile[data-sc="intro"] [data-off]')));
+    await page.click('.gtile[data-sc="intro"] .gmain');
+    ok('…pressing it again does not take it twice ("already on air")', await page.waitForSelector('.toast:has-text("already on air")', { timeout: 5000 }).then(() => true, () => false));
     await page.click('#gfxAir [data-a="stop"]');
-    ok('dismissed: back to live', await page.waitForFunction(() => /live score is on air/.test(document.querySelector('#gfxAir').textContent), null, { timeout: 8000 }).then(() => true, () => false));
+    ok('dismissed: back to live', await page.waitForFunction(() => /Live score bar is on air/.test(document.querySelector('#gfxAir').textContent), null, { timeout: 12000 }).then(() => true, () => false), await page.textContent('#gfxAir'));
+    ok('…on the real output too', await progAir('OVERLAY_VISIBLE'));
+
+    // time on screen: 10 s — "Taking to air…" first, ● ON AIR once the output has it, then it goes by itself
+    await page.click('#gfxDur button[data-v="10"]');
+    await page.evaluate(() => { window.__tossSeq = []; setInterval(() => { const t = document.querySelector('.gtile[data-sc="toss"]'); const k = t ? (t.className.match(/s-(\w+)/) || [])[1] : null; if (k && window.__tossSeq[window.__tossSeq.length - 1] !== k) window.__tossSeq.push(k); }, 30); });
+    await page.click('.gtile[data-sc="toss"] .gmain');
+    ok('TIME ON SCREEN 10 s: the toss is taken for 10 s', await until(async () => { const gg = (await api('GET', `/api/volleyball/matches/${M.matchId}`)).json.match.graphic; return gg.scene === 'toss' && gg.durationSec === 10; }));
+    ok('…on the real output', await prog.waitForFunction(() => window.__vbOverlay.state === 'GRAPHIC_VISIBLE' && window.__vbOverlay.onAir.scene === 'toss', null, { timeout: 12000 }).then(() => true, () => false));
+    await page.waitForFunction(() => document.querySelector('.gtile[data-sc="toss"].s-on'), null, { timeout: 8000 }).catch(() => {});
+    const seq1 = await page.evaluate(() => window.__tossSeq.slice());
+    ok('…its card: Taking to air → ● ON AIR (never ON AIR before the output had it)', seq1.indexOf('taking') >= 0 && seq1.indexOf('on') > seq1.indexOf('taking'), seq1);
+    ok('…counting down', /\d+ s left/.test(await page.textContent('.gtile[data-sc="toss"]')));
+    ok('…and it goes by itself after its 10 s — the bar back on the output', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE', null, { timeout: 20000 }).then(() => true, () => false));
+    ok('…the card ready again', await page.waitForFunction(() => document.querySelector('.gtile[data-sc="toss"].s-ready'), null, { timeout: 8000 }).then(() => true, () => false), await page.evaluate(() => window.__tossSeq.slice()));
+    await page.click('#gfxDur button[data-v="hold"]');
+    ok('an unavailable card says why (no time-out running) and takes nothing', !!(await page.$('.gtile.s-na[data-sc="timeout"]')));
+    await page.click('.gtile[data-sc="timeout"] .gmain', { force: true });   // aria-disabled: a person can still press it
+    ok('…pressed: the reason, nothing on air', await page.waitForSelector('.toast:has-text("time-out")', { timeout: 5000 }).then(() => true, () => false) && (await api('GET', `/api/volleyball/matches/${M.matchId}`)).json.match.graphic.scene === null);
+
+    // the player card: the last point's credited player, else the roster
+    await page.click('.gtile[data-sc="playerStat"] .gmain');
+    ok('PLAYER CARD with nobody credited for the last point: it asks for the player (the roster below)', await page.waitForSelector('.toast:has-text("Choose the player")', { timeout: 5000 }).then(() => true, () => false) && (await api('GET', `/api/volleyball/matches/${M.matchId}`)).json.match.graphic.scene === null);
+    const killer = A.players.find((p) => p.playerId === six(A)[2]);
+    await ev({ type: 'RALLY', winner: 'A', outcome: 'ATTACK_KILL', players: { attacker: killer.playerId } });
+    ok('…a named kill: the card offers that player', await page.waitForFunction((n) => document.querySelector('.gtile[data-sc="playerStat"]').textContent.includes('Last point: #' + n), killer.number, { timeout: 8000 }).then(() => true, () => false), await page.textContent('.gtile[data-sc="playerStat"]'));
+    await page.click('.gtile[data-sc="playerStat"] .gmain');
+    ok('…pressed: that player\'s card on the real output', await prog.waitForFunction((pid) => window.__vbOverlay.state === 'GRAPHIC_VISIBLE' && window.__vbOverlay.onAir.scene === 'playerStat' && window.__vbOverlay.onAir.data.playerId === pid, killer.playerId, { timeout: 12000 }).then(() => true, () => false));
+    await page.click('#gfxAir [data-a="stop"]');
+    ok('…dismissed', await progAir('OVERLAY_VISIBLE'));
+
+    head('THE PANEL — THE LIVE OVERLAY BY HAND');
+    const lvst = (lay) => page.textContent(`#gfxLive .lvcard[data-lay="${lay}"] .lvst`);
+    ok('the score bar card: ● ON AIR (the output has it up) · the corner bug: OFF AIR', await page.waitForFunction(() => /^● ON AIR$/.test(document.querySelector('#gfxLive .lvcard[data-lay="bar"] .lvst').textContent), null, { timeout: 8000 }).then(() => true, () => false) && /OFF AIR/.test(await lvst('compact')), [await lvst('bar'), await lvst('compact')]);
+    await page.screenshot({ path: path.join(OUT, 'studio-panel-live.png') });
+    await page.click('#gfxLive [data-lv="off"][data-lay="bar"]');
+    ok('TAKE OFF AIR the score bar: the output takes it off', await progAir('IDLE'));
+    ok('…the card says OFF AIR, Manual', await page.waitForFunction(() => /OFF AIR/.test(document.querySelector('#gfxLive .lvcard[data-lay="bar"] .lvst').textContent) && document.querySelector('#lvMode [data-m="manual"]').getAttribute('aria-pressed') === 'true', null, { timeout: 8000 }).then(() => true, () => false));
+    await ev({ type: 'RALLY', winner: 'A', outcome: 'GENERAL' });
+    await sleep(1500);
+    ok('…a point scored does not bring it back', (await prog.evaluate(() => window.__vbOverlay.state)) === 'IDLE');
+    await page.click('#gfxLive [data-lv="on"][data-lay="compact"]');
+    ok('TAKE ON AIR the corner bug: the output shows the corner bug', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'compact', null, { timeout: 12000 }).then(() => true, () => false));
+    ok('…its card ● ON AIR', await page.waitForFunction(() => /^● ON AIR$/.test(document.querySelector('#gfxLive .lvcard[data-lay="compact"] .lvst').textContent), null, { timeout: 8000 }).then(() => true, () => false), await lvst('compact'));
+    await page.reload();
+    await page.waitForSelector('#air', { timeout: 15000 });
+    await page.click('#gfxBtn');
+    ok('A RELOADED PANEL reconciles with the output: the corner bug ● ON AIR, the bar OFF AIR, Manual', await page.waitForFunction(() => { const st = (l) => document.querySelector(`#gfxLive .lvcard[data-lay="${l}"] .lvst`); return st('compact') && /^● ON AIR$/.test(st('compact').textContent) && /OFF AIR/.test(st('bar').textContent) && document.querySelector('#lvMode [data-m="manual"]').getAttribute('aria-pressed') === 'true'; }, null, { timeout: 12000 }).then(() => true, () => false));
+    ok('…and the output was not touched by the reload', (await prog.evaluate(() => window.__vbOverlay.state)) === 'OVERLAY_VISIBLE' && (await prog.evaluate(() => window.__vbOverlay.C.barLayout)) === 'compact');
+    await page.click('#gfxAir [data-a="clean"]');
+    ok('HIDE EVERYTHING from the panel: the output shows nothing', await progAir('IDLE'));
+    ok('…"Everything is hidden", with Restore live overlay', await page.waitForFunction(() => /Everything is hidden/.test(document.querySelector('#gfxAir').textContent) && document.querySelector('#gfxAir [data-a="live"]'), null, { timeout: 8000 }).then(() => true, () => false));
+    await page.click('#gfxAir [data-a="live"]');
+    ok('RESTORE: the corner bug again', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'compact', null, { timeout: 12000 }).then(() => true, () => false));
+    await page.click('#lvMode [data-m="auto"]');
+    ok('AUTOMATIC: the tournament\'s score bar', await prog.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'bar', null, { timeout: 15000 }).then(() => true, () => false));
+    await progCtx.close();
+    ok('the output closed: the panel says no output shows anything', await page.waitForFunction(() => /No overlay output/.test(document.querySelector('#gfxAir').textContent), null, { timeout: 12000 }).then(() => true, () => false), await page.textContent('#gfxAir'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await sleep(400);
+    ok('the graphics sheet never grows sideways at phone width', await page.evaluate(() => { const sh = document.querySelector('.sheet'); return sh.scrollWidth <= sh.clientWidth + 1; }));
+    await page.screenshot({ path: path.join(OUT, 'studio-panel-gfx-phone.png') });
+    await page.setViewportSize({ width: 1440, height: 950 });
     await page.keyboard.press('Escape');
     await sleep(300);
     await page.setViewportSize({ width: 390, height: 844 });

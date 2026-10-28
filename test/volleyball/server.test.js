@@ -335,9 +335,26 @@ function roster(prefix) {
   eq('…the operator\'s retry (R2 back) uploads it at once', [rr.status, rst.status, rst.displayStatus, Date.now() - t0r < 5000], [200, 'COMPLETE', 'Upload complete', true]);
   eq('a clip id cannot be re-used for another point', (await api('POST', `/api/volleyball/matches/${MID}/clips`, { json: { clipId: twoId, eventId: 'ev-other', status: 'REQUESTED' }, token: TOK.work })).status, 409);
 
+  head('THE CLIPPING SESSION — one device clips a match');
+  const clp = (body, token) => api('POST', `/api/volleyball/matches/${MID}/clipper`, { json: body, token: token || TOK.work });
+  const k1 = await clp({ action: 'start', sessionId: 'clp-pc', label: 'vMix PC', status: { state: 'READY', text: 'Recording detected', recording: { file: 'C:\\Users\\op\\Videos\\match.mp4', seconds: 120, growing: true }, counts: { done: 3 } } });
+  eq('the vMix PC starts clipping the match', [k1.status, k1.json.clipper.live, k1.json.clipper.label, k1.json.clipper.status.state], [200, true, 'vMix PC', 'READY']);
+  eq('…its recording is kept as a file NAME only (never a local path)', k1.json.clipper.status.recording.file, 'match.mp4');
+  eq('another account cannot start or see it', [(await clp({ action: 'start', sessionId: 'x' }, TOK.vinit)).status, (await api('GET', `/api/volleyball/matches/${MID}/clipper`, { token: TOK.vinit })).status], [403, 403]);
+  const k2 = await clp({ action: 'start', sessionId: 'clp-laptop', label: 'Laptop' });
+  eq('a second device is refused while the first one clips (no point cut twice)', [k2.status, k2.json.code, k2.json.clipper.label], [409, 'CLIPPER_ELSEWHERE', 'vMix PC']);
+  eq('the clipping device keeps it alive with its status', [(await clp({ action: 'beat', sessionId: 'clp-pc', status: { state: 'PROCESSING', counts: { processing: 2 } } })).json.clipper.status.counts.processing], [2]);
+  const k3 = await clp({ action: 'start', sessionId: 'clp-laptop', label: 'Laptop', force: true });
+  eq('…an explicit take-over moves it', [k3.status, k3.json.clipper.label, k3.json.clipper.takenFrom], [200, 'Laptop', 'vMix PC']);
+  eq('the first device then learns it lost it (and stops sending clips)', [(await clp({ action: 'beat', sessionId: 'clp-pc' })).status, (await clp({ action: 'beat', sessionId: 'clp-pc' })).json.code], [409, 'CLIPPER_LOST']);
+  const k4 = await clp({ action: 'stop', sessionId: 'clp-laptop' });
+  eq('stopped: no longer live, the state says STOPPED', [k4.json.clipper.live, k4.json.clipper.status.state, !!k4.json.clipper.stoppedAt], [false, 'STOPPED', true]);
+  eq('…and anyone may start clipping again', (await clp({ action: 'start', sessionId: 'clp-pc', label: 'vMix PC' })).status, 200);
+  await clp({ action: 'stop', sessionId: 'clp-pc' });
+
   head('AUDIT AND ISOLATION');
   const au = (await api('GET', `/api/volleyball/matches/${MID}/audit`, { token: TOK.work })).json.audit.map((a) => a.action);
-  ['lease.takeover', 'match.lock', 'match.unlock', 'match.start', 'match.complete', 'match.reopen', 'event.correct', 'report.generate', 'report.regenerate', 'clip.links'].forEach((a) => ok('audit: ' + a, au.includes(a), au));
+  ['lease.takeover', 'match.lock', 'match.unlock', 'match.start', 'match.complete', 'match.reopen', 'event.correct', 'report.generate', 'report.regenerate', 'clip.links', 'clipper.start', 'clipper.stop'].forEach((a) => ok('audit: ' + a, au.includes(a), au));
   const cricketList = (await api('GET', '/api/public/tournaments')).json;
   ok('cricket’s tournament list does not contain volleyball', !JSON.stringify(cricketList).includes('Mumbai Volley League'));
   const leagues = await mem.collection('leagues').countDocuments({});

@@ -59,6 +59,7 @@ const https = require('https');
 const { spawn, exec } = require('child_process');
 const { Fmp4Index } = require('./fmp4');
 const organizer = require('./clipOrganizer');
+const vbOrganizer = require('./volleyballOrganizer');
 
 // When bundled by pkg into ClipperHelper.exe, __dirname points inside a
 // virtual snapshot, not the real folder the .exe sits in.
@@ -95,6 +96,10 @@ let config = {
   // The clip window, in seconds. 15 before + 3 after the press = 18 s.
   preRollSeconds: 15,
   postRollSeconds: 3,
+  // 🏐 A volleyball point's clip: the rally before the press + its end.
+  // Its own numbers, so a venue that changes cricket's window (or this
+  // one) never changes the other sport's.
+  volleyball: { preRollSeconds: 15, postRollSeconds: 3 },
 };
 try {
   if (fs.existsSync(CONFIG_PATH)) config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
@@ -139,6 +144,9 @@ function saveSession() {
 const PRE_ROLL_SECONDS = clampSeconds(config.preRollSeconds, 15, 1, 120);   // footage kept BEFORE the press
 const POST_ROLL_SECONDS = clampSeconds(config.postRollSeconds, 3, 1, 60);   // footage kept AFTER the press (and the wait before cutting)
 const CLIP_SECONDS = PRE_ROLL_SECONDS + POST_ROLL_SECONDS; // 18
+const VB_CONFIG = config.volleyball && typeof config.volleyball === 'object' ? config.volleyball : {};
+const VB_PRE_ROLL_SECONDS = clampSeconds(VB_CONFIG.preRollSeconds, 15, 1, 120);
+const VB_POST_ROLL_SECONDS = clampSeconds(VB_CONFIG.postRollSeconds, 3, 1, 60);
 function clampSeconds(value, fallback, min, max) {
   const n = Number(value);
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
@@ -178,7 +186,7 @@ const STATUS_POLL_WINDOW_MS = 12 * 60 * 60 * 1000; // follow R2/Drive progress f
 const STATUS_POLL_INTERVAL_MS = 2000;
 const STATUS_POLL_BATCH = 12; // in-flight clips followed per tick
 
-const HELPER_VERSION = '5.2';
+const HELPER_VERSION = '5.3';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function getClipsDir() {
@@ -278,6 +286,10 @@ const ANCHOR_WINDOW_MS = 3 * 60 * 1000;
 const sources = new Map(); // filePath -> { samples: [[wall, anchor]], anchor, durationSec, probedAt, size, sizeChangedAt, lastError, probing }
 let activeRecording = null; // { file, size, mtimeMs, growing }
 let recordingError = null;
+// More than one media file being written in the recording folder at once
+// (e.g. a second vMix recording or ISO files): the newest one is still
+// used, but the panel is told, so nobody clips from the wrong file unaware.
+let recordingAmbiguous = null;
 
 function isClipFileName(name) {
   return /\.(part|src)\.mp4$/i.test(name) || /_\d{12,}\.mp4$/i.test(name);
@@ -297,12 +309,15 @@ async function resolveActiveRecording() {
   } catch (_) { /* folder missing — handled below */ }
   if (configured && !candidates.includes(configured) && fs.existsSync(configured) && !fs.statSync(configured).isDirectory()) candidates.push(configured);
   let best = null;
+  const writing = [];
   for (const full of candidates) {
     try {
       const st = await fs.promises.stat(full);
       if (!best || st.mtimeMs > best.mtimeMs) best = { file: full, size: st.size, mtimeMs: st.mtimeMs };
+      if (Date.now() - st.mtimeMs < 15000) writing.push(path.basename(full));
     } catch (_) { /* vanished */ }
   }
+  recordingAmbiguous = writing.length > 1 ? writing.slice(0, 5) : null;
   if (!best) {
     activeRecording = null;
     recordingError = `No recording file found in ${dir} — is vMix recording, and is the recording path in Setup correct?`;
@@ -726,11 +741,79 @@ function clipMetaFor(job) {
   };
 }
 
+// ----------------------------------------------------------------
+// 🏐 A VOLLEYBALL POINT, as the panel described it at the press — and,
+// once the scorer says so, who earned it (sent to /clip-meta). Everything
+// the clip needs to be filed here and linked on the website travels with
+// the press itself, so it works with no internet at all. The point's
+// eventId is the clip's identity on the website; it never changes.
+// ----------------------------------------------------------------
+const VB_ATTRIBUTIONS = ['kill', 'ace', 'block', 'opp_error', 'team'];
+const idPart = (v, max) => { const s = String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '').slice(0, max || 64); return s || null; };
+const text = (v, max) => { const s = str(v); return s ? s.replace(/[\u0000-\u001f]/g, ' ').slice(0, max || 80) : null; };
+function cleanPoint(p) {
+  p = p && typeof p === 'object' ? p : {};
+  const team = p.team === 'A' || p.team === 'B' ? p.team : null;
+  const players = (Array.isArray(p.players) ? p.players : []).slice(0, 4).map((x) => (x && typeof x === 'object' ? {
+    playerId: idPart(x.playerId), name: text(x.name), number: x.number != null && x.number !== '' ? String(x.number).slice(0, 4) : null,
+    team: x.team === 'A' || x.team === 'B' ? x.team : team, role: text(x.role, 24),
+  } : null)).filter((x) => x && x.playerId);
+  const names = p.teamNames && typeof p.teamNames === 'object' ? p.teamNames : {};
+  return {
+    eventId: idPart(p.eventId), set: num(p.set), pointNo: num(p.pointNo), team,
+    teamId: idPart(p.teamId), teamName: text(p.teamName), teamShort: text(p.teamShort, 12),
+    teamNames: { A: text(names.A), B: text(names.B) },
+    score: p.score && typeof p.score === 'object' ? { A: num(p.score.A), B: num(p.score.B) } : null,
+    outcome: idPart(p.outcome, 32), attribution: VB_ATTRIBUTIONS.includes(p.attribution) ? p.attribution : null,
+    players, vbClipToken: idPart(p.vbClipToken, 96), at: num(p.at),
+  };
+}
+// opts.authoritative (the scorer's attribution): its answer REPLACES the
+// earlier one — a different player, or "team point" taking a name off.
+// A re-sent press never wipes what is already known.
+function applyPointMeta(job, payload, opts) {
+  const next = cleanPoint(payload);
+  const prev = job.point || {};
+  const keep = (k) => (next[k] === null || next[k] === undefined ? (prev[k] === undefined ? null : prev[k]) : next[k]);
+  const point = {};
+  for (const k of ['set', 'pointNo', 'team', 'teamId', 'teamName', 'teamShort', 'score', 'outcome', 'vbClipToken', 'at']) point[k] = keep(k);
+  point.eventId = prev.eventId || next.eventId || null;
+  point.teamNames = { A: next.teamNames.A || (prev.teamNames && prev.teamNames.A) || null, B: next.teamNames.B || (prev.teamNames && prev.teamNames.B) || null };
+  const answered = !!(opts && opts.authoritative) && payload && Object.prototype.hasOwnProperty.call(payload, 'attribution');
+  point.attribution = answered ? next.attribution : next.attribution || prev.attribution || null;
+  point.players = answered ? next.players : (next.players.length ? next.players : prev.players || []);
+  if (payload && typeof payload.voided === 'boolean') point.voided = payload.voided;
+  else if (prev.voided) point.voided = true;
+  job.point = point;
+  job.eventId = point.eventId;
+  job.playerIds = point.players.map((x) => x.playerId);
+  return job;
+}
+// What the website's volleyball ingest reads (one header, like cricket's —
+// numbers, ids and the recording's file NAME only; never a local path).
+function pointHeaderMeta(job) {
+  const p = job.point || {};
+  return {
+    sport: 'volleyball', engine: 'clipper-helper', vbClipToken: p.vbClipToken || null, eventId: p.eventId || null,
+    set: p.set, pointNo: p.pointNo, team: p.team, score: p.score, t0: job.t0,
+    preRollSec: job.preRollSec, postRollSec: job.postRollSec,
+    actualPreRollSec: job.actualPreRollSec != null ? job.actualPreRollSec : null, partialPreRoll: !!job.partialPreRoll,
+    windowStart: job.window ? job.window.startWall : null, windowEnd: job.window ? job.window.endWall : null,
+    durationSec: job.clipSeconds || null, cutOffline: !!job.cutOffline,
+    sourceRecording: job.sourceRecording || null, sourceStartSec: job.sourceStartSec != null ? job.sourceStartSec : null, sourceEndSec: job.sourceEndSec != null ? job.sourceEndSec : null,
+  };
+}
+const isVolleyball = (job) => !!job && job.sport === 'volleyball';
+// The website's routes for this clip's sport — cricket's are unchanged.
+const statusPath = (job) => (isVolleyball(job) ? '/api/volleyball/clips/status/' : '/api/clips/status/');
+
 // The destinations, decided locally and stored with the job, so an offline
 // clip's target is the SAME string the online path would have used:
 //   R2    matches/<matchId>/clips/<clipId>.mp4   (server.js uploadClipToR2)
 //   Drive <this match's connected folder>/<clipId>.mp4 (uploadClipToDrive)
 function destinationsFor(job) {
+  // A volleyball clip's R2 key is set by the website (by set and point).
+  if (isVolleyball(job)) return { r2Destination: null, driveDestination: { folderId: null, folderName: null, fileName: `${job.clipId}.mp4` } };
   return {
     r2Destination: `matches/${job.matchId}/clips/${job.clipId}.mp4`,
     driveDestination: {
@@ -754,7 +837,8 @@ function later(fn, ms) {
 }
 
 function scheduleCut(job) {
-  const dueAt = job.t0 + POST_ROLL_SECONDS * 1000;
+  // the job's own window (a volleyball point has its own post-roll)
+  const dueAt = job.window && job.window.endWall ? job.window.endWall : job.t0 + POST_ROLL_SECONDS * 1000;
   later(() => enqueueCut(job.clipId), Math.max(0, dueAt - Date.now()));
 }
 function enqueueCut(clipId) {
@@ -827,6 +911,11 @@ async function cutJob(job) {
   const fromSec = Math.max(0, startSec);
   const toSec = Math.min(endSec, src.durationSec);
   const duration = toSec - fromSec;
+  // How much of the requested lead-in the recording really had (a press
+  // seconds after vMix started has less) — reported, never padded.
+  const pressSec = (job.t0 - src.anchor) / 1000;
+  const actualPreRollSec = Number(Math.max(0, Math.min(pressSec, toSec) - fromSec).toFixed(1));
+  const requestedPre = (job.t0 - job.window.startWall) / 1000;
   if (duration < 1) return onCutFailure(job, `recording has no footage for this moment yet (recorded up to ${src.durationSec.toFixed(1)}s, needed ${endSec.toFixed(1)}s)`);
 
   // The pieces this clip is made of. Normally one. If vMix finished this
@@ -895,7 +984,12 @@ async function cutJob(job) {
     fs.unlink(partFile, () => {});
     return onCutFailure(job, `could not save clip: ${err.message}`);
   }
-  update(job, { localPath: outFile, clipSeconds: Number(check.seconds.toFixed(1)), savedAt: Date.now(), error: null });
+  update(job, {
+    localPath: outFile, clipSeconds: Number(check.seconds.toFixed(1)), savedAt: Date.now(), error: null,
+    // which recording, and which part of it, this clip is — for checking a cut that looks early or late
+    sourceRecording: path.basename(segments[0].file), sourceStartSec: Number(segments[0].from.toFixed(2)), sourceEndSec: Number(segments[segments.length - 1].to.toFixed(2)),
+    actualPreRollSec, partialPreRoll: actualPreRollSec < requestedPre - 0.5,
+  });
   await finalizeLocalClip(job);
 }
 
@@ -932,6 +1026,7 @@ async function finalizeLocalClip(job) {
 // clip is MOVED and re-linked, never re-cut.
 async function organizeClipFiles(job) {
   if (!job.localPath || !fs.existsSync(job.localPath)) return false;
+  if (isVolleyball(job)) return organizePointFiles(job);
   try {
     const placed = await organizer.placeClip({
       clipsRoot: getClipsDir(),
@@ -971,6 +1066,45 @@ async function organizeClipFiles(job) {
     console.log(`⚠️  [${job.eventType}] ${job.clipId}: could not file the clip into its folders (${err.message}) — the clip is still saved at ${job.localPath}`);
     return false;
   }
+}
+
+// 🏐 The volleyball equivalent: Set-N/<point>.mp4 + the credited players'
+// folders (see volleyballOrganizer.js). Same rules — offline, one file.
+async function organizePointFiles(job) {
+  try {
+    const p = job.point || {};
+    const placed = await vbOrganizer.placePointClip({
+      clipsRoot: getClipsDir(),
+      currentPath: job.localPath,
+      meta: {
+        point: p, teamNames: p.teamNames || {},
+        matchId: job.matchId, matchLabel: job.matchLabel,
+        tournamentId: job.tournamentId, tournamentName: job.tournamentName, tournamentMatchId: job.tournamentMatchId,
+      },
+      previous: { primary: job.localPath, links: job.links || [] },
+    });
+    update(job, {
+      localPath: placed.primary, localFilePath: placed.primary, filename: placed.filename, links: placed.links,
+      matchRoot: placed.matchRoot, highlightCategory: placed.category, organizedAt: Date.now(),
+    });
+    await vbOrganizer.writeClipMetadata(placed.matchRoot, pointClipMetaFor(job));
+    return true;
+  } catch (err) {
+    console.log(`⚠️  [POINT] ${job.clipId}: could not file the clip into its folders (${err.message}) — the clip is still saved at ${job.localPath}`);
+    return false;
+  }
+}
+// The point's own record beside its clip (no token, no local paths).
+function pointClipMetaFor(job) {
+  const p = Object.assign({}, job.point || {});
+  delete p.vbClipToken;
+  return {
+    clipId: job.clipId, sport: 'volleyball', matchId: job.matchId, tournamentId: job.tournamentId || null, tournamentName: job.tournamentName || null,
+    matchLabel: job.matchLabel || null, point: p, timestamp: job.t0,
+    window: job.window || null, preRollSec: job.preRollSec, postRollSec: job.postRollSec, actualPreRollSec: job.actualPreRollSec != null ? job.actualPreRollSec : null,
+    clipSeconds: job.clipSeconds || null, sourceRecording: job.sourceRecording || null, sourceStartSec: job.sourceStartSec != null ? job.sourceStartSec : null,
+    filename: job.filename || null, cutOffline: !!job.cutOffline, createdAt: job.createdAt, cutAt: job.savedAt || null,
+  };
 }
 
 // A clip whose file is already on disk (restart, or a duplicate enqueue):
@@ -1147,7 +1281,7 @@ async function syncJob(job) {
   // press and the upload actually starting. The check matters on every
   // LATER attempt, which is exactly where a duplicate upload could happen.
   const neverSent = !job.uploadedAt && (job.syncAttempts || 0) <= 1;
-  const remote = neverSent ? { status: 404, json: null } : await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`, 12000);
+  const remote = neverSent ? { status: 404, json: null } : await getJson(`${server}${statusPath(job)}${encodeURIComponent(job.clipId)}`, 12000);
   if (!remote) { // no answer at all = the network, not the website
     noteNetworkOutcome(false, 'website unreachable');
     if (net.online === false) return markOfflinePending(job);
@@ -1201,8 +1335,11 @@ async function syncJob(job) {
   // ~0.1 MB and died as "socket hang up", on every attempt. All of that
   // metadata now travels in the JSON body of the attach call below, where
   // it belongs; nothing is lost.
-  const r = await postFile(`${server}/api/clips/ingest?${qs}`, job.localPath, {
-    'X-Ball-Meta': headerJson(ballMetaFor(job)),
+  // 🏐 A volleyball point goes to the volleyball ingest, which checks the
+  // match's clip token and links the clip to its point event there.
+  const ingest = isVolleyball(job) ? '/api/volleyball/clips/ingest' : '/api/clips/ingest';
+  const r = await postFile(`${server}${ingest}?${qs}`, job.localPath, {
+    'X-Ball-Meta': headerJson(isVolleyball(job) ? pointHeaderMeta(job) : ballMetaFor(job)),
   }, { chunked });
   const stats = uploadStats(sizeBytes, startedAt);
   if (!r.ok) {
@@ -1231,6 +1368,13 @@ function markDeletedOnWebsite(job) {
 // (keyed by clipId), so running it twice updates the same record and can
 // never create a duplicate clip, event or player attachment.
 async function websiteStage(job, server) {
+  // 🏐 A volleyball clip was linked to its point when the website received
+  // it (and follows the point's attribution there) — nothing to attach.
+  if (isVolleyball(job)) {
+    update(job, { status: 'SYNC_COMPLETE', websiteStatus: 'updated', syncedAt: Date.now(), error: null });
+    console.log(`✅ [POINT] ${job.clipId}: SYNC COMPLETE — local ✓ · R2 ✓ · Drive ✓ · website ✓`);
+    return;
+  }
   update(job, { status: 'WEBSITE_UPDATE', error: null });
   console.log(`🗄️  [${job.eventType}] ${job.clipId}: R2 ✓ · Drive ✓ · UPDATING WEBSITE (${job.ballLabel || 'ball ?'} ${job.outcomeLabel || job.eventType}${job.strikerName ? ` · ${job.strikerName}` : ''}${job.bowlerName ? ` vs ${job.bowlerName}` : ''})`);
   const r = await postJson(`${server}/api/clips/attach`, { clipMeta: clipMetaFor(job), ballMeta: ballMetaFor(job) });
@@ -1420,7 +1564,7 @@ function getJson(url, timeoutMs = 10000) {
 // ticks overlap and log the same "in R2 + Drive" line twice.
 async function pollOneClipStatus(server, job) {
   job.lastPolledAt = Date.now();
-  const r = await getJson(`${server}/api/clips/status/${encodeURIComponent(job.clipId)}`);
+  const r = await getJson(`${server}${statusPath(job)}${encodeURIComponent(job.clipId)}`);
   if (!r) { noteNetworkOutcome(false, 'status poll got no answer'); return; }
   noteNetworkOutcome(true);
   if (r.status !== 200 || !r.json || !r.json.success) return;
@@ -1619,7 +1763,7 @@ function jobView(j) {
     clipSeconds: j.clipSeconds || null,
     localPath: j.localPath || null,
     filename: j.filename || null,
-    links: (j.links || []).map((l) => ({ role: l.role, playerName: l.playerName, path: l.path, mode: l.mode })),
+    links: (j.links || []).map((l) => ({ role: l.role, playerName: l.playerName, playerId: l.playerId || null, path: l.path, mode: l.mode })),
     highlightCategory: j.highlightCategory || null,
     isHighlight: j.isHighlight === true || j.isHighlight === false ? j.isHighlight : null,
     ball: { innings: j.innings ?? null, over: j.over ?? null, ballInOver: j.ballInOver ?? null, label: j.ballLabel || null },
@@ -1631,7 +1775,19 @@ function jobView(j) {
     driveBackupFailed: !!j.driveBackupFailed,
     deletedOnWebsite: !!j.deletedOnWebsite,
     createdAt: j.createdAt, updatedAt: j.updatedAt, syncedAt: j.syncedAt || null,
+    // 🏐 (volleyball points only) the point, who earned it, and how much
+    // of the requested lead-in the recording really had
+    sport: j.sport || 'cricket',
+    point: isVolleyball(j) ? pointView(j.point) : undefined,
+    window: isVolleyball(j) ? { preRollSec: j.preRollSec, postRollSec: j.postRollSec, actualPreRollSec: j.actualPreRollSec != null ? j.actualPreRollSec : null, partialPreRoll: !!j.partialPreRoll } : undefined,
+    sourceRecording: j.sourceRecording || null,
   };
+}
+function pointView(p) {
+  if (!p) return null;
+  const v = Object.assign({}, p);
+  delete v.vbClipToken;
+  return v;
 }
 
 app.get('/status', async (req, res) => {
@@ -1654,6 +1810,16 @@ app.get('/status', async (req, res) => {
     clipsDir: getClipsDir(),
     matchClipsFolder: session.matchId ? organizer.matchRootFor(getClipsDir(), matchMetaFromSession()) : null,
     clipTiming: { beforeSeconds: PRE_ROLL_SECONDS, afterSeconds: POST_ROLL_SECONDS, durationSeconds: CLIP_SECONDS },
+    // 🏐 what a volleyball panel checks before it says READY: the match this
+    // Clipper is set up for, its sport, the point window, and whether more
+    // than one recording is being written (then it is not sure which).
+    sport: session.sport || 'cricket',
+    matchLabel: session.matchLabel || null,
+    volleyballClipTiming: { beforeSeconds: VB_PRE_ROLL_SECONDS, afterSeconds: VB_POST_ROLL_SECONDS, durationSeconds: VB_PRE_ROLL_SECONDS + VB_POST_ROLL_SECONDS },
+    recordingAmbiguous: recordingAmbiguous,
+    volleyball: true,   // this build knows volleyball points (5.3+); an older one would file them as cricket clips
+    recordingModifiedAt: rec ? rec.mtimeMs : null,
+    helperVersion: HELPER_VERSION,
     // 🌐 Local clipping never depends on this; only syncing does.
     online: net.online,
     onlineCheckedAt: net.lastCheckAt || null,
@@ -1712,6 +1878,9 @@ app.post('/recording-start', async (req, res) => {
   if (b.tournamentId !== undefined || b.tournament !== undefined) session.tournamentId = str(b.tournamentId || b.tournament);
   if (b.tournamentName !== undefined || b.tournament !== undefined) session.tournamentName = str(b.tournamentName || b.tournament);
   if (b.tournamentMatchId !== undefined) session.tournamentMatchId = str(b.tournamentMatchId);
+  // 🏐 which sport's panel set this session up (only the folder tree and
+  // the panel's own checks depend on it — every clip carries its own sport)
+  session.sport = b.sport === 'volleyball' ? 'volleyball' : null;
   const origin = toOrigin(b.mainServerUrl);
   if (origin) session.mainServerUrl = origin;
   saveSession();
@@ -1721,14 +1890,16 @@ app.post('/recording-start', async (req, res) => {
   let clipsFolder = null;
   if (session.matchId) {
     try {
-      clipsFolder = await organizer.ensureMatchTree(getClipsDir(), matchMetaFromSession());
+      clipsFolder = session.sport === 'volleyball'
+        ? await vbOrganizer.ensurePointTree(getClipsDir(), matchMetaFromSession())
+        : await organizer.ensureMatchTree(getClipsDir(), matchMetaFromSession());
       console.log(`🗂️  Clip folders ready: ${clipsFolder}`);
     } catch (err) {
       console.log(`⚠️  Could not create the clip folders (${err.message}) — they are retried on the first clip`);
     }
   }
   probeInternet(true).catch(() => {});
-  res.json({ success: true, vmixControlled: false, clipsFolder, online: net.online });
+  res.json({ success: true, vmixControlled: false, clipsFolder, online: net.online, matchId: session.matchId, sport: session.sport || 'cricket' });
 });
 app.post('/recording-stop', (req, res) => {
   console.log('⏹  Recording session stopped (clips already requested are still cut and uploaded)');
@@ -1767,6 +1938,7 @@ app.post('/set-token', (req, res) => res.json({ success: true }));
 // touches the network: this is the entry point of Stage A.
 app.post('/clip', async (req, res) => {
   const b = req.body || {};
+  if (b.sport === 'volleyball') return clipVolleyballPoint(b, res);
   const t0 = Number(b.timestamp) || Date.now();
   const eventType = String(b.eventType || 'CLIP').toUpperCase().replace(/[^A-Z0-9-]/g, '') || 'CLIP';
   const matchId = String(b.matchId || session.matchId || '').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -1825,6 +1997,73 @@ app.post('/clip', async (req, res) => {
   if (!job.sourceFile) resolveActiveRecording().then((rec) => { if (rec && !job.sourceFile) job.sourceFile = rec.file; }).catch(() => {});
 });
 
+// 🏐 POST /clip { sport:'volleyball', matchId, timestamp, point:{ eventId, set,
+// pointNo, team, score, … }, matchLabel?, tournamentId?, tournamentName? }
+//
+// One point = one clip. The clipId is "<matchId>_<the point's eventId>", so
+// the same point arriving twice — the panel's outbox re-sending it, a
+// Clipper page relaying it from another device, a reconnect — is the SAME
+// job, never a second cut. The window is frozen at the press: the rally
+// before it (VB_PRE_ROLL_SECONDS) and how it ended (VB_POST_ROLL_SECONDS).
+async function clipVolleyballPoint(b, res) {
+  const matchId = idPart(b.matchId, 80);
+  const point = cleanPoint(b.point);
+  if (!matchId || !point.eventId) return res.status(400).json({ success: false, error: 'matchId and the point’s eventId are required' });
+  const clipId = `${matchId}_${point.eventId}`;
+  if (b.clipId && String(b.clipId) !== clipId) return res.status(400).json({ success: false, error: 'a point clip’s clipId is <matchId>_<eventId>' });
+  const existing = jobs.get(clipId);
+  if (existing) {
+    applyPointMeta(existing, b.point);
+    persistJobs();
+    return res.json({ success: true, clipId, duplicate: true, status: existing.status, statusText: STATUS_TEXT[existing.status] || existing.status, recordingActive: !!existing.sourceFile, online: net.online });
+  }
+  const now = Date.now();
+  let t0 = Number(b.timestamp);
+  if (!Number.isFinite(t0) || t0 > now + 60000 || t0 < now - 12 * 60 * 60 * 1000) t0 = now;
+  t0 = Math.round(t0);
+  const job = {
+    clipId, matchId, sport: 'volleyball', eventType: 'POINT', t0,
+    preRollSec: VB_PRE_ROLL_SECONDS, postRollSec: VB_POST_ROLL_SECONDS,
+    window: { startWall: t0 - VB_PRE_ROLL_SECONDS * 1000, endWall: t0 + VB_POST_ROLL_SECONDS * 1000 },
+    clipStart: t0 - VB_PRE_ROLL_SECONDS * 1000, clipEnd: t0 + VB_POST_ROLL_SECONDS * 1000, timestamp: t0,
+    tournamentId: text(b.tournamentId), tournamentName: text(b.tournamentName), tournamentMatchId: null, matchLabel: text(b.matchLabel, 120),
+    eventId: null, playerIds: [], sessionId: idPart(b.sessionId),
+    localPath: null, localFilePath: null, filename: null, links: [],
+    r2Status: 'pending', driveStatus: 'pending', websiteStatus: 'pending',
+    cutOffline: net.online === false,
+    status: 'WAITING', retryCount: 0, createdAt: now, updatedAt: now,
+  };
+  applyPointMeta(job, b.point);
+  Object.assign(job, destinationsFor(job));
+  job.sourceFile = activeRecording && activeRecording.growing ? activeRecording.file : null;
+  jobs.set(clipId, job);
+  const early = orphanMeta.get(clipId);   // the attribution arrived before the press did
+  if (early) { orphanMeta.delete(clipId); applyPointMeta(job, early.point || early, { authoritative: true }); saveOrphanMeta(); }
+  pruneJobs();
+  flushJobsNow();   // on disk before it is acknowledged
+  scheduleCut(job);
+  const p = job.point;
+  console.log(`📥 [POINT] ${clipId}: set ${p.set || '?'} point ${p.pointNo || '?'} to ${p.teamShort || p.teamName || p.team || '?'}${p.score ? ` (${p.score.A}-${p.score.B})` : ''} at ${new Date(t0).toLocaleTimeString()} — cutting ${VB_PRE_ROLL_SECONDS}s before → ${VB_POST_ROLL_SECONDS}s after${net.online === false ? ' (OFFLINE — cut and filed locally all the same)' : ''}`);
+  res.json({ success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status], recordingActive: !!job.sourceFile, online: net.online, window: { preRollSec: VB_PRE_ROLL_SECONDS, postRollSec: VB_POST_ROLL_SECONDS } });
+  vbOrganizer.ensurePointTree(getClipsDir(), { ...matchMetaFromSession(), matchId: job.matchId, matchLabel: job.matchLabel || session.matchLabel, tournamentName: job.tournamentName || session.tournamentName, tournamentId: job.tournamentId || session.tournamentId }).catch(() => {});
+  if (!job.sourceFile) resolveActiveRecording().then((rec) => { if (rec && rec.growing && !job.sourceFile) job.sourceFile = rec.file; }).catch(() => {});
+}
+// The scorer's answer to "who earned this point?" (or a corrected one, or
+// the point undone): re-file the clip under its players — the same file,
+// never a re-cut. The website follows the point itself, so a clip already
+// uploaded needs nothing more.
+async function applyPointLate(job, payload) {
+  const before = JSON.stringify([job.point && job.point.attribution, (job.point && job.point.players || []).map((x) => x.playerId), job.point && job.point.voided]);
+  applyPointMeta(job, payload, { authoritative: true });
+  const after = JSON.stringify([job.point.attribution, job.point.players.map((x) => x.playerId), job.point.voided]);
+  if (before !== after && job.localPath && fs.existsSync(job.localPath)) {
+    await organizeClipFiles(job);
+    console.log(`🏷️  [POINT] ${job.clipId}: ${job.point.players.length ? job.point.players.map((x) => `#${x.number || '?'} ${x.name || x.playerId}`).join(', ') : 'team point (no player)'} → ${job.filename}`);
+  }
+  persistJobs();
+  return job;
+}
+
 // POST /clip-meta { clipId, matchId, ballMeta, outcomeLabel, eventType, isHighlight, eventId }
 //
 // The scorer's answer, delivered LOCALLY (localhost) — so it works with no
@@ -1848,6 +2087,10 @@ app.post('/clip-meta', async (req, res) => {
     orphanMeta.set(clipId, { ...b, receivedAt: Date.now() });
     saveOrphanMeta();
     return res.json({ success: true, clipId, pending: true });
+  }
+  if (isVolleyball(job)) {
+    await applyPointLate(job, b.point || b);
+    return res.json({ success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status] || job.status, filename: job.filename || null, point: pointView(job.point) });
   }
   await applyLateMeta(job, b, { authoritative: true });
   res.json({
@@ -1881,6 +2124,22 @@ async function applyLateMeta(job, payload, opts) {
   persistJobs();
   return job;
 }
+
+// 🔁 A clip that could not be cut (the recording was locked, missing or
+// not readable at the time): try the SAME job again — same clipId, same
+// frozen window, so it can never become a second clip. Only a job that
+// really failed is touched; one that is cut, uploading or done is left be.
+app.post('/clip-retry', (req, res) => {
+  const clipId = String((req.body && req.body.clipId) || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const job = jobs.get(clipId);
+  if (!job) return res.status(404).json({ success: false, error: 'No clip job with that clipId' });
+  if (job.status !== 'CUT_FAILED') return res.json({ success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status] || job.status, unchanged: true });
+  if (job.localPath && fs.existsSync(job.localPath)) { adoptExistingClip(job); return res.json({ success: true, clipId, status: job.status }); }
+  console.log(`🔁 [${job.eventType}] ${job.clipId}: retrying the cut (asked from the panel)`);
+  update(job, { status: 'WAITING', cutAttempts: 0, error: null, failedAt: null });
+  enqueueCut(job.clipId);
+  res.json({ success: true, clipId, status: job.status, statusText: STATUS_TEXT[job.status] });
+});
 
 // 🔁 "Try now" — re-checks the internet and resumes every pending clip.
 // Handy for the operator (and for tests); the queue does this by itself
@@ -2023,6 +2282,7 @@ const server = app.listen(config.port, () => {
   console.log(`👉 Setup page: http://localhost:${config.port}/setup`);
   console.log(`Using ffmpeg: ${ffmpegPath}`);
   console.log(`Clip window: ${PRE_ROLL_SECONDS}s before + ${POST_ROLL_SECONDS}s after the press = ${CLIP_SECONDS}s`);
+  console.log(`Volleyball point clips: ${VB_PRE_ROLL_SECONDS}s of the rally before the point + ${VB_POST_ROLL_SECONDS}s after = ${VB_PRE_ROLL_SECONDS + VB_POST_ROLL_SECONDS}s`);
   console.log(`Clips folder: ${getClipsDir()} (organised per match: Highlights / Normal / Batsmen / Bowlers)`);
   console.log('Clips are cut, named and filed locally with NO internet; R2 + Drive + website sync happens whenever the connection is there.');
   console.log(`Website: ${session.mainServerUrl || toOrigin(config.mainServerUrl) || 'not set — open the Setup page'}`);

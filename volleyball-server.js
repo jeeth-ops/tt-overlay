@@ -602,7 +602,7 @@ module.exports = function setupVolleyball(deps) {
       report: m.report ? { status: m.report.status, version: m.report.version || 0, generatedAt: m.report.generatedAt || null, stale: !!m.report.stale, url: m.report.status === 'ready' || m.report.version ? `/api/volleyball/matches/${m.matchId}/report.pdf` : null } : null,
       lease: publicLease(m.lease), squads: m.squads || { A: [], B: [] }, graphic: G.publicState(airOf(m), Date.now())
     };
-    if (manage) { o.clipToken = m.clipToken; o.overlayKey = m.overlayKey; o.canManage = true; }
+    if (manage) { o.clipToken = m.clipToken; o.overlayKey = m.overlayKey; o.canManage = true; o.clipper = publicClipper(m.clipper); }
     return o;
   }
   function withLogo(s) { return Object.assign({}, s, { logo: s.logoV ? `/api/volleyball/teams/${s.teamId}/logo?v=${s.logoV}` : null }); }
@@ -945,6 +945,7 @@ module.exports = function setupVolleyball(deps) {
         if (p.actions !== undefined) patch.actions = actions(p.actions) || [];
         if (p.note != null) patch.note = str(p.note, 200);
         ev.patch = patch;
+        if (raw.attribution === true) ev.attribution = true;   // who earned the point — see isAttribution in the engine
         break;
       }
     }
@@ -1338,7 +1339,25 @@ module.exports = function setupVolleyball(deps) {
     if (s === 'REQUESTED') return 'Waiting for post-roll';
     return 'Pending';
   }
-  function publicClip(clip, entry, participants) {
+  // How the point was won, as the operator recorded it — the clip's
+  // attribution. 'team' = decided: a team point, no player. pending = no
+  // one has said yet (it can be assigned later).
+  const OPP_ERRORS = { SERVICE_ERROR: 1, ATTACK_ERROR: 1, OPP_ERROR: 1, NET_FAULT: 1, FOUR_HITS: 1, DOUBLE_CONTACT: 1, BALL_OUT: 1, ROTATION_FAULT: 1, PENALTY: 1 };
+  function attributionOf(entry) {
+    if (!entry || entry.type !== 'RALLY') return { type: null, playerId: null, pending: false };
+    const o = entry.outcome, p = entry.players || {};
+    const server = entry.rallyServer && entry.rallyServer.team === entry.team ? entry.rallyServer.playerId : null;
+    if (o === 'ACE' || o === 'RECEPTION_ERROR') return { type: 'ace', playerId: server || null, pending: false };
+    if (o === 'ATTACK_KILL') return { type: 'kill', playerId: p.attacker || null, pending: false };
+    if (o === 'BLOCK') return { type: 'block', playerId: (p.blockers || [])[0] || null, pending: false };
+    if (OPP_ERRORS[o]) return { type: 'opp_error', playerId: null, pending: false };
+    if (p.attacker) return { type: 'kill', playerId: p.attacker, pending: false };
+    const decided = !!(entry.corrected && entry.corrected.length);
+    return { type: decided ? 'team' : null, playerId: null, pending: !decided };
+  }
+  function publicClip(clip, entry, participants, m) {
+    const sq = (t, id) => (m && m.squads && (m.squads[t] || []).find((x) => x.playerId === id)) || null;
+    const team = entry ? entry.team : clip.team || null;
     return {
       clipId: clip.clipId, matchId: clip.matchId, eventId: clip.eventId, status: clip.status, displayStatus: displayStatus(clip),
       local: clip.local || null,
@@ -1355,7 +1374,12 @@ module.exports = function setupVolleyball(deps) {
       watchUrl: clip.r2Url || clip.filePath ? `/api/volleyball/clips/${clip.clipId}/video` : null,
       posterUrl: clip.posterUrl || null,
       r2Status: clip.r2Status || null, driveStatus: clip.driveStatus || null, driveUrl: clip.driveUrl || null,
-      players: participants || [],
+      players: (participants || []).map((p) => { const x = sq(p.team, p.playerId); return Object.assign({}, p, { name: x ? x.name : null, number: x && x.number != null ? String(x.number) : null }); }),
+      attribution: attributionOf(entry),
+      teamId: team && m && m['team' + team] ? m['team' + team].teamId || null : null,
+      teamName: team && m && m['team' + team] ? m['team' + team].name || null : null,
+      engine: clip.engine || null, source: clip.source || null, cutOffline: !!clip.cutOffline,
+      eventTimestamp: clip.eventTimestamp || null, windowStart: clip.windowStart || null, windowEnd: clip.windowEnd || null,
       createdAt: clip.createdAt || null, error: clip.error || null
     };
   }
@@ -1375,7 +1399,7 @@ module.exports = function setupVolleyball(deps) {
     const clips = await c.clips.find({ matchId: m.matchId, deleted: { $ne: true } }).sort({ createdAt: 1 }).limit(opts && opts.limit ? opts.limit : 2000).toArray();
     return clips.map((cl) => {
       const entry = byEvent.get(cl.eventId) || null;
-      return publicClip(cl, entry, clipPlayers(cl, entry));
+      return publicClip(cl, entry, clipPlayers(cl, entry), m);
     });
   }
   async function clipCountsByPlayer(c, m) {
@@ -1503,6 +1527,83 @@ module.exports = function setupVolleyball(deps) {
     res.status(404).json({ success: false, error: 'This clip is not available yet' });
   }));
 
+  /* ---------- the clipping session: which device clips this match ----------
+     One device at a time cuts this match's point clips — the PC that
+     records (the scoring panel itself, or the Clipper page on that PC,
+     with the Clipper Helper next to vMix). It says so here and keeps
+     saying how it is doing every few seconds, so every other device can
+     show it ("Clipper READY on the vMix PC" on a phone that scores) and a
+     second device never clips the same points from another recording. */
+  const CLIPPER_LIVE_MS = 45000;
+  const CLIPPER_STATES = ['STARTING', 'READY', 'PROCESSING', 'WARNING', 'STOPPED'];
+  const int0 = (v) => Math.max(0, Math.min(100000, Math.round(num(v, 0))));
+  function cleanClipperStatus(s) {
+    s = s && typeof s === 'object' ? s : {};
+    const r = s.recording && typeof s.recording === 'object' ? s.recording : {};
+    const k = s.counts && typeof s.counts === 'object' ? s.counts : {};
+    return {
+      state: CLIPPER_STATES.includes(s.state) ? s.state : 'STARTING', text: str(s.text, 160),
+      recording: { file: str(String(r.file || '').split(/[\\/]/).pop(), 120) || null, seconds: r.seconds == null ? null : int0(r.seconds), growing: !!r.growing },
+      counts: { processing: int0(k.processing), failed: int0(k.failed), upload: int0(k.upload), offline: int0(k.offline), done: int0(k.done), unassigned: int0(k.unassigned) },
+      online: typeof s.online === 'boolean' ? s.online : null, window: s.window && typeof s.window === 'object' ? { pre: num(s.window.pre, null), post: num(s.window.post, null) } : null
+    };
+  }
+  function publicClipper(k, now) {
+    if (!k) return null;
+    now = now || Date.now();
+    return { sessionId: k.sessionId, label: k.label || 'Clipper', startedAt: k.startedAt || null, lastSeenAt: k.lastSeenAt || null, stoppedAt: k.stoppedAt || null,
+      live: !k.stoppedAt && now - (k.lastSeenAt || 0) < CLIPPER_LIVE_MS, status: k.status || null, takenFrom: k.takenFrom || null };
+  }
+  function emitClipper(m) { nsp.to(room(m.matchId)).emit('vb:clipper', { matchId: m.matchId, clipper: publicClipper(m.clipper) }); }
+  app.get('/api/volleyball/matches/:mid/clipper', requireCreator(async (req, res, user, c) => {
+    const m = await loadMatch(c, req.params.mid);
+    if (!m) return res.status(404).json({ success: false, error: 'Match not found' });
+    if (!canManage(user, await tournamentOf(c, m))) return res.status(403).json({ success: false });
+    res.json({ success: true, clipper: publicClipper(m.clipper) });
+  }));
+  app.post('/api/volleyball/matches/:mid/clipper', requireCreator(async (req, res, user, c) => {
+    const m = await loadMatch(c, req.params.mid);
+    if (!m) return res.status(404).json({ success: false, error: 'Match not found' });
+    if (!canManage(user, await tournamentOf(c, m))) return res.status(403).json({ success: false });
+    const b = req.body || {};
+    const sid = safeId(b.sessionId).slice(0, 64);
+    if (!sid) return res.status(400).json({ success: false, error: 'sessionId required' });
+    const now = Date.now();
+    const cur = m.clipper || null;
+    const live = !!cur && !cur.stoppedAt && now - (cur.lastSeenAt || 0) < CLIPPER_LIVE_MS;
+    const mine = !!cur && cur.sessionId === sid;
+    if (b.action === 'start') {
+      if (live && !mine && !b.force) return res.status(409).json({ success: false, code: 'CLIPPER_ELSEWHERE', error: `${cur.label || 'Another device'} is clipping this match`, clipper: publicClipper(cur, now) });
+      const next = {
+        sessionId: sid, label: str(b.label, 60) || 'Clipper', deviceId: str(b.deviceId, 64) || null,
+        startedAt: mine && !cur.stoppedAt ? cur.startedAt : now, lastSeenAt: now, stoppedAt: null,
+        status: cleanClipperStatus(b.status), takenFrom: live && !mine ? cur.label || 'another device' : null
+      };
+      await c.matches.updateOne({ matchId: m.matchId }, { $set: { clipper: next } });
+      if (!mine || (cur && cur.stoppedAt)) await audit(c, { action: 'clipper.start', tournamentId: m.tournamentId, matchId: m.matchId, by: byOf(user), details: { label: next.label, takenFrom: next.takenFrom } });
+      m.clipper = next; emitClipper(m);
+      return res.json({ success: true, clipper: publicClipper(next, now) });
+    }
+    if (b.action === 'beat') {
+      if (!mine || cur.stoppedAt) return res.status(409).json({ success: false, code: 'CLIPPER_LOST', error: cur && !cur.stoppedAt ? `${cur.label || 'Another device'} is clipping this match now` : 'Clipping was stopped', clipper: publicClipper(cur, now) });
+      const status = cleanClipperStatus(b.status);
+      await c.matches.updateOne({ matchId: m.matchId, 'clipper.sessionId': sid }, { $set: { 'clipper.lastSeenAt': now, 'clipper.status': status } });
+      m.clipper = Object.assign({}, cur, { lastSeenAt: now, status });
+      emitClipper(m);
+      return res.json({ success: true, clipper: publicClipper(m.clipper, now) });
+    }
+    if (b.action === 'stop') {
+      if (!mine) return res.json({ success: true, clipper: publicClipper(cur, now) });
+      const status = Object.assign(cleanClipperStatus(b.status), { state: 'STOPPED' });
+      await c.matches.updateOne({ matchId: m.matchId, 'clipper.sessionId': sid }, { $set: { 'clipper.stoppedAt': now, 'clipper.lastSeenAt': now, 'clipper.status': status } });
+      await audit(c, { action: 'clipper.stop', tournamentId: m.tournamentId, matchId: m.matchId, by: byOf(user), details: { label: cur.label } });
+      m.clipper = Object.assign({}, cur, { stoppedAt: now, lastSeenAt: now, status });
+      emitClipper(m);
+      return res.json({ success: true, clipper: publicClipper(m.clipper, now) });
+    }
+    res.status(400).json({ success: false, error: 'Unknown action' });
+  }));
+
   // 🎬 THE INGEST — the local clip engine sends the finished point clip.
   // Checked against the match's own clip token (only a device that was
   // given it by a signed-in manager can add clips), stored on disk BEFORE
@@ -1532,12 +1633,19 @@ module.exports = function setupVolleyball(deps) {
     }
     const eventId = idOk(meta.eventId) ? meta.eventId : (existing && existing.eventId) || null;
     const durationSec = await probeDuration(file);
-    const reqPre = num(clipMeta.preRollSec, num(meta.preRollSec, CLIP_PRE_ROLL_SEC));
-    const actualPre = clipMeta.actualPreRollSec != null ? num(clipMeta.actualPreRollSec, null) : null;
+    // the Clipper Helper sends everything in X-Ball-Meta (one header — see
+    // clipper-helper/server.js); the Stream Engine's X-Clip-Meta still works
+    const cm = (k) => (clipMeta[k] != null ? clipMeta[k] : meta[k]);
+    const reqPre = num(cm('preRollSec'), CLIP_PRE_ROLL_SEC);
+    const actualPre = cm('actualPreRollSec') != null ? num(cm('actualPreRollSec'), null) : null;
+    const recName = str(String(meta.sourceRecording || '').split(/[\\/]/).pop(), 120) || null;   // a file name, never a path
     const set = {
       filePath: file, status: 'LOCAL_RECEIVED', lastReceivedAt: Date.now(), retryCount: 0, bytes: req.body.length,
-      durationSec, actualPreRollSec: actualPre, partialPreRoll: actualPre != null ? actualPre < reqPre - 0.5 : !!clipMeta.partialPreRoll,
-      windowStart: num(clipMeta.windowStart, null), windowEnd: num(clipMeta.windowEnd, null),
+      durationSec, actualPreRollSec: actualPre, partialPreRoll: actualPre != null ? actualPre < reqPre - 0.5 : !!cm('partialPreRoll'),
+      windowStart: num(cm('windowStart'), null), windowEnd: num(cm('windowEnd'), null),
+      source: recName || meta.sourceStartSec != null ? { recording: recName, startSec: num(meta.sourceStartSec, null), endSec: num(meta.sourceEndSec, null) } : null,
+      engine: meta.engine === 'clipper-helper' ? 'clipper-helper' : (existing && existing.engine) || 'stream-engine',
+      cutOffline: !!meta.cutOffline,
       r2Status: existing && existing.r2Status === 'uploaded' ? 'uploaded' : 'pending',
       driveStatus: existing && existing.driveStatus === 'uploaded' ? 'uploaded' : 'pending'
     };
@@ -1546,7 +1654,7 @@ module.exports = function setupVolleyball(deps) {
       $unset: { error: '' },
       $setOnInsert: {
         clipId, matchId, tournamentId: m.tournamentId, eventId, createdAt: Date.now(),
-        eventTimestamp: num(req.query.timestamp, num(meta.t0, null)), preRollSec: reqPre, postRollSec: num(clipMeta.postRollSec, num(meta.postRollSec, CLIP_POST_ROLL_SEC)),
+        eventTimestamp: num(req.query.timestamp, num(meta.t0, null)), preRollSec: reqPre, postRollSec: num(cm('postRollSec'), CLIP_POST_ROLL_SEC),
         scoreAtTrigger: meta.score && typeof meta.score === 'object' ? { A: num(meta.score.A, 0), B: num(meta.score.B, 0), set: num(meta.set, null) } : null,
         team: meta.team === 'A' || meta.team === 'B' ? meta.team : null, sourceSessionId: str(meta.sourceSessionId || clipMeta.sessionId, 80) || null
       }
@@ -1869,7 +1977,55 @@ module.exports = function setupVolleyball(deps) {
   setTimeout(() => { graphicSweep().catch(() => {}); }, 3000).unref();
   setInterval(() => { graphicSweep().catch((e) => log('graphic sweep error', e.message || e)); }, 60 * 1000).unref();
 
+  /* 📡 THE OUTPUTS — every overlay that is showing this match somewhere
+     (vMix, OBS, a studio monitor) says what it shows right now. The panels
+     read ON AIR from here — a graphic is "on air" once an output says it
+     is up, not because a button was pressed — and see one that could not
+     be drawn. Memory only: an output says it again every 15 s and on
+     reconnect, and is forgotten when it disconnects. */
+  const outputs = new Map();     // matchId -> Map(socket.id -> state)
+  const outputEmits = new Map();
+  const OUTPUT_STATES = ['IDLE', 'OVERLAY_ENTERING', 'OVERLAY_VISIBLE', 'OVERLAY_EXITING', 'GRAPHIC_ENTERING', 'GRAPHIC_VISIBLE', 'GRAPHIC_EXITING', 'OVERLAY_RETURNING'];
+  function publicOutputs(matchId) {
+    const m = outputs.get(matchId);
+    if (!m) return [];
+    const now = Date.now();
+    return [...m.values()].filter((o) => now - o.at < 40000);
+  }
+  function emitOutputs(matchId) {
+    if (outputEmits.has(matchId)) return;
+    outputEmits.set(matchId, setTimeout(() => {
+      outputEmits.delete(matchId);
+      nsp.to(room(matchId)).emit('vb:outputs', { matchId, outputs: publicOutputs(matchId), now: Date.now() });
+    }, 60));
+  }
+
   nsp.on('connection', (socket) => {
+    socket.on('vb:output', (d) => {
+      d = d && typeof d === 'object' ? d : {};
+      const matchId = safeId(d.matchId);
+      if (!matchId || !socket.rooms.has(room(matchId))) return;   // only an overlay that joined this match
+      const idx = (v) => (v == null ? null : safeId(v).slice(0, 40) || null);
+      const o = {
+        outputId: idx(d.outputId) || socket.id.slice(0, 12), monitor: d.monitor === true,
+        layoutParam: ['bar', 'compact', 'graphics'].includes(d.layoutParam) ? d.layoutParam : null,
+        state: OUTPUT_STATES.includes(d.state) ? d.state : 'IDLE', graphicId: idx(d.graphicId), scene: G.SCENES[d.scene] ? d.scene : null,
+        layout: d.layout === 'bar' || d.layout === 'compact' ? d.layout : null,
+        failed: d.failed && typeof d.failed === 'object' ? { id: idx(d.failed.id), error: str(d.failed.error, 160) } : null,
+        airSeq: num(d.airSeq, null), at: Date.now()
+      };
+      let m = outputs.get(matchId);
+      if (!m) outputs.set(matchId, m = new Map());
+      m.set(socket.id, o);
+      (socket.data.outputs = socket.data.outputs || new Set()).add(matchId);
+      emitOutputs(matchId);
+    });
+    socket.on('disconnect', () => {
+      for (const mid of socket.data.outputs || []) {
+        const m = outputs.get(mid);
+        if (m && m.delete(socket.id)) { if (!m.size) outputs.delete(mid); emitOutputs(mid); }
+      }
+    });
     socket.data.user = null;
     const authed = (async () => {
       const tok = socket.handshake.auth && socket.handshake.auth.idToken;
@@ -1902,7 +2058,8 @@ module.exports = function setupVolleyball(deps) {
         const L = await getLedger(c, a.m);
         const graphic = G.publicState(await currentAir(c, a.m), Date.now());
         reply({ ok: true, match: Object.assign(publicMatch(a.m, a.manage), { graphic }), summary: E.summary(L.setup, L.state), seq: L.seq, timeline: d && d.timeline ? publicTimeline(L, a.manage) : undefined,
-          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic, style: G.normalizeStyle(a.t && a.t.broadcast), photos: await photosOf(c, a.m), now: Date.now() });
+          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic, style: G.normalizeStyle(a.t && a.t.broadcast), photos: await photosOf(c, a.m), now: Date.now(),
+          outputs: a.manage ? publicOutputs(a.m.matchId) : undefined });
       } catch (e) { log('join error', e.message || e); reply({ ok: false, error: 'join-failed' }); }
     });
 

@@ -910,13 +910,18 @@
 
   // The newest event Undo would take back: the latest base event (or
   // correction) that still counts. Null when there is nothing to undo.
+  // Who earned a point (a CORRECT marked `attribution`, sent after the
+  // point by the scorer) is not something Undo takes back — Undo is for the
+  // score; an attribution is changed by attributing again. Nor does one
+  // stand in the way of Redo.
+  function isAttribution(ev) { return !!ev && ev.type === 'CORRECT' && ev.attribution === true; }
   function lastUndoable(events) {
     var list = (events || []).filter(Boolean).slice().sort(bySeq);
     var meta = resolveMeta(list);
     for (var i = list.length - 1; i >= 0; i--) {
       var ev = list[i];
       if (meta.voidedBy[ev.eventId]) continue;
-      if (ev.type === 'UNDO' || ev.type === 'REDO' || ev.type === 'VOID') continue;
+      if (ev.type === 'UNDO' || ev.type === 'REDO' || ev.type === 'VOID' || isAttribution(ev)) continue;
       return ev;
     }
     return null;
@@ -929,7 +934,7 @@
     for (var i = list.length - 1; i >= 0; i--) {
       var ev = list[i];
       if (ev.type === 'UNDO' && !meta.voidedBy[ev.eventId]) return ev;
-      if (ev.type === 'REDO' || ev.type === 'VOID') continue;
+      if (ev.type === 'REDO' || ev.type === 'VOID' || isAttribution(ev)) continue;
       if (ev.type === 'UNDO') continue;
       return null; // something new was recorded after the last undo
     }

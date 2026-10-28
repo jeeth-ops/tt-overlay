@@ -256,6 +256,21 @@ head('18-20  UNDO, CORRECTION, DUPLICATES');
   eq('a correction that cannot be true where it stands is refused', bad.code, 'OUTCOME_SERVING');
 }
 {
+  // who earned a point, said AFTER it (the panel's "Who earned this point?")
+  const m = Match().begin();
+  m.point('A'); const p2 = m.point('A');
+  const at = m.send('CORRECT', { target: p2.pending.event.eventId, patch: { outcome: 'ATTACK_KILL', players: { attacker: 'a4' } }, reason: 'Point attribution', attribution: true });
+  ok('an attribution after the point: a kill by the player, the score untouched', at.ok && m.s.points.A === 2 && m.L.timeline.find((e) => e.eventId === p2.pending.event.eventId).players.attacker === 'a4');
+  m.send('UNDO', {});
+  eq('Undo takes back the last POINT — not the attribution made after it', [m.s.points, !!m.L.timeline.find((e) => e.eventId === p2.pending.event.eventId).voided], [{ A: 1, B: 0 }, true]);
+  m.send('CORRECT', { target: m.L.timeline.find((e) => e.type === 'RALLY' && !e.voided).eventId, patch: { outcome: 'GENERAL', players: null }, reason: 'Point attribution', attribution: true });
+  const rd = m.send('REDO', {});
+  eq('…and an attribution in between does not stand in the way of Redo (the kill comes back with its player)', [rd.ok, m.s.points, m.L.timeline.find((e) => e.eventId === p2.pending.event.eventId).players.attacker], [true, { A: 2, B: 0 }, 'a4']);
+  const plain = m.send('CORRECT', { target: p2.pending.event.eventId, patch: { outcome: 'GENERAL' }, reason: 'scorer correction' });
+  m.send('UNDO', {});
+  ok('an ordinary correction is still what Undo takes back first (unchanged)', plain.ok && m.s.points.A === 2 && m.L.timeline.find((e) => e.eventId === plain.pending.event.eventId).voided === true);
+}
+{
   const m = Match().begin();
   const r = m.point('A');
   const dup = m.L.check(Object.assign({}, r.pending.event, { seq: undefined }));

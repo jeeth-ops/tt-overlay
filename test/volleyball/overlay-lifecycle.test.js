@@ -19,6 +19,11 @@
      • hide everything, graphics-only and corner layouts; the time-out
        graphic goes when the next rally is scored; the starting six hands
        over from team one to team two
+     • the live overlay by hand: taken off air it plays its exit and no
+       point, timer or graphic brings it back; the corner bug replaces the
+       score bar (the bar leaves, then the bug comes in — never both, never
+       a cut); Automatic ⇄ Manual without a flash; what each output shows
+       is reported to the server
      • vMix safety: transparent page, no color-mix / :has / container
        queries / flex gap; no animations left running afterwards
 
@@ -55,16 +60,24 @@ function call(port, method, url, { json, token, headers } = {}) {
   });
 }
 const U = { uid: 'u-work', email: 'workallsportslive@gmail.com', email_verified: true };
+async function until(fn, ms) { const end = Date.now() + (ms || 8000); while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(40); } return null; }
 
 // Installed in the page: every animation frame, is a graphic mounted while
 // the score bar (any part of it) is visible? More than one graphic mounted?
 const SAMPLER = () => {
   window.__vio = []; window.__frames = 0; window.__maxScenes = 0;
+  // the live overlay itself: frames with the bar / the corner bug on screen, both at once, each seen leaving
+  window.__lv = { both: 0, stage: 0, corner: 0, exitStage: 0, exitCorner: 0 };
   const vis = (el) => !!el && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
   (function loop() {
     const o = window.__vbOverlay;
     if (o) {
       window.__frames++;
+      const st = vis(document.getElementById('stage')), co = vis(document.getElementById('corner')), lv = window.__lv;
+      if (st && co) lv.both++;
+      if (st) lv.stage++;
+      if (co) lv.corner++;
+      if (o.state === 'OVERLAY_EXITING') { if (st) lv.exitStage++; if (co) lv.exitCorner++; }
       const scenes = document.querySelectorAll('#gfx .scene').length;
       window.__maxScenes = Math.max(window.__maxScenes, scenes);
       const barOn = vis(document.getElementById('stage')) || vis(document.getElementById('pill')) || vis(document.getElementById('corner')) || vis(document.getElementById('tagL')) || vis(document.getElementById('tagR'));
@@ -332,6 +345,133 @@ const SAMPLER = () => {
     v = await violations(page);
     ok('…never both on screen', v.vio.length === 0, v.vio);
     await page.screenshot({ path: path.join(OUT, 'lifecycle-compact.png') });
+    await ctx.close();
+
+    head('THE LIVE OVERLAY BY HAND — taken off air, it stays off');
+    const outLists = [];
+    op.on('vb:outputs', (d) => { if (d.matchId === M.matchId) outLists.push(d.outputs); });
+    await op.emitAck('vb:join', { matchId: M.matchId });
+    const lastOut = () => { const l = outLists[outLists.length - 1] || []; return l.filter((o) => !o.monitor); };
+    const lvc = (page) => page.evaluate(() => Object.assign({}, window.__lv));
+    const resetLv = (page) => page.evaluate(() => { Object.keys(window.__lv).forEach((k) => { window.__lv[k] = 0; }); });
+    ({ ctx, page } = await openOverlay());
+    ok('automatic: the tournament\'s score bar comes in', await waitState(page, 'OVERLAY_VISIBLE') && await page.evaluate(() => window.__vbOverlay.C.barLayout === 'bar'));
+    ok('…and the output says so to the server (what the panels read ON AIR from)', !!(await until(() => lastOut().some((o) => o.state === 'OVERLAY_VISIBLE' && o.layout === 'bar'))), lastOut());
+    before = await counts(page);
+    r = await cmd('live-off', { layout: 'bar' });
+    ok('TAKE OFF AIR: the bar plays its exit', r.ok && await waitState(page, 'IDLE') && (await history(page)).slice(-2).join() === 'OVERLAY_EXITING,IDLE', await history(page));
+    ok('…seen leaving, not cut', (await lvc(page)).exitStage > 3, await lvc(page));
+    ok('…the output reports nothing on', !!(await until(() => lastOut().some((o) => o.state === 'IDLE'))), lastOut());
+    await resetLv(page);
+    await ev({ type: 'RALLY', winner: 'A', outcome: 'GENERAL' });
+    await ev({ type: 'RALLY', winner: 'B', outcome: 'GENERAL' });
+    await sleep(2500);
+    ok('points scored after it do NOT bring it back (not one frame)', (await state(page)) === 'IDLE' && (await lvc(page)).stage === 0, await lvc(page));
+    r = await take('intro', {}, 2);
+    ok('a graphic taken now comes straight in (no bar to wait for)', await waitOnAir(page, r.graphic.id) && (await history(page)).slice(-3).join() === 'IDLE,GRAPHIC_ENTERING,GRAPHIC_VISIBLE', (await history(page)).slice(-4));
+    ok('…ends on its time — and nothing comes back after it', await waitState(page, 'IDLE', 9000));
+    await sleep(1500);
+    ok('…not one frame of the bar since it was taken off air', (await lvc(page)).stage === 0 && (await counts(page)).overlayIn === before.overlayIn, { lv: await lvc(page), before, now: await counts(page) });
+    await page.screenshot({ path: path.join(OUT, 'lifecycle-live-off.png') });
+
+    head('THE CORNER BUG REPLACES THE SCORE BAR — never both, never a cut');
+    r = await cmd('live-on', { layout: 'compact' });
+    ok('TAKE ON AIR the corner bug: it comes in by its entrance', r.ok && await waitState(page, 'OVERLAY_VISIBLE') && await page.evaluate(() => window.__vbOverlay.C.barLayout === 'compact') && (await history(page)).slice(-2).join() === 'OVERLAY_ENTERING,OVERLAY_VISIBLE', (await history(page)).slice(-3));
+    ok('…the corner bug on screen, the bar not', await page.evaluate(() => getComputedStyle(document.getElementById('corner')).display !== 'none' && getComputedStyle(document.getElementById('stage')).display === 'none'));
+    ok('…the output reports the corner bug', !!(await until(() => lastOut().some((o) => o.state === 'OVERLAY_VISIBLE' && o.layout === 'compact'))), lastOut());
+    sc = await score();
+    const cornerPts = await page.evaluate(() => ['#cr0', '#cr1'].map((q) => document.querySelector(q + ' .cp .roll .n:last-child').textContent));
+    ok('…with the latest score (the points scored while nothing was on air)', cornerPts[0] === String(sc.points.A) && cornerPts[1] === String(sc.points.B), { corner: cornerPts, server: sc.points });
+    await ev({ type: 'RALLY', winner: 'B', outcome: 'GENERAL' });
+    sc = await score();
+    ok('…a point while it is up: it follows at once', await page.waitForFunction((b) => document.querySelector('#cr1 .cp .roll .n:last-child').textContent === b, String(sc.points.B), { timeout: 5000 }).then(() => true, () => false));
+    await page.screenshot({ path: path.join(OUT, 'lifecycle-live-corner.png') });
+    await resetLv(page);
+    r = await cmd('live-on', { layout: 'bar' });
+    ok('TAKE ON AIR the score bar: the corner bug leaves, then the bar comes in', r.ok && await page.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'bar', null, { timeout: 12000 }).then(() => true, () => false) && (await history(page)).slice(-4).join() === 'OVERLAY_EXITING,IDLE,OVERLAY_ENTERING,OVERLAY_VISIBLE', (await history(page)).slice(-5));
+    sc = await score(); bb = await bars(page);
+    ok('…the bar with the latest score', bb.a === String(sc.points.A) && bb.b === String(sc.points.B), { bar: bb, server: sc.points });
+    let lv = await lvc(page);
+    ok('…the corner bug was seen leaving (an exit, not a cut)', lv.exitCorner > 3, lv);
+    ok('…and not one frame with both on screen', lv.both === 0 && lv.stage > 0, lv);
+    await resetLv(page);
+    r = await cmd('live-on', { layout: 'compact' });
+    await page.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && window.__vbOverlay.C.barLayout === 'compact', null, { timeout: 12000 });
+    lv = await lvc(page);
+    ok('…and back: the bar leaves by its exit, then the corner bug — never both', lv.exitStage > 3 && lv.both === 0 && lv.corner > 0, lv);
+
+    head('OFF AIR UNDER A GRAPHIC — nothing returns when it goes');
+    r = await take('standings', {}, 'hold');
+    const under = r.graphic.id;
+    ok('a held graphic over the corner bug', await waitOnAir(page, under));
+    r = await cmd('live-off', { layout: 'compact' });
+    ok('TAKE OFF AIR the corner bug meanwhile: the graphic stays on air', r.ok && r.graphic.scene === 'standings' && (await state(page)) === 'GRAPHIC_VISIBLE', r.graphic);
+    await resetLv(page);
+    await cmd('stop', { id: under });
+    ok('dismissed: nothing comes back', await waitState(page, 'IDLE'));
+    await sleep(1800);
+    lv = await lvc(page);
+    ok('…not one frame of the corner bug or the bar', lv.corner === 0 && lv.stage === 0 && (await state(page)) === 'IDLE', lv);
+
+    head('HIDE EVERYTHING — a timer cannot bring anything back; RESTORE');
+    await cmd('live-on', { layout: 'bar' });
+    await waitState(page, 'OVERLAY_VISIBLE');
+    r = await take('toss', {}, 2);
+    const timed = r.graphic;
+    await waitOnAir(page, timed.id);
+    r = await cmd('clean');
+    ok('hide everything while a 2 s graphic is up: everything goes', r.ok && r.graphic.clean && await waitState(page, 'IDLE'));
+    await resetLv(page);
+    await page.waitForTimeout(Math.max(0, timed.expiresAt - Date.now()) + 2000);
+    lv = await lvc(page);
+    ok('…past that graphic\'s time: still nothing (no timer revived it)', (await state(page)) === 'IDLE' && lv.stage === 0 && lv.corner === 0 && await page.evaluate(() => !document.querySelector('#gfx .scene')), lv);
+    r = await cmd('live');
+    ok('RESTORE LIVE OVERLAY: the score bar the operator had on air', r.ok && await waitState(page, 'OVERLAY_VISIBLE') && await page.evaluate(() => window.__vbOverlay.C.barLayout === 'bar'));
+
+    head('AUTOMATIC ⇄ MANUAL — what shows keeps showing, no flash');
+    before = await counts(page);
+    await resetLv(page);
+    r = await cmd('live-mode', { mode: 'auto' });
+    ok('to Automatic (the tournament\'s layout is the bar on air)', r.ok && r.graphic.live.mode === 'auto', r.graphic);
+    await sleep(1500);
+    r = await cmd('live-mode', { mode: 'manual' });
+    ok('…and back to Manual', r.ok && r.graphic.live.mode === 'manual' && r.graphic.live.layout === 'bar', r.graphic);
+    await sleep(1500);
+    after = await counts(page);
+    lv = await lvc(page);
+    ok('…the bar never left nor re-entered', (await state(page)) === 'OVERLAY_VISIBLE' && after.overlayIn === before.overlayIn && after.overlayOut === before.overlayOut && lv.exitStage === 0, { before, after, lv });
+    head('CONFLICTING COMMANDS — rapid takes, a mode change and hide everything mid-transition');
+    await page.evaluate(() => { window.__maxScenes = 0; });
+    const c1 = take('intro', {}, 2);                    // the bar starts leaving
+    await sleep(150);
+    const c2 = cmd('live-mode', { mode: 'auto' });      // the mode changed mid-transition
+    await sleep(150);
+    const c3 = take('standings', {}, 'hold');           // replaced before it is even in
+    await sleep(350);
+    const c4 = cmd('clean');                            // hide everything during an entrance
+    const rs = await Promise.all([c1, c2, c3, c4]);
+    ok('every command answered (none lost)', rs.every((x) => x && x.ok), rs.map((x) => x && (x.ok || x.error)));
+    ok('…it ends hidden: nothing on screen', await waitState(page, 'IDLE') && await page.evaluate(() => !document.querySelector('#gfx .scene')));
+    await resetLv(page);
+    await page.waitForTimeout(4500);                    // well past the 2 s intro's time
+    lv = await lvc(page);
+    ok('…no stale timer or command brings anything back', (await state(page)) === 'IDLE' && lv.stage === 0 && lv.corner === 0 && await page.evaluate(() => !document.querySelector('#gfx .scene')), { lv, state: await state(page) });
+    v = await violations(page);
+    ok('…never two graphics mounted, never one on the bar', v.max <= 1 && v.vio.length === 0, v);
+    r = await cmd('live');
+    ok('RESTORE: the live overlay (Automatic, the tournament\'s bar) comes back', r.ok && r.graphic.live.mode === 'auto' && await waitState(page, 'OVERLAY_VISIBLE') && await page.evaluate(() => window.__vbOverlay.C.barLayout === 'bar'));
+
+    r = await cmd('live-off', { layout: 'bar' });
+    await waitState(page, 'IDLE');
+    await ctx.close();
+    ({ ctx, page } = await openOverlay());
+    await page.waitForFunction(() => document.body.classList.contains('ready'), null, { timeout: 12000 });
+    await sleep(2500);
+    ok('a reloaded overlay (vMix restart) with the bar off air: the bar never comes in', (await state(page)) === 'IDLE' && (await counts(page)).overlayIn === 0 && (await lvc(page)).stage === 0, { state: await state(page), counts: await counts(page) });
+    r = await cmd('live-mode', { mode: 'auto' });
+    ok('Automatic again: the tournament\'s bar comes in', r.ok && await waitState(page, 'OVERLAY_VISIBLE'));
+    v = await violations(page);
+    ok('all along: never a graphic on the live overlay', v.vio.length === 0, v.vio);
     await ctx.close();
 
     head('A TEAM LOGO THAT WILL NOT LOAD: the team’s initials on its colour, never a broken image');
