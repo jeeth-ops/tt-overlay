@@ -218,6 +218,7 @@
       libero: { A: null, B: null },   // { liberoId, replaced } while a libero is on court
       leftSide: null,                 // which team is on the scorer's left right now
       barred: { A: {}, B: {} },       // playerId -> reason (disqualified / exceptional sub / expelled for a set)
+      delays: { A: 0, B: 0 },         // delay sanctions so far this match (FIVB 16.2: the first is a warning, every later one a penalty)
       rallies: 0,                     // every rally played, replays included
       winner: null,
       result: null,
@@ -661,6 +662,13 @@
         if (!sk) return fail('SANCTION_INVALID', 'Choose the sanction');
         if (ev.playerId && !playerOf(ns, ev.team, String(ev.playerId))) return fail('INVALID_PLAYER', 'That player is not in the squad');
         if (sk.point && state.status !== 'in_set') return fail('NO_SET_IN_PROGRESS', 'A penalty point is given during a set');
+        // FIVB 16.2: a team's first delay in the match is a delay warning,
+        // the second and every later one a delay penalty.
+        var soft3 = null;
+        if (ev.kind === 'DELAY_WARNING' && state.delays[ev.team] > 0) soft3 = fail('DELAY_REPEAT', ns.teams[ev.team].name + ' already had a delay sanction this match — a second delay is a delay penalty (FIVB 16.2.2)', true);
+        if (ev.kind === 'DELAY_PENALTY' && state.delays[ev.team] === 0) soft3 = fail('DELAY_FIRST', 'The first delay by ' + ns.teams[ev.team].name + ' in a match is a delay warning, not a penalty (FIVB 16.2.1)', true);
+        if (soft3 && !ov) return soft3;
+        if (ev.kind === 'DELAY_WARNING' || ev.kind === 'DELAY_PENALTY') state.delays[ev.team] += 1;
         if (sk.barMatch && ev.playerId) state.barred[ev.team][String(ev.playerId)] = 'disqualified for the match';
         if (sk.barSet && ev.playerId) state.barred[ev.team][String(ev.playerId)] = 'expelled for the set';
         effects.push({ type: 'SANCTION', team: ev.team, kind: ev.kind, playerId: ev.playerId || null });
@@ -669,7 +677,7 @@
         if ((sk.barMatch || sk.barSet) && ev.playerId && state.status === 'in_set' && state.positions[ev.team].indexOf(String(ev.playerId)) >= 0) {
           effects.push({ type: 'MUST_REPLACE', team: ev.team, playerId: String(ev.playerId) });
         }
-        return { ok: true, effects: effects };
+        return { ok: true, effects: effects, overridden: soft3 ? soft3.code : null };
       }
       case 'NOTE': {
         state.notes += 1;
@@ -681,6 +689,16 @@
         // to win — the defaulting team keeps the points and sets it has.
         if (!isTeam(ev.team)) return fail('INVALID_TEAM', 'Choose the team that forfeits');
         var loserT = ev.team, winT = other(loserT);
+        // FIVB 6.4.3: a team INCOMPLETE for the set loses that set only — the
+        // opponent gets the points it needs, the match goes on.
+        if (ev.scope === 'set') {
+          if (state.status !== 'in_set') return fail('NO_SET_IN_PROGRESS', 'A team is declared incomplete for the set during that set');
+          set.points[winT] = Math.max(set.target, set.points[loserT] + state.rules.winBy, set.points[winT]);
+          set.forfeit = true;
+          effects.push({ type: 'SET_INCOMPLETE', team: loserT, set: set.number });
+          completeSet(state, set, winT, at, effects);
+          return { ok: true, effects: effects };
+        }
         if (state.status === 'in_set') {
           var tgt = set.target;
           set.points[winT] = Math.max(tgt, set.points[loserT] + state.rules.winBy, set.points[winT]);

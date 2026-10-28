@@ -128,6 +128,8 @@ function roster(prefix) {
   eq('the logo is served as an image', [lg.status, lg.headers['content-type']], [200, 'image/png']);
   const dup = await api('POST', '/api/volleyball/teams', { json: { name: 'Dup', players: [{ name: 'A', number: '7' }, { name: 'B', number: '7' }] }, token: TOK.work });
   eq('two players with the same jersey number are refused', dup.status, 400);
+  const libCap = await api('POST', '/api/volleyball/teams', { json: { name: 'LibCap', players: [{ name: 'A', number: '1', libero: true, captain: true }, { name: 'B', number: '2' }] }, token: TOK.work });
+  eq('a libero as team captain is refused (FIVB 19.1)', [libCap.status, /libero cannot be the team captain/.test(JSON.stringify(libCap.json))], [400, true]);
 
   const tr = await api('POST', '/api/volleyball/tournaments', { json: { name: 'Mumbai Volley League', venue: 'NSCI Dome', city: 'Mumbai', startDate: '2026-11-01', endDate: '2026-11-08', teamIds: teams.map((t) => t.teamId), format: { type: 'league' } }, token: TOK.work });
   const T = tr.json.tournament;
