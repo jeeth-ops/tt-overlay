@@ -425,6 +425,64 @@ head('FORFEIT / ABANDON');
   eq('…and nothing more is scored', m3.point('A', null, true).code, 'MATCH_OVER');
 }
 
+head('DELAY SANCTIONS (FIVB 16.2) · INCOMPLETE FOR THE SET (FIVB 6.4.3)');
+{
+  const m = Match().begin();
+  eq('a team\'s first delay in the match cannot be a delay penalty', m.send('SANCTION', { team: 'A', kind: 'DELAY_PENALTY' }, true).code, 'DELAY_FIRST');
+  m.send('SANCTION', { team: 'A', kind: 'DELAY_WARNING' });
+  eq('the first delay: a warning, no point', m.s.points, { A: 0, B: 0 });
+  eq('a second delay cannot be another warning', m.send('SANCTION', { team: 'A', kind: 'DELAY_WARNING' }, true).code, 'DELAY_REPEAT');
+  m.send('SANCTION', { team: 'A', kind: 'DELAY_PENALTY' });
+  eq('…it is a delay penalty: point and service to the opponent', [m.s.points, m.s.serving], [{ A: 0, B: 1 }, 'B']);
+  eq('the other team\'s first delay is still only a warning', m.send('SANCTION', { team: 'B', kind: 'DELAY_PENALTY' }, true).code, 'DELAY_FIRST');
+  m.to(10, 12);
+  m.send('FORFEIT', { team: 'A', scope: 'set', reason: 'incomplete for the set' });
+  eq('incomplete for the SET: B wins set 1 with the points it needs, A keeps its 10, the match goes on', [m.s.status, m.s.setsWon, m.s.sets[0].A, m.s.sets[0].B, m.s.sets[0].forfeit], ['set_break', { A: 0, B: 1 }, 10, 25, true]);
+  m.lineups(2); m.start(2);
+  eq('…set 2 starts as usual', [m.s.status, m.s.set], ['in_set', 2]);
+}
+
+head('A PROFESSIONAL MATCH, RULE BY RULE (FIVB 2025-2028)');
+{
+  const m = Match().begin();
+  eq('best of five, 25-point sets, 15 in the fifth, no point cap', [m.s.bestOf, m.s.setsToWin, m.s.target, m.state.rules.decidingSetPoints, m.state.rules.pointCap, m.state.rules.official], [5, 3, 25, 15, null, true]);
+  m.to(24, 24);
+  m.point('A'); m.point('B'); m.point('A');
+  eq('24-24 is not the end: play on until two clear (26-25 still going)', [m.s.status, m.s.points], ['in_set', { A: 26, B: 25 }]);
+  m.point('A');
+  eq('…27-25 wins it', [m.s.setsWon, m.state.sets[0].points], [{ A: 1, B: 0 }, { A: 27, B: 25 }]);
+  m.lineups(2); m.start(2);
+  eq('set 2: the team that did not serve first in set 1 serves first, and the teams have changed courts', [m.s.serving, m.s.leftSide], ['B', 'B']);
+  const before = m.state.positions.A.slice();
+  m.point('A');
+  eq('a side-out: the team gaining the serve rotates one position clockwise (II → I)', m.state.positions.A, [before[1], before[2], before[3], before[4], before[5], before[0]]);
+  m.point('A');
+  eq('…and does not rotate again while it keeps serving', m.state.positions.A, [before[1], before[2], before[3], before[4], before[5], before[0]]);
+  m.send('TIMEOUT', { team: 'B' }); m.point('A'); m.send('TIMEOUT', { team: 'B' });
+  eq('two 30-second time-outs per team per set', [m.send('TIMEOUT', { team: 'B' }, true).code, m.state.rules.timeoutSeconds], ['TIMEOUT_LIMIT', 30]);
+  eq('six substitutions per team per set', m.state.rules.substitutionsPerSet, 6);
+  m.winSet('A');
+  m.lineups(3); m.start(3);
+  m.winSet('B');
+  m.lineups(4); m.start(4);
+  m.winSet('B');
+  eq('2-2 after four sets', m.s.setsWon, { A: 2, B: 2 });
+  eq('the deciding set needs its own toss first', m.send('SET_START', { set: 5 }, true).code, 'TOSS_REQUIRED');
+  m.toss({ set: 5, winner: 'B', choice: 'serve', leftSide: 'B' });
+  m.lineups(5); m.start(5);
+  eq('set 5: to 15, the toss winner serves', [m.s.target, m.s.deciding, m.s.serving], [15, true, 'B']);
+  m.to(7, 6);
+  eq('no change of courts before the leader reaches 8', m.s.sideSwitched, false);
+  m.point('A');
+  eq('…courts change when the leading team reaches 8 (8-6)', [m.s.sideSwitched, m.s.points], [true, { A: 8, B: 6 }]);
+  m.to(14, 14);
+  m.point('A');
+  eq('15-14 is not enough in the fifth set', m.s.status, 'in_set');
+  m.point('A');
+  eq('16-14: A wins the match 3-2', [m.s.status, m.s.winner, m.s.setsWon], ['completed', 'A', { A: 3, B: 2 }]);
+  ok('the live ledger and a full replay agree all the way', m.consistent());
+}
+
 head('RULES');
 {
   const fivb = E.normalizeRules({});

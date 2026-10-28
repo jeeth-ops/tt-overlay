@@ -256,6 +256,7 @@ module.exports = function setupVolleyball(deps) {
       numbers.set(p.number, p.name);
     });
     if (out.filter((p) => p.captain).length > 1) errors.push('Only one captain per team');
+    if (out.some((p) => p.captain && p.libero)) errors.push('A libero cannot be the team captain (FIVB 19.1)');
     return { players: out, errors };
   }
 
@@ -774,6 +775,7 @@ module.exports = function setupVolleyball(deps) {
         const max = (cur.rules || E.normalizeRules({})).maxLiberos;
         if (picked.filter((p) => p.libero).length > max) return res.status(400).json({ success: false, error: `At most ${max} libero(s) per team` });
         if (picked.filter((p) => p.captain).length > 1) return res.status(400).json({ success: false, error: 'One captain per team' });
+        if (picked.some((p) => p.captain && p.libero)) return res.status(400).json({ success: false, error: 'A libero cannot be the team captain (FIVB 19.1)' });
         if (m.status !== 'scheduled') {
           // once started, players can be added but never taken away — the
           // ledger may already name them
@@ -931,7 +933,7 @@ module.exports = function setupVolleyball(deps) {
       case 'ROTATE': put('team', team(raw.team)); put('direction', raw.direction === -1 ? -1 : 1); put('reason', str(raw.reason, 200)); break;
       case 'SANCTION': put('team', team(raw.team)); put('playerId', pid(raw.playerId)); put('kind', E.SANCTIONS[raw.kind] ? raw.kind : undefined); put('reason', str(raw.reason, 200)); break;
       case 'NOTE': put('text', str(raw.text, 500)); break;
-      case 'FORFEIT': put('team', team(raw.team)); put('reason', str(raw.reason, 200)); break;
+      case 'FORFEIT': put('team', team(raw.team)); put('reason', str(raw.reason, 200)); put('scope', raw.scope === 'set' ? 'set' : undefined); break;
       case 'ABANDON': put('reason', str(raw.reason, 200)); break;
       case 'UNDO': case 'REDO': put('target', idOk(raw.target) ? raw.target : undefined); put('reason', str(raw.reason, 200)); break;
       case 'VOID': put('target', idOk(raw.target) ? raw.target : undefined); put('reason', str(raw.reason, 200)); break;

@@ -1276,7 +1276,20 @@
       $$('[data-p]', sh.el).forEach((b) => b.onclick = () => { pid = pid === b.dataset.p ? null : b.dataset.p; $$('[data-p]', sh.el).forEach((x) => x.classList.toggle('on', x.dataset.p === pid)); });
       $('#ok', sh.el).onclick = () => { sh.close(); send({ type: 'SANCTION', team, kind: k, playerId: pid || undefined }); };
     });
-    if (kind === 'forfeit') return teamPick('Which team forfeits?', async (team) => { const reason = await VB.prompt(`${teamOf(team).name} forfeit`, 'FIVB 6.4: the other team is given the points and sets it needs; the forfeiting team keeps what it has.', 'Reason', 'Forfeit'); if (reason) send({ type: 'FORFEIT', team, reason }); });
+    if (kind === 'forfeit') return teamPick('Which team forfeits / is incomplete?', async (team) => {
+      // FIVB 6.4.3: incomplete for the SET loses that set only; in default / incomplete for the MATCH loses the match
+      let scope = 'match';
+      if (s.status === 'in_set') {
+        scope = await new Promise((done) => {
+          const sh = VB.sheet(`<h3>${esc(teamOf(team).name)} — this set or the match?</h3><p class="small muted" style="margin-top:6px">FIVB 6.4.3: a team incomplete for the <b>set</b> loses that set (the other team gets the points it needs) and the match goes on. In default or incomplete for the <b>match</b>, it loses the match.</p>
+            <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn" data-sc="set">Loses this set (set ${s.set})</button><button class="btn danger" data-sc="match">Loses the match</button></div>`, { onClose: () => done(null) });
+          $$('[data-sc]', sh.el).forEach((b) => b.onclick = () => { done(b.dataset.sc); sh.close(); });
+        });
+        if (!scope) return;
+      }
+      const reason = await VB.prompt(`${teamOf(team).name} ${scope === 'set' ? 'incomplete for set ' + s.set : 'forfeit'}`, scope === 'set' ? 'FIVB 6.4.3: the other team is given the points it needs to win this set; the match goes on.' : 'FIVB 6.4: the other team is given the points and sets it needs; the forfeiting team keeps what it has.', 'Reason', scope === 'set' ? 'Set lost' : 'Forfeit');
+      if (reason) send(Object.assign({ type: 'FORFEIT', team, reason }, scope === 'set' ? { scope: 'set' } : {}));
+    });
     if (kind === 'abandon') { const reason = await VB.prompt('Abandon the match', 'No result is recorded and the match is not counted in the standings.', 'Reason', 'Abandon'); if (reason) send({ type: 'ABANDON', reason }); }
   }
   async function auditSheet() {
