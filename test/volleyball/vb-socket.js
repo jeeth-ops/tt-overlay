@@ -4,7 +4,7 @@
 //
 //   const s = await connectVb(port, { idToken: 'tok' });
 //   const reply = await s.emitAck('vb:join', { matchId });
-//   s.on('vb:update', fn); await s.close();
+//   s.on('vb:update', fn); s.emit('vb:output', state); await s.close();
 const http = require('http');
 const NSP = '/volleyball';
 
@@ -65,6 +65,7 @@ function connectVb(port, auth) {
     await ready;
     return {
       on(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
+      emit(ev, ...args) { return send('42' + NSP + ',' + JSON.stringify([ev, ...args])); },
       emitAck(ev, ...args) {
         const id = nextAck++;
         return new Promise((resolve) => { acks.set(id, (...res) => resolve(res.length > 1 ? res : res[0])); send('42' + NSP + ',' + id + JSON.stringify([ev, ...args])); });

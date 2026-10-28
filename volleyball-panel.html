@@ -89,19 +89,63 @@
   .ovr { display: grid; gap: 10px; }
   .sidebadge { position: absolute; top: 12px; right: 14px; font-size: 11px; font-weight: 700; color: var(--mute); }
   .chip.air.on { background: color-mix(in srgb, var(--red) 18%, transparent); color: var(--ink); }
-  .airbox { padding: 14px 16px; border-radius: 16px; background: var(--fill); }
-  .airbox.on { background: color-mix(in srgb, var(--red) 12%, var(--fill)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 70%, transparent); }
-  .airbox.off { background: color-mix(in srgb, var(--orange) 14%, var(--fill)); }
-  .gtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
-  .gtile { border-radius: 14px; background: var(--fill); min-width: 0; }
-  .gtile .gmain { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left; padding: 12px 14px 10px; border-radius: 14px; }
-  .gtile .gmain:hover { background: var(--fill2); }
+  /* 🎛 the on-air control centre */
+  .airbox { padding: 14px 16px; border-radius: 16px; background: var(--fill); transition: box-shadow .3s, background .3s; }
+  .airbox.k-on { background: color-mix(in srgb, var(--red) 11%, var(--fill)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 70%, transparent); }
+  .airbox.k-live { box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 55%, transparent); }
+  .airbox.k-move { box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 60%, transparent); }
+  .airbox.k-warn, .airbox.k-bad { background: color-mix(in srgb, var(--orange) 14%, var(--fill)); }
+  .airbox.k-bad { box-shadow: 0 0 0 2px var(--red); }
+  .airbox #airLine { font-size: 16px; letter-spacing: -.01em; }
+  .airbox .outs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--mute); }
+  .airbox .outs span { display: inline-flex; align-items: center; gap: 6px; } .airbox .outs .warn { color: var(--orange); font-weight: 700; }
+  .lvmode { margin: 0 0 8px; gap: 10px; }
+  .lvcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .lvcard { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px; border-radius: 16px; background: var(--fill); box-shadow: 0 0 0 1px var(--line); }
+  .lvcard.sel { box-shadow: 0 0 0 2px var(--blue); }
+  .lvcard.s-on { box-shadow: 0 0 0 2px var(--red); }
+  .lvtxt { display: grid; gap: 3px; justify-items: start; min-width: 0; }
+  .lvtxt small { color: var(--mute); font-size: 12px; line-height: 1.3; }
+  .lvtxt .btn { margin-top: 4px; }
+  .lvst { font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--mute); }
+  .s-on .lvst { color: var(--red); } .s-move .lvst { color: var(--orange); }
+  .lvp { position: relative; width: 132px; height: 74px; border-radius: 10px; overflow: hidden; background: linear-gradient(160deg, #2f4f2f, #16261a); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+  .lvbar { position: absolute; left: 10px; right: 10px; bottom: 8px; height: 14px; display: grid; grid-template-columns: 1fr 8px 13px 13px 8px 1fr; align-items: center; border-radius: 3px; overflow: hidden; background: #0a1136; font: 800 7px/1 system-ui; color: #fff; font-style: normal; }
+  .lvbar b { height: 100%; display: grid; place-items: center; background: var(--tc); white-space: nowrap; overflow: hidden; }
+  .lvbar em { font-style: normal; text-align: center; opacity: .7; } .lvbar strong { text-align: center; font-size: 8px; }
+  .lvcor { position: absolute; left: 7px; top: 7px; width: 58px; display: grid; gap: 1px; font: 800 6.5px/1 system-ui; color: #fff; font-style: normal; }
+  .lvcor span { display: grid; grid-template-columns: 3px 1fr 7px 9px; gap: 3px; align-items: center; height: 10px; padding-right: 2px; background: #0a1136; }
+  .lvcor b { height: 100%; background: var(--tc); } .lvcor em { font-style: normal; opacity: .7; text-align: center; } .lvcor strong { text-align: right; }
+  .gfxdur { margin: 16px 0 4px; }
+  .gtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 8px; }
+  .gtile { position: relative; border-radius: 14px; background: var(--fill); min-width: 0; box-shadow: 0 0 0 1px var(--line); transition: box-shadow .25s, opacity .25s; }
+  .gtile .gmain { display: grid; gap: 4px; width: 100%; text-align: left; padding: 12px 14px 10px; border-radius: 14px; }
+  .gtile .gmain:hover:not([aria-disabled="true"]) { background: var(--fill2); }
+  .gtile .gmain:active:not([aria-disabled="true"]) { transform: scale(.985); }
+  .gtile .gtop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .gtile .gmain small { font-weight: 600; color: var(--mute); font-size: 12px; line-height: 1.3; }
+  .gtile .gtime { font-size: 11px; font-weight: 700; color: var(--mute); font-variant-numeric: tabular-nums; }
+  .gtile .goff { position: absolute; right: 8px; bottom: 8px; }
   .gtile .sub { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
   .gtile .sub .chip { height: 28px; font-size: 12px; }
-  .gtile.na { opacity: .55; }
-  .gtile.onair { box-shadow: 0 0 0 2px var(--red); }
-  .ontag { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--red); }
+  .gtile.s-na { opacity: .55; } .gtile.s-na .gmain { cursor: not-allowed; }
+  .gtile.s-on { box-shadow: 0 0 0 2px var(--red); background: color-mix(in srgb, var(--red) 8%, var(--fill)); }
+  .gtile.s-taking { box-shadow: 0 0 0 2px var(--orange); animation: gtake 1.1s infinite; }
+  @keyframes gtake { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--orange) 35%, transparent); } }
+  .gtile.s-exiting { box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 60%, transparent); }
+  .gtile.s-failed { box-shadow: 0 0 0 2px var(--red); } .gtile.s-failed small { color: var(--red); }
+  .ontag { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .06em; color: var(--red); }
+  .ontag.taking, .ontag.exiting { color: var(--orange); }
+  .pcards .chip { height: 32px; }
+  .pcards.flash { animation: pflash 1.2s; border-radius: 12px; }
+  @keyframes pflash { 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 55%, transparent); } }
+  .lvmode > span { flex: 1 1 260px; }
+  @media (max-width: 560px) {
+    .gfxdur .seg { display: flex; flex-wrap: wrap; width: 100%; }
+    .gfxdur .seg button { flex: 1 1 auto; }
+    .lvcard { grid-template-columns: 104px minmax(0, 1fr); }
+    .lvp { width: 104px; height: 60px; }
+  }
   .linkrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
   .linkrow input { min-width: 0; font: 600 12.5px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .tlc { display: flex; gap: 4px; align-items: center; justify-content: flex-end; }
@@ -188,6 +232,9 @@
     P.socket.on('vb:match', (d) => { if (d.matchId === P.matchId) { Object.assign(P.match, d.match, { clipToken: P.match.clipToken, overlayKey: P.match.overlayKey, canManage: P.match.canManage }); rebuildSetupIfNeeded(); render(); } });
     P.socket.on('vb:report', (d) => { if (d.matchId === P.matchId) { P.match.report = Object.assign(P.match.report || {}, { status: d.status, version: d.version || (P.match.report && P.match.report.version) }); render(); } });
     P.socket.on('vb:graphic', (d) => { if (d.matchId === P.matchId) setAirState(d.graphic); });
+    // what the outputs (vMix, OBS, monitors) really show — ON AIR is read from these
+    P.socket.on('vb:outputs', (d) => { if (d.matchId === P.matchId) { P.outputs = d.outputs || []; renderAir(); } });
+    P.socket.on('vb:style', (d) => { if (P.match && d.tournamentId === P.match.tournamentId) { P.style = GX.normalizeStyle(d.style); renderAir(); } });
     setInterval(heartbeat, 10000);
     setInterval(renderStatus, 500);   // a time-out counts down
   }
@@ -202,6 +249,8 @@
     if (!r.ok) return gate('Match not found', 'It may have been deleted, or this account cannot open it.');
     if (!r.match.canManage) return gate('View only', 'Only the account that runs this tournament can score it. The public scorecard is open to everyone.');
     P.match = r.match;
+    P.style = GX.normalizeStyle(r.style);
+    P.outputs = r.outputs || [];
     P.graphic = null; setAirState(r.graphic);
     loadTournament();
     rebuild(r.events || []);
@@ -544,6 +593,7 @@
     renderView();
     if (P.CL) P.CL.reconcile();   // the helper hears of any attribution / undo
     renderAsk();
+    if (gfxSheet) paintGfx();     // what the match can show now (a point from another device too)
   }
   function renderView() {
     applyColors();
@@ -927,15 +977,19 @@
     $$('[data-g]').forEach((b) => b.onclick = () => graphic(b.dataset.g));
   }
 
-  /* ---------- graphics: what is on air (the server's word) and the controls ----------
-     One graphic at a time. Taking one sends the score bar off air on every
-     overlay; when it ends (dismissed, timed out, replaced) the live score
-     comes back. Times on screen are the server's: it ends a timed graphic
-     itself, so a panel that is closed (or offline) cannot leave one up. */
+  /* ---------- graphics: the on-air control centre ----------
+     What is on air is the server's word (one graphic at a time; it ends a
+     timed graphic itself, so a closed panel cannot leave one up) — and
+     whether it is really SHOWING is the outputs' word: every overlay on air
+     (vMix, OBS, a monitor) reports what it draws, and a card says ON AIR
+     only once one does. The live overlay — the score bar or the corner
+     bug — runs by itself (Automatic) or exactly as taken on and off air
+     here (Manual); a standalone graphic always steps it aside. */
   const GX = window.VolleyballGraphics;
   const airNow = () => Date.now() + (P.gOffset || 0);
   let gfxSheet = null;
   let gfxDur = VB.store.get('vb_gfx_dur', 'default');        // 'default' | 'hold' | seconds
+  const gfxBusy = {};                                        // a card whose command is on its way
   function setAirState(g) {
     if (!g || typeof g.seq !== 'number') return;
     if (P.graphic && typeof P.graphic.seq === 'number' && g.seq < P.graphic.seq) return;
@@ -953,32 +1007,43 @@
     return x;
   }
   const airLeft = (g) => (g && g.scene && g.expiresAt != null ? Math.max(0, Math.ceil((g.expiresAt - airNow()) / 1000)) : null);
+  const LIVE_NAME = GX.LIVE_NAMES;
+  // what the programme outputs (studio monitors aside) draw — shared with the studio
+  const onAirNow = () => GX.readOutputs(P.outputs, P.graphic, airNow());
+  const airLine = () => GX.airSummary(P.graphic, P.style, P.outputs, airNow(), airLabel(P.graphic));
   function renderAir() {
     const el = $('#air');
-    const g = P.graphic;
+    const g = P.graphic || {};
     if (el) {
-      if (g && g.scene) { const left = airLeft(g); el.className = 'chip air on'; el.innerHTML = `<span class="dot bad"></span>On air · ${esc(airLabel(g))} · ${left != null ? left + ' s' : 'hold'}`; }
-      else if (g && g.clean) { el.className = 'chip air'; el.innerHTML = '<span class="dot wait"></span>Overlay hidden'; }
-      else { el.className = 'chip air'; el.innerHTML = '<span class="dot ok"></span>Live score'; }
+      const n = onAirNow();
+      if (g.scene) {
+        const left = airLeft(g), c = GX.sceneCard(g.scene, g, P.outputs, airNow()) || {}, showing = n.up.length > 0;
+        const word = showing ? 'On air' : !n.o.length ? 'On air (no output)' : c.k === 'failed' ? 'Not showing' : 'Taking';
+        el.className = 'chip air on'; el.innerHTML = `<span class="dot ${showing ? 'bad' : 'wait'}"></span>${word} · ${esc(airLabel(g))} · ${left != null ? left + ' s' : 'hold'}`;
+      }
+      else if (g.clean) { el.className = 'chip air'; el.innerHTML = '<span class="dot wait"></span>Overlay hidden'; }
+      else { const choice = GX.liveLayout(g, P.style, null); el.className = 'chip air'; el.innerHTML = `<span class="dot ${choice ? 'ok' : ''}"></span>${choice ? (choice === 'bar' ? 'Live score' : 'Corner bug') : 'Live overlay off'}`; }
     }
     if (gfxSheet) paintGfx();
   }
-  setInterval(() => { if (P.graphic && P.graphic.scene && P.graphic.expiresAt != null) renderAir(); }, 1000);
-  async function airCmd(cmd) {
+  setInterval(() => { if (P.graphic && P.graphic.scene) renderAir(); }, 1000);
+  async function airCmd(cmd, key) {
     if (!P.socket) return { ok: false };
+    if (key) { if (gfxBusy[key]) return { ok: false, busy: true }; gfxBusy[key] = true; if (gfxSheet) paintGfx(true); }
     const r = await VB.ack(P.socket, 'vb:graphic', Object.assign({ matchId: P.matchId }, cmd));
-    if (r && r.graphic) setAirState(r.graphic);
+    if (key) delete gfxBusy[key];
+    if (r && r.graphic) setAirState(r.graphic); else if (gfxSheet) paintGfx(true);
     if (!r || !r.ok) toast(r && r.stale ? 'That graphic is no longer on air' : r && r.error && !/^[a-z-]+$/.test(r.error) ? r.error : 'Could not change the graphic — check the connection', 'err');
     return r || { ok: false };
   }
   // scorebug = the live score only, none = hide everything (the screens' own buttons use these)
   function graphic(scene, data, durationSec) {
-    if (scene === 'scorebug') return airCmd({ action: 'live' });
-    if (scene === 'none') return airCmd({ action: 'clean' });
+    if (scene === 'scorebug') return airCmd({ action: 'live' }, 'master');
+    if (scene === 'none') return airCmd({ action: 'clean' }, 'master');
     const cmd = { action: 'take', scene, data: data || {}, reqId: VB.uid() };
     const d = durationSec !== undefined ? durationSec : gfxDur;
     if (d !== 'default') cmd.durationSec = d;
-    return airCmd(cmd);
+    return airCmd(cmd, 'g:' + scene);
   }
   // what the match can show right now (the server checks again — this only greys out the obvious)
   function sceneHint(sc) {
@@ -1002,13 +1067,33 @@
       default: return { ok: true, hint: '' };
     }
   }
+  // A graphic card's state, from the server's state and what the outputs draw.
+  function cardState(sc) {
+    if (gfxBusy['g:' + sc]) return { k: 'taking', word: 'Taking to air…' };
+    const c = GX.sceneCard(sc, P.graphic, P.outputs, airNow());
+    if (c) return c;
+    const h = sceneHint(sc);
+    return h.ok ? { k: 'ready', word: '' } : { k: 'na', word: '', why: h.hint };
+  }
+  const durWord = (sc) => { const d = GX.defaultDuration(sc, P.style); return d == null ? 'held' : d + ' s'; };
+  // the player credited with the very last point (a named kill, ace or block) — never a guess
+  function lastScorer() {
+    const tl = P.L ? P.L.timeline : [];
+    for (let i = tl.length - 1; i >= 0; i--) {
+      const e = tl[i];
+      if (!e || e.type !== 'RALLY' || e.voided || e.invalid) continue;
+      const a = VBClipper.attributionOf(e, (t, id) => player(t, id));
+      return a.players.length && a.players[0].name ? a.players[0] : null;
+    }
+    return null;
+  }
   $('#gfxBtn').onclick = openGfx;
   function openGfx() {
     if (gfxSheet) return;
     gfxSheet = VB.sheet(`<div class="row wrapr"><h3 class="grow">On-air graphics</h3><a class="btn sm" href="/volleyball-templates?match=${esc(P.matchId)}" target="_blank" rel="noopener">Graphics studio ↗</a></div>
-      <p class="small muted" style="margin:4px 0 12px">One graphic at a time, always from the saved match. A graphic takes the screen: the score bar steps off and comes back, with the latest score, when it ends.</p>
       <div id="gfxAir"></div>
-      <div class="row wrapr" style="margin:14px 0 4px"><span class="small grow"><b>Time on screen</b> <span class="muted">for the next graphic</span></span>
+      <div class="section-title">The live overlay</div><div id="gfxLive"></div>
+      <div class="row wrapr gfxdur"><span class="small grow"><b>Time on screen</b> <span class="muted">for the next graphic you take</span></span>
         <div class="seg" id="gfxDur">${[['default', 'Tournament default'], ['hold', 'Hold'], [10, '10 s'], [20, '20 s'], [45, '45 s']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(v) === String(gfxDur)}">${l}</button>`).join('')}</div></div>
       <div id="gfxBody"></div>
       <div class="foot"><button class="btn" data-close>Done</button></div>`, { wide: true, onClose: () => { gfxSheet = null; } });
@@ -1016,8 +1101,17 @@
       gfxDur = b.dataset.v === 'default' || b.dataset.v === 'hold' ? b.dataset.v : Number(b.dataset.v);
       VB.store.set('vb_gfx_dur', gfxDur);
       $$('#gfxDur button', gfxSheet.el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      paintGfx(true);
     });
     paintGfx(true);
+  }
+  // a small, faithful sketch of each live layout with the real teams and score
+  function livePreview(lay) {
+    const s = P.L ? E.summary(P.L.setup, P.L.state) : null;
+    const pts = s ? s.points : { A: 0, B: 0 }, sets = s ? s.setsWon : { A: 0, B: 0 };
+    const t = (x) => `style="--tc:${esc(VB.teamColor(teamOf(x)))}"`;
+    if (lay === 'bar') return `<div class="lvp"><i class="lvbar"><b ${t('A')}>${esc(teamOf('A').shortName || 'A')}</b><em>${sets.A}</em><strong>${pts.A}</strong><strong>${pts.B}</strong><em>${sets.B}</em><b ${t('B')}>${esc(teamOf('B').shortName || 'B')}</b></i></div>`;
+    return `<div class="lvp"><i class="lvcor">${['A', 'B'].map((x) => `<span><b ${t(x)}></b>${esc(teamOf(x).shortName || x)}<em>${sets[x]}</em><strong>${pts[x]}</strong></span>`).join('')}</i></div>`;
   }
   function paintGfx(full) {
     if (!gfxSheet) return;
@@ -1025,42 +1119,95 @@
     const on = !!g.scene, left = airLeft(g);
     const both = on && g.scene === 'lineup' && !(g.data && g.data.team);
     const swapped = both && g.swapAt != null && airNow() >= g.swapAt;
-    $('#gfxAir', el).innerHTML = `<div class="airbox ${on ? 'on' : g.clean ? 'off' : ''}"><div class="row wrapr">
-      <span class="dot ${on ? 'bad' : g.clean ? 'wait' : 'ok'}"></span>
-      <div class="grow" style="min-width:200px"><b>${on ? 'ON AIR · ' + esc(airLabel(g)) : g.clean ? 'Everything is hidden' : 'The live score is on air'}</b>
-        <div class="tiny muted">${on ? (left != null ? `${left} s left — then the live score returns` : 'Held until you dismiss it') : g.clean ? 'Nothing shows on the overlay until you bring it back.' : 'Pick a graphic below to take it to air.'}</div></div>
+    const line = airLine(), n = onAirNow();
+    // Each part is rebuilt only when it changes — the count-down alone is
+    // written in place, so a button is never replaced under a press.
+    const put = (box, html, bind) => {
+      const k = html.replace(/\d+ s left/g, '');
+      if (box.dataset.k === k) { $$('[data-left]', box).forEach((x) => { x.textContent = left != null ? left + ' s left' : x.textContent; }); return; }
+      box.dataset.k = k; box.innerHTML = html; bind();
+    };
+    // 1 · what is on air, and the master controls
+    put($('#gfxAir', el), `<div class="airbox k-${line.k}"><div class="row wrapr">
+      <span class="dot ${line.k === 'on' ? 'bad' : line.k === 'live' ? 'ok' : line.k === 'idle' ? '' : 'wait'}"></span>
+      <div class="grow" style="min-width:200px"><b id="airLine">${esc(line.t)}</b><div class="tiny muted">${esc(line.d).replace(/\d+ s left/, (x) => `<span data-left>${x}</span>`)}</div></div>
       ${both && !swapped ? '<button class="btn sm" data-a="next">Next team</button>' : ''}
       ${on && left != null ? '<button class="btn sm" data-a="hold">Hold</button>' : ''}
       ${on ? '<button class="btn sm primary" data-a="stop">Dismiss · back to live</button>' : ''}
-      ${!on && g.clean ? '<button class="btn sm primary" data-a="live">Show the score bar</button>' : ''}
-      ${!g.clean ? '<button class="btn sm" data-a="clean">Hide everything</button>' : ''}</div></div>`;
-    $$('[data-a]', $('#gfxAir', el)).forEach((b) => b.onclick = () => {
+      ${g.clean ? '<button class="btn sm primary" data-a="live">Restore live overlay</button>' : '<button class="btn sm danger" data-a="clean">Hide everything</button>'}</div>
+      <div class="outs tiny">${n.o.length ? n.o.map((o) => `<span><i class="dot ${o.state === 'GRAPHIC_VISIBLE' || o.state === 'OVERLAY_VISIBLE' ? 'ok' : o.state === 'IDLE' ? '' : 'wait'}"></i>Output ${esc(o.layoutParam ? '(' + (o.layoutParam === 'compact' ? 'corner' : o.layoutParam === 'graphics' ? 'graphics only' : 'score bar') + ')' : '')} · ${esc(o.state === 'GRAPHIC_VISIBLE' ? airLabel(g) || 'graphic' : o.state === 'OVERLAY_VISIBLE' ? LIVE_NAME[o.layout] || 'the live overlay' : o.state === 'IDLE' ? 'nothing' : o.state.toLowerCase().replace(/_/g, ' '))}</span>`).join('') : '<span class="warn">The overlay link for vMix / OBS: ⋯ → Match links</span>'}</div></div>`,
+    () => $$('[data-a]', $('#gfxAir', el)).forEach((b) => b.onclick = () => {
       const a = b.dataset.a;
-      if (a === 'next') airCmd({ action: 'next', id: g.id });
-      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' });
-      else if (a === 'stop') airCmd({ action: 'stop', id: g.id });
-      else airCmd({ action: a });
+      if (a === 'next') airCmd({ action: 'next', id: g.id }, 'master');
+      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' }, 'master');
+      else if (a === 'stop') airCmd({ action: 'stop', id: g.id }, 'master');
+      else airCmd({ action: a }, 'master');
+    }));
+    // 2 · the live overlay: Automatic or Manual, and each layout on / off air
+    const lv = GX.liveOf(g);
+    const liveCard = (lay) => {
+      const c = GX.liveCard(lay, g, P.style, P.outputs, airNow(), airLabel(g)), chosen = c.chosen;
+      const st = gfxBusy['live:' + lay] ? ['move', 'Working…'] : [c.k, c.word];
+      const act = chosen && !g.clean ? `<button class="btn sm" data-lv="off" data-lay="${lay}">Take off air</button>` : `<button class="btn sm primary" data-lv="on" data-lay="${lay}">Take on air</button>`;
+      return `<div class="lvcard ${chosen && !g.clean ? 'sel' : ''} s-${st[0]}" data-lay="${lay}">${livePreview(lay)}<div class="lvtxt"><b>${LIVE_NAME[lay]}</b><span class="lvst">${esc(st[1])}</span>
+        <small>${lay === 'bar' ? 'Teams, sets and points across the bottom' : 'A compact score in the top corner'} · ${lv.mode === 'auto' ? (P.style.layout === lay ? 'Automatic: the tournament’s layout' : 'Automatic: not the tournament’s layout') : 'Manual: only as you take it'}</small>${act}</div></div>`;
+    };
+    put($('#gfxLive', el), `<div class="row wrapr lvmode"><span class="small grow">${lv.mode === 'auto' ? 'The tournament’s layout shows by itself and comes back after every graphic.' : 'Only what you take on air shows — a point or a timer never brings it back.'} The two are alternatives: taking one on air replaces the other.</span>
+        <div class="seg" id="lvMode"><button data-m="auto" aria-pressed="${lv.mode === 'auto'}">Automatic</button><button data-m="manual" aria-pressed="${lv.mode === 'manual'}">Manual</button></div></div>
+      <div class="lvcards">${liveCard('bar')}${liveCard('compact')}</div>`, () => {
+      $$('#lvMode [data-m]', el).forEach((b) => b.onclick = () => { if (b.getAttribute('aria-pressed') !== 'true') airCmd({ action: 'live-mode', mode: b.dataset.m }, 'mode'); });
+      $$('[data-lv]', el).forEach((b) => b.onclick = () => airCmd({ action: b.dataset.lv === 'on' ? 'live-on' : 'live-off', layout: b.dataset.lay }, 'live:' + b.dataset.lay));
     });
-    if (!full && $('#gfxBody', el).dataset.k === String(P.L ? P.L.seq : 0) + (g.scene || '') + (g.id || '')) return;
-    $('#gfxBody', el).dataset.k = String(P.L ? P.L.seq : 0) + (g.scene || '') + (g.id || '');
+    // 3 · the graphics, each with its real state
+    const k = [P.L ? P.L.seq : 0, g.id, g.scene, g.scene ? cardState(g.scene).k : '', JSON.stringify(n.o.map((o) => o.state + o.graphicId + (o.failed ? 1 : 0))), JSON.stringify(gfxBusy), String(gfxDur)].join('|');
+    if (!full && $('#gfxBody', el).dataset.k === k) {
+      if (left != null) $$('[data-left]', $('#gfxBody', el)).forEach((x) => { x.textContent = left + ' s left'; });
+      return;
+    }
+    $('#gfxBody', el).dataset.k = k;
     const st = P.L && P.L.state;
     const done = st ? st.sets.filter((x) => x.status === 'completed') : [];
+    const dat = g.data || {};
     const tile = (sc) => {
-      const h = sceneHint(sc), live = on && g.scene === sc;
-      const subs = sc === 'lineup' ? `<div class="sub"><button class="chip" data-t="lineup" data-team="">Both teams</button>${['A', 'B'].map((t) => `<button class="chip" data-t="lineup" data-team="${t}">${esc(teamOf(t).shortName || teamOf(t).name)}</button>`).join('')}</div>`
-        : sc === 'setSummary' && done.length > 1 ? `<div class="sub">${done.map((x) => `<button class="chip" data-t="setSummary" data-set="${x.number}">Set ${x.number}</button>`).join('')}</div>` : '';
-      return `<div class="gtile ${h.ok ? '' : 'na'} ${live ? 'onair' : ''}"><button class="gmain" data-t="${sc}" ${sc === 'playerStat' ? 'data-noop="1"' : ''}><b>${esc(GX.SCENES[sc].label)}</b>${live ? '<span class="ontag">● ON AIR</span>' : ''}<small>${esc(h.hint)}</small></button>${subs}</div>`;
+      const cs = cardState(sc), h = sceneHint(sc), isOn = g.scene === sc;
+      const pressed = (cond) => (isOn && cond ? ' on' : '');
+      const subs = sc === 'lineup' ? `<div class="sub"><button class="chip${pressed(!dat.team)}" data-t="lineup" data-team="">Both teams</button>${['A', 'B'].map((t) => `<button class="chip${pressed(dat.team === t)}" data-t="lineup" data-team="${t}">${esc(teamOf(t).shortName || teamOf(t).name)}</button>`).join('')}</div>`
+        : sc === 'setSummary' && done.length > 1 ? `<div class="sub">${done.map((x) => `<button class="chip${pressed(dat.set === x.number)}" data-t="setSummary" data-set="${x.number}">Set ${x.number}</button>`).join('')}</div>` : '';
+      const time = gfxDur === 'default' ? durWord(sc) : gfxDur === 'hold' ? 'held' : gfxDur + ' s';
+      // the player card: the player credited with the last point, else one picked below
+      const ls = sc === 'playerStat' ? lastScorer() : null;
+      const hint = sc === 'playerStat' ? (isOn ? airLabel(g) : ls ? `Last point: #${ls.number} ${short(ls.name)}` : 'Choose a player below') : h.hint;
+      const main = `<span class="gtop"><b>${esc(GX.SCENES[sc].label)}</b>${cs.word ? `<span class="ontag ${cs.k}">${esc(cs.word)}</span>` : ''}</span>
+          <small>${esc(cs.k === 'na' || cs.why ? cs.why : hint)}</small><span class="gtime" ${(cs.k === 'on' || cs.k === 'taking') && left != null ? 'data-left' : ''}>${cs.k === 'on' || cs.k === 'taking' ? (left != null ? left + ' s left' : 'held') : esc(time)}</span>`;
+      return `<div class="gtile s-${cs.k}" data-sc="${sc}"><button class="gmain" data-t="${sc}" ${ls ? `data-pid="${esc(ls.playerId)}"` : ''} ${cs.k === 'na' ? 'aria-disabled="true"' : ''}>${main}</button>
+        ${isOn && cs.k !== 'exiting' ? `<button class="btn xs ghost goff" data-off="${esc(g.id)}">Take off</button>` : ''}${subs}</div>`;
     };
-    $('#gfxBody', el).innerHTML = Object.keys(GX.GROUPS).map((grp) => `<div class="section-title">${esc(GX.GROUPS[grp])}</div><div class="gtiles">${GX.ORDER.filter((k) => GX.SCENES[k].group === grp).map(tile).join('')}</div>`).join('')
-      + `<div class="section-title">Player card</div><div class="row wrapr">${['A', 'B'].map((t) => P.L ? P.L.setup.teams[t].order.map((id) => `<button class="chip" data-ps="${esc(id)}">#${esc(player(t, id).number)} ${esc(short(player(t, id).name))}</button>`).join('') : '').join('')}</div>`;
+    // the player graphics: one press per player of the real squads
+    const pcs = cardState('playerStat');
+    const roster = ['A', 'B'].map((t) => (P.L ? P.L.setup.teams[t].order.map((id) => `<button class="chip${g.scene === 'playerStat' && dat.playerId === id ? ' on' : ''}" data-ps="${esc(id)}">${esc(teamOf(t).shortName || t)} · #${esc(player(t, id).number)} ${esc(short(player(t, id).name))}</button>`).join('') : '')).join('');
+    $('#gfxBody', el).innerHTML = Object.keys(GX.GROUPS).map((grp) => `<div class="section-title">${esc(GX.GROUPS[grp])}</div><div class="gtiles">${GX.ORDER.filter((x) => GX.SCENES[x].group === grp).map(tile).join('')}</div>`).join('')
+      + `<div class="section-title" id="pgHead">Player graphics <span class="muted" style="text-transform:none;letter-spacing:0">— a player card for anyone in the squads${g.scene === 'playerStat' ? ' · ' + esc(pcs.word) : ''}</span></div><div class="row wrapr pcards" id="pgRoster">${roster || '<span class="tiny muted">No players in the squads yet</span>'}</div>`;
     $$('[data-t]', $('#gfxBody', el)).forEach((b) => b.onclick = () => {
-      if (b.dataset.noop) return;
+      const sc = b.dataset.t, cs = cardState(sc);
+      if (cs.k === 'na') return toast(cs.why, 'err');
+      if (sc === 'playerStat' && !(cs.k === 'on' || cs.k === 'taking')) {
+        if (b.dataset.pid) return graphic('playerStat', { playerId: b.dataset.pid });
+        const r = $('#pgRoster', el); r.scrollIntoView({ behavior: 'smooth', block: 'center' }); r.classList.remove('flash'); void r.offsetWidth; r.classList.add('flash');
+        return toast('Choose the player for the card');
+      }
       const data = {};
       if (b.dataset.team) data.team = b.dataset.team;
       if (b.dataset.set) data.set = Number(b.dataset.set);
-      graphic(b.dataset.t, data);
+      if (b.classList.contains('gmain') && (cs.k === 'on' || cs.k === 'taking') && !b.dataset.team && !b.dataset.set) return toast(`${GX.SCENES[sc].label} is already on air — Take off to dismiss it`);
+      graphic(sc, data);
     });
-    $$('[data-ps]', $('#gfxBody', el)).forEach((b) => b.onclick = () => graphic('playerStat', { playerId: b.dataset.ps }));
+    $$('[data-off]', $('#gfxBody', el)).forEach((b) => b.onclick = () => airCmd({ action: 'stop', id: b.dataset.off }, 'master'));
+    $$('[data-ps]', $('#gfxBody', el)).forEach((b) => b.onclick = () => {
+      const cs = cardState('playerStat');
+      if (cs.k === 'na') return toast(cs.why, 'err');
+      if ((cs.k === 'on' || cs.k === 'taking') && (P.graphic.data || {}).playerId === b.dataset.ps) return toast('That player card is already on air — Take off to dismiss it');
+      graphic('playerStat', { playerId: b.dataset.ps });
+    });
   }
 
   /* ---------- corrections ---------- */

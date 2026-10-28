@@ -523,12 +523,7 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
       document.head.appendChild(l);
     }
     r.setProperty('--font', `"${f.family}","Barlow Condensed","Arial Narrow","Roboto Condensed",Arial,sans-serif`);
-    const layout = urlLayout || s.layout;
-    if (layout !== O.layout) {
-      document.body.classList.remove('L-' + O.layout);
-      O.layout = layout;
-    }
-    document.body.classList.add('L-' + O.layout);
+    pickLayout();
     O.barNamesKey = '';
     paint();
     setTimeout(refitAll, 80);
@@ -583,6 +578,7 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
     paint();
     document.body.classList.add('ready');   // the match is loaded (tools wait for this)
     request();
+    reportOutput(true);
   }
   function onUpdate(d) {
     if (!d || d.matchId !== O.matchId || !O.match) return;
@@ -615,10 +611,32 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
     if (g.seq < O.airSeq || (g.seq === O.airSeq && !fromJoin)) return;
     O.airSeq = g.seq;
     O.air = g;
+    if (pickLayout()) paint();
     if (fromJoin && g.scene) O.joined = g.id;   // what was already on air when this page (re)joined
     clearTimeout(expiryTimer);
     if (g.scene && g.expiresAt != null) expiryTimer = setTimeout(request, Math.max(0, g.expiresAt - serverNow()) + 5);
     if (!quiet) request();
+    reportOutput();   // the panels see this output has the new state (and what it does with it)
+  }
+
+  // Which live overlay this output shows: the tournament's in automatic, the
+  // operator's choice in manual — or none (then no score update brings it
+  // back). An output with its own ?layout= shows only that one. → changed?
+  function pickLayout() {
+    const want = urlLayout === 'graphics' ? 'graphics' : GX.liveLayout(O.air, O.style, urlLayout);
+    O.liveOff = !want || want === 'graphics';
+    const lay = want || O.layout;   // nothing on: the last one drawn stays drawn, hidden
+    const moved = lay !== O.layout;
+    if (moved) { O.layout = lay; O.barNamesKey = ''; }
+    drawLayout();
+    return moved;
+  }
+  // The page's layout class. The live overlay on screen keeps its own until
+  // it has left: the score bar plays its exit, THEN the corner bug comes in
+  // (never both, never a cut).
+  function drawLayout() {
+    const shown = /^OVERLAY_/.test(C.state) && C.barLayout && C.barLayout !== O.layout ? C.barLayout : O.layout;
+    ['bar', 'compact', 'graphics'].forEach((l) => document.body.classList.toggle('L-' + l, l === shown));
   }
 
   /* ---------- helpers ---------- */
@@ -802,18 +820,44 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
   function setState(s) {
     if (C.state === s) return;
     C.state = s;
+    drawLayout();
     C.history.push({ s, at: Date.now(), scene: C.scene ? C.scene.g.scene : (C.entering ? C.entering.scene : null) });
     if (C.history.length > 300) C.history.shift();
     if (O.debug) clearProblem();
     postPreview();
+    reportOutput();
   }
+  /* 📡 What this output really shows, told to the server: the panels show a
+     graphic ON AIR only once an output says it is up (never because a
+     button was pressed), and see a graphic that could not be drawn. Said
+     on every change and every 15 s; a studio monitor says it is one. */
+  const OUTPUT_ID = (() => { const n = () => 'o' + Math.random().toString(36).slice(2, 11); try { let v = sessionStorage.getItem('vb_output'); if (!v) { v = n(); sessionStorage.setItem('vb_output', v); } return v; } catch (e) { return n(); } })();
+  let outTimer = null, outSent = '';
+  function outputState() {
+    const g = C.scene ? C.scene.g : C.entering;
+    const airId = O.air && O.air.scene ? O.air.id : null;
+    return { matchId: O.matchId, outputId: OUTPUT_ID, monitor: qs.get('monitor') === '1', layoutParam: urlLayout,
+      state: C.state, graphicId: g ? g.id : null, scene: g ? g.scene : null, layout: /^OVERLAY_/.test(C.state) ? C.barLayout : null,
+      failed: airId && O.failed[airId] ? { id: airId, error: String(O.failed[airId]).slice(0, 160) } : null, airSeq: O.airSeq };
+  }
+  function reportOutput(force) {
+    if (O.preview || !O.socket || !O.socket.connected || !O.match) return;
+    clearTimeout(outTimer);
+    outTimer = setTimeout(() => {
+      const st = outputState(), k = JSON.stringify(st);
+      if (!force && k === outSent) return;
+      outSent = k;
+      O.socket.emit('vb:output', st);
+    }, 40);
+  }
+  setInterval(() => reportOutput(true), 15000);
   // what should be on screen now
   function target() {
     if (!O.match || !O.summary) return { kind: 'none' };
     const g = O.air;
     if (g && g.scene && !O.failed[g.id] && !(g.expiresAt != null && serverNow() >= g.expiresAt)) return { kind: 'graphic', g };
     if (g && g.clean) return { kind: 'none' };
-    if (O.layout === 'graphics') return { kind: 'none' };
+    if (O.layout === 'graphics' || O.liveOff) return { kind: 'none' };
     return { kind: 'overlay' };
   }
   // an entrance that the new target makes pointless is played back
@@ -847,6 +891,7 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
     if (s === 'IDLE') {
       if (t.kind === 'overlay') { await overlayIn(); return true; }
       if (t.kind === 'graphic') { await graphicIn(t.g); return true; }
+      C.afterGraphic = false;   // nothing came back after it: a later entrance is a fresh one
       if (backdropOn) { await backdropOut(); return true; }
       return false;
     }
@@ -875,6 +920,7 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
     setState(returning ? 'OVERLAY_RETURNING' : 'OVERLAY_ENTERING');
     if (!O.fontsReady) { await within(document.fonts ? document.fonts.ready : Promise.resolve(), 1200); O.fontsReady = true; }
     C.barLayout = O.layout;
+    drawLayout();
     paint(true);
     const el = barOf(C.barLayout);
     el.classList.remove('off');
@@ -1000,6 +1046,7 @@ body.L-graphics #stage,body.L-compact #stage{display:none}
     if (!built || built.error) {
       O.failed[g.id] = (built && built.error) || 'Nothing to show';
       problem(O.failed[g.id], false);
+      reportOutput(true);
       setTimeout(clearProblem, 9000);
       C.entering = null;
       setState('IDLE');

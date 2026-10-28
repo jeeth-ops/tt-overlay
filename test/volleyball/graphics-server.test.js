@@ -14,6 +14,11 @@
      • the broadcast look is saved per tournament and pushed to overlays
      • a team's new colours reach its live match's overlay at once;
        player portraits are stored per player and served
+     • the live overlay by hand: take the score bar / corner bug off and on
+       air, Automatic / Manual — saved, sent to every overlay, kept through
+       points, timers, reloads; "hide everything" and its recovery
+     • the outputs: an overlay that joined the match says what it shows,
+       the manager is told (cleaned), a stranger's word is ignored
 
      node test/volleyball/graphics-server.test.js
 */
@@ -207,6 +212,67 @@ const PNG = 'data:image/png;base64,' + Buffer.from('89504e470d0a1a0a0000000d4948
     ok('…and the match knows it (and no one else\'s)', info.photos && info.photos[pid] === r.json.photo && Object.keys(info.photos).length === 1, info.photos);
     r = await api('PUT', `/api/volleyball/teams/${A.teamId}/players/${pid}/photo`, { json: { photo: null } });
     ok('removed again', r.status === 200 && r.json.photo === null && (await call(port, 'GET', `/api/volleyball/players/${pid}/photo`)).status === 404, r.json);
+
+    head('THE LIVE OVERLAY BY HAND — ON / OFF AIR, AUTOMATIC / MANUAL');
+    const air = () => mem.collection('vbMatches').findOne({ matchId: M.matchId }).then((x) => x.graphic);
+    await gfx({ action: 'live' });
+    r = await other.emitAck('vb:graphic', { matchId: M.matchId, action: 'live-off', layout: 'bar' });
+    ok('another account cannot take the score bar off air', !r.ok && r.error === 'not-authorised', r);
+    seen.length = 0;
+    r = await gfx({ action: 'live-off', layout: 'bar' });
+    ok('TAKE OFF AIR the score bar: manual, nothing on', r.ok && r.graphic.live.mode === 'manual' && r.graphic.live.layout === null && r.graphic.scene === null, r.graphic);
+    ok('…every overlay is told', !!(await until(() => seen.find((g) => g.live && g.live.mode === 'manual' && g.live.layout === null))));
+    ok('…and it is saved with the match', (await air()).live.layout === null && (await air()).live.mode === 'manual');
+    await ev({ type: 'RALLY', winner: 'A', outcome: 'GENERAL' });
+    await ev({ type: 'RALLY', winner: 'B', outcome: 'GENERAL' });
+    await sleep(300);
+    const afterPts = await viewer.emitAck('vb:join', { matchId: M.matchId });
+    ok('points scored after it do not bring it back (nor does a reloaded overlay)', afterPts.ok && afterPts.graphic.live.mode === 'manual' && afterPts.graphic.live.layout === null && G.liveLayout(afterPts.graphic, afterPts.style, null) === null, afterPts.graphic);
+    r = await gfx({ action: 'live-on', layout: 'compact' });
+    ok('TAKE ON AIR the corner bug: the corner bug, by hand', r.ok && r.graphic.live.layout === 'compact' && G.liveLayout(r.graphic, r.graphic && afterPts.style, null) === 'compact', r.graphic);
+    r = await gfx({ action: 'live-on', layout: 'compact' });
+    ok('…pressed again: nothing changes', r.ok && r.same, r);
+    r = await gfx({ action: 'take', scene: 'intro', durationSec: 1 });
+    const shortOne = r.graphic;
+    ok('a graphic over it', r.ok && shortOne.scene === 'intro' && shortOne.live.layout === 'compact', shortOne);
+    const endedShort = await until(() => seen.find((g) => g.scene === null && g.endedId === shortOne.id), 12000);
+    ok('…ended by the server\'s timer: the corner bug is still the one taken', !!endedShort && endedShort.reason === 'expired' && endedShort.live.mode === 'manual' && endedShort.live.layout === 'compact', endedShort);
+    r = await gfx({ action: 'clean' });
+    ok('HIDE EVERYTHING', r.ok && r.graphic.clean === true && r.graphic.live.layout === 'compact', r.graphic);
+    r = await gfx({ action: 'live' });
+    ok('RESTORE LIVE OVERLAY: the corner bug again (the operator\'s choice)', r.ok && r.graphic.clean === false && r.graphic.live.layout === 'compact', r.graphic);
+    r = await gfx({ action: 'live-mode', mode: 'whenever' });
+    ok('an unknown mode is refused, with the reason', !r.ok && /Automatic or Manual/.test(r.error), r);
+    r = await gfx({ action: 'live-mode', mode: 'auto' });
+    ok('AUTOMATIC again: the tournament\'s layout, back after every graphic', r.ok && r.graphic.live.mode === 'auto' && G.liveLayout(r.graphic, afterPts.style, null) === 'bar', r.graphic);
+
+    head('THE OUTPUTS — WHAT EACH OVERLAY REALLY SHOWS');
+    const lists = [];
+    op.on('vb:outputs', (d) => { if (d.matchId === M.matchId) lists.push(d.outputs); });
+    await op.emitAck('vb:join', { matchId: M.matchId });   // the panel is in the match's room
+    const prog = await connectVb(port, {});
+    await prog.emitAck('vb:join', { matchId: M.matchId });
+    prog.emit('vb:output', { matchId: M.matchId, outputId: 'vmix-1', state: 'OVERLAY_VISIBLE', layout: 'bar', layoutParam: null, airSeq: 5 });
+    let lst = await until(() => lists.find((l) => l.some((o) => o.outputId === 'vmix-1')));
+    const o1 = lst && lst.find((o) => o.outputId === 'vmix-1');
+    ok('an overlay on air says what it shows — the manager is told', !!o1 && o1.state === 'OVERLAY_VISIBLE' && o1.layout === 'bar' && o1.monitor === false && typeof o1.at === 'number', lst);
+    const stranger = await connectVb(port, {});
+    stranger.emit('vb:output', { matchId: M.matchId, outputId: 'liar', state: 'GRAPHIC_VISIBLE', graphicId: 'gx' });
+    const mon = await connectVb(port, {});
+    await mon.emitAck('vb:join', { matchId: M.matchId });
+    mon.emit('vb:output', { matchId: M.matchId, outputId: 'studio-mon', monitor: true, state: 'HACKED', scene: 'nope', layout: 'sideways', layoutParam: '../x', failed: { id: 'g1', error: 'x'.repeat(500) } });
+    lst = await until(() => lists.find((l) => l.some((o) => o.outputId === 'studio-mon')));
+    const om = lst && lst.find((o) => o.outputId === 'studio-mon');
+    ok('…a studio monitor says it is one; what it says is cleaned', !!om && om.monitor === true && om.state === 'IDLE' && om.scene === null && om.layout === null && om.layoutParam === null && om.failed.error.length === 160, om);
+    ok('…one that never joined the match is not heard', !lists.some((l) => l.some((o) => o.outputId === 'liar')));
+    const jo = await op.emitAck('vb:join', { matchId: M.matchId });
+    const jv = await viewer.emitAck('vb:join', { matchId: M.matchId });
+    ok('the manager\'s join carries the outputs; a viewer\'s does not', Array.isArray(jo.outputs) && jo.outputs.some((o) => o.outputId === 'vmix-1') && jv.outputs === undefined, { jo: jo.outputs, jv: jv.outputs });
+    const nLists = lists.length;
+    await prog.close();
+    lst = await until(() => lists.length > nLists && !lists[lists.length - 1].some((o) => o.outputId === 'vmix-1') && lists[lists.length - 1]);
+    ok('an output that goes away is forgotten at once', !!lst && lst.some((o) => o.outputId === 'studio-mon'), lst);
+    await mon.close(); await stranger.close();
 
     await op.close(); await other.close(); await viewer.close();
   } catch (e) {

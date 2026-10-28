@@ -36,7 +36,8 @@
   .mon .scr.check { background: repeating-conic-gradient(#2a2a2e 0% 25%, #1c1c1f 0% 50%) 50% / 28px 28px; }
   /* the overlay page has the normal colour scheme: the frame must too, or Chromium paints it an opaque white */
   .mon iframe { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
-  .mon .tag { position: absolute; left: 12px; top: 12px; z-index: 2; padding: 4px 10px; border-radius: 8px; font: 800 11px/1.2 system-ui, sans-serif; letter-spacing: .12em; color: #fff; background: rgba(0, 0, 0, .55); }
+  /* top right: the corner bug lives top left */
+  .mon .tag { position: absolute; right: 12px; top: 12px; z-index: 2; padding: 4px 10px; border-radius: 8px; font: 800 11px/1.2 system-ui, sans-serif; letter-spacing: .12em; color: #fff; background: rgba(0, 0, 0, .55); }
   .mon .tag.pv { background: #15803d; }
   .mon .tag.pg { background: #dc2626; }
   .mon .note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; max-width: 80%; text-align: center; padding: 12px 18px; border-radius: 14px; background: rgba(0, 0, 0, .7); font-weight: 600; }
@@ -44,8 +45,13 @@
   .side { display: grid; gap: 14px; position: sticky; top: 70px; }
   @media (max-width: 1100px) { .side { position: static; } }
   .airbox { padding: 14px; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line); }
-  .airbox.on { box-shadow: 0 0 0 2px #dc2626; background: color-mix(in srgb, #dc2626 10%, var(--card)); }
-  .airbox.off { box-shadow: 0 0 0 2px var(--orange); }
+  .airbox.k-on { box-shadow: 0 0 0 2px #dc2626; background: color-mix(in srgb, #dc2626 10%, var(--card)); }
+  .airbox.k-live { box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 55%, transparent); }
+  .airbox.k-move { box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 60%, transparent); }
+  .airbox.k-warn, .airbox.k-bad { box-shadow: 0 0 0 2px var(--orange); background: color-mix(in srgb, var(--orange) 10%, var(--card)); }
+  .airbox.k-bad { box-shadow: 0 0 0 2px #dc2626; }
+  .airbox .outs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: var(--mute); }
+  .airbox .outs span { display: inline-flex; align-items: center; gap: 6px; } .airbox .outs .warn { color: var(--orange); font-weight: 700; }
   .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
   .tpl { text-align: left; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line); overflow: hidden; transition: transform .25s var(--bounce), box-shadow .2s; display: flex; flex-direction: column; min-width: 0; }
   .tpl:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--line2), 0 18px 40px -20px rgba(0, 0, 0, .8); }
@@ -56,7 +62,7 @@
   .tpl .tb b { font-size: 14.5px; }
   .tpl .tb small { color: var(--mute); font-size: 12px; line-height: 1.35; }
   .tpl .tb .st { font-size: 11px; font-weight: 700; letter-spacing: .04em; }
-  .tpl .tb .st.ok { color: var(--green); } .tpl .tb .st.na { color: var(--mute); } .tpl .tb .st.live { color: #ff453a; }
+  .tpl .tb .st.ok { color: var(--green); } .tpl .tb .st.na { color: var(--mute); } .tpl .tb .st.live { color: #ff453a; } .tpl .tb .st.move { color: var(--orange); }
   /* the thumbnails: schematic, drawn in the match's own colours — never data */
   .th i, .th b, .th span { position: absolute; display: block; }
   .th .sb { left: 18%; right: 18%; bottom: 14px; height: 18px; background: #0a1136; box-shadow: 0 0 0 1px rgba(255, 255, 255, .1); }
@@ -124,10 +130,10 @@
   document.documentElement.dataset.theme = 'dark';     // a broadcast room: always dark
   const qs = new URLSearchParams(location.search);
   const S = { user: null, mine: null, tid: null, tournament: null, teams: [], matches: [], matchId: qs.get('match'), match: null, summary: null, timeline: [],
-    air: null, airOffset: 0, saved: GX.normalizeStyle(null), draft: null, sel: 'bar', opt: {}, dur: 'default', socket: null, pv: null, bg: VB.store.get('vb_studio_bg', 'court') };
+    air: null, airOffset: 0, outputs: [], busy: {}, saved: GX.normalizeStyle(null), draft: null, sel: 'bar', opt: {}, dur: 'default', socket: null, pv: null, bg: VB.store.get('vb_studio_bg', 'court') };
   const DESC = {
-    bar: 'Score, sets, serve, set history, set / match point, time-outs, substitutions and point tags — all from the scoring, all automatic.',
-    compact: 'The same live score as a two-row bug in the top-left corner.',
+    bar: 'Score, sets, serve, set history, set / match point, time-outs, substitutions and point tags — every point from the scoring, by itself.',
+    compact: 'The same live score as a two-row bug in the top-left corner — the alternative to the score bar.',
     intro: 'Both teams with their crests and colours, the competition, venue, date and format — full screen.',
     toss: 'The toss as recorded: who won, what they chose, the first serve and the starting sides.',
     lineup: 'A team’s six as they stand on court — front row at the net — with portraits when uploaded, libero, captain and first server. Both teams in turn, or one.',
@@ -237,7 +243,8 @@
     $('#sub').textContent = S.match ? `${S.match.teamA.name} v ${S.match.teamB.name} · ${S.tournament.name}` : '';
     const key = S.tournament && S.tournament.visibility === 'private' && S.match ? '&key=' + encodeURIComponent(S.match.overlayKey) : '';
     $('#pvScr').innerHTML = `<iframe id="pvFrame" title="Preview" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}&preview=1"></iframe>`;
-    $('#pgScr').innerHTML = `<iframe id="pgFrame" title="On air" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}"></iframe>`;
+    // the real overlay — a monitor: the ON AIR states wait for a programme output (vMix / OBS), not for this
+    $('#pgScr').innerHTML = `<iframe id="pgFrame" title="On air" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}&monitor=1"></iframe>`;
     $('#pvFrame').onload = () => { pushStyle(); preview(true); };
     const base = `${location.origin}/volleyball-overlay?match=${mid}${key}`;
     $('#links').innerHTML = [['Score bar + graphics', base], ['Corner bug + graphics', base + '&layout=compact'], ['Graphics only', base + '&layout=graphics']].map(([l, u], i) => `<div><div class="tiny" style="font-weight:700;margin:0 2px 4px">${esc(l)}</div><div class="linkrow"><input class="input" readonly value="${esc(u)}"><button class="btn sm" data-cp="${esc(u)}">Copy</button></div></div>`).join('');
@@ -251,6 +258,8 @@
       S.socket = await VB.connect();
       S.socket.on('connect', join);
       S.socket.on('vb:graphic', (d) => { if (d.matchId === S.matchId) setAir(d.graphic); });
+      // what the outputs (vMix, OBS, monitors) really show — ON AIR is read from these
+      S.socket.on('vb:outputs', (d) => { if (d.matchId === S.matchId) { S.outputs = d.outputs || []; renderStates(); } });
       S.socket.on('vb:update', (d) => { if (d.matchId === S.matchId && d.summary) { S.summary = d.summary; if (d.entry) S.timeline.push(d.entry); else rejoinSoon(); renderGallery(); renderSel(); } });
       S.socket.on('vb:match', (d) => { if (d.matchId === S.matchId && d.match) { S.match = Object.assign(S.match || {}, d.match); renderGallery(); } });
       S.socket.on('vb:style', (d) => { if (d.tournamentId === S.tid) { const was = JSON.stringify(S.saved) === JSON.stringify(S.draft); S.saved = GX.normalizeStyle(d.style); if (was) { S.draft = JSON.parse(JSON.stringify(S.saved)); renderLook(); } markDirty(); } });
@@ -267,6 +276,7 @@
     if (mid !== S.matchId) return;
     if (!r.ok) return toast('Could not open the match live', 'err');
     S.match = Object.assign(S.match || {}, r.match); S.summary = r.summary; S.timeline = r.timeline || [];
+    S.outputs = r.outputs || [];
     S.air = null; setAir(r.graphic);
     renderGallery(); renderSel();
   }
@@ -285,25 +295,43 @@
     if (g.scene === 'playerStat' && d.playerId) { const p = playerOf(d.playerId); if (p) x += ' · #' + p.number + ' ' + p.name; }
     return x;
   }
+  // the on-air state — the server's word for what is taken, the outputs' word for what shows
   function renderAir() {
-    const g = S.air || {}, on = !!g.scene;
-    const left = on && g.expiresAt != null ? Math.max(0, Math.ceil((g.expiresAt - airNow()) / 1000)) : null;
-    const both = on && g.scene === 'lineup' && !(g.data && g.data.team), swapped = both && g.swapAt != null && airNow() >= g.swapAt;
-    $('#airBox').innerHTML = `<div class="airbox ${on ? 'on' : g.clean ? 'off' : ''}"><div class="row"><span class="dot ${on ? 'bad' : g.clean ? 'wait' : 'ok'}"></span><b class="grow">${on ? 'ON AIR · ' + esc(airLabel(g)) : g.clean ? 'Everything hidden' : 'Live score on air'}</b>${on ? `<span class="badge">${left != null ? left + ' s' : 'Hold'}</span>` : ''}</div>
-      <div class="tiny muted" style="margin:6px 0 10px">${on ? (left != null ? 'Then the live score returns by itself.' : 'Stays until it is dismissed.') : g.clean ? 'The overlay shows nothing until you bring it back.' : 'A graphic taken to air replaces the score bar until it ends.'}</div>
-      <div class="row wrapr">${both && !swapped ? '<button class="btn sm" data-a="next">Next team</button>' : ''}${on && left != null ? '<button class="btn sm" data-a="hold">Hold</button>' : ''}${on ? '<button class="btn sm primary" data-a="stop">Dismiss · back to live</button>' : ''}${!on && g.clean ? '<button class="btn sm primary" data-a="live">Show the score bar</button>' : ''}${!g.clean ? '<button class="btn sm" data-a="clean">Hide everything</button>' : ''}</div></div>`;
+    const g = S.air || {}, on = !!g.scene, now = airNow();
+    const left = on && g.expiresAt != null ? Math.max(0, Math.ceil((g.expiresAt - now) / 1000)) : null;
+    const both = on && g.scene === 'lineup' && !(g.data && g.data.team), swapped = both && g.swapAt != null && now >= g.swapAt;
+    const line = GX.airSummary(g, S.saved, S.outputs, now, airLabel(g)), n = GX.readOutputs(S.outputs, g, now);
+    const monitors = (S.outputs || []).filter((o) => o.monitor).length;
+    const what = (o) => (o.state === 'GRAPHIC_VISIBLE' ? (GX.SCENES[o.scene] ? GX.SCENES[o.scene].label : 'a graphic') : o.state === 'OVERLAY_VISIBLE' ? GX.LIVE_NAMES[o.layout] || 'the live overlay' : o.state === 'IDLE' ? 'nothing' : o.state.toLowerCase().replace(/_/g, ' '));
+    const outs = n.o.length ? n.o.map((o) => `<span><i class="dot ${/_VISIBLE$/.test(o.state) ? 'ok' : o.state === 'IDLE' ? '' : 'wait'}"></i>Output${o.layoutParam ? ' (' + (o.layoutParam === 'compact' ? 'corner bug' : o.layoutParam === 'graphics' ? 'graphics only' : 'score bar') + ')' : ''} · ${esc(what(o))}</span>`).join('')
+      : `<span class="warn">The overlay links for vMix / OBS are below</span>`;
+    const html = `<div class="airbox k-${line.k}"><div class="row"><span class="dot ${line.k === 'on' ? 'bad' : line.k === 'live' ? 'ok' : line.k === 'idle' ? '' : 'wait'}"></span><b class="grow" id="airLine">${esc(line.t)}</b>${on ? `<span class="badge" data-badge>${left != null ? left + ' s' : 'Hold'}</span>` : ''}</div>
+      <div class="tiny muted" style="margin:6px 0 10px">${esc(line.d).replace(/\d+ s left/, (x) => `<span data-left>${x}</span>`)}</div>
+      <div class="row wrapr">${both && !swapped ? '<button class="btn sm" data-a="next">Next team</button>' : ''}${on && left != null ? '<button class="btn sm" data-a="hold">Hold</button>' : ''}${on ? '<button class="btn sm primary" data-a="stop">Dismiss · back to live</button>' : ''}${g.clean ? '<button class="btn sm primary" data-a="live">Restore live overlay</button>' : '<button class="btn sm" data-a="clean">Hide everything</button>'}</div>
+      <div class="outs tiny">${outs}${monitors ? `<span class="muted">+ ${monitors} monitor${monitors > 1 ? 's' : ''} (not counted)</span>` : ''}</div></div>`;
+    // rebuilt only when something besides the count-down changed: a button is never replaced under a press
+    const box = $('#airBox'), k = html.replace(/\d+ s left/g, '').replace(/data-badge>\d+ s</, 'data-badge><');
+    if (box.dataset.k === k) {
+      if (left != null) { $$('[data-left]', box).forEach((x) => { x.textContent = left + ' s left'; }); $$('[data-badge]', box).forEach((x) => { x.textContent = left + ' s'; }); }
+      return;
+    }
+    box.dataset.k = k; box.innerHTML = html;
     $$('[data-a]', $('#airBox')).forEach((b) => b.onclick = () => {
       const a = b.dataset.a;
-      if (a === 'next') airCmd({ action: 'next', id: g.id });
-      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' });
-      else if (a === 'stop') airCmd({ action: 'stop', id: g.id });
-      else airCmd({ action: a });
+      if (a === 'next') airCmd({ action: 'next', id: g.id }, 'master');
+      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' }, 'master');
+      else if (a === 'stop') airCmd({ action: 'stop', id: g.id }, 'master');
+      else airCmd({ action: a }, 'master');
     });
   }
-  async function airCmd(cmd) {
+  // what changes when an output reports — the states only (the open choices are left as they are)
+  function renderStates() { renderAir(); renderGallery(); renderSelState(); }
+  async function airCmd(cmd, key) {
+    if (key) { if (S.busy[key]) return { ok: false, busy: true }; S.busy[key] = true; renderSelState(); }
     const r = await VB.ack(S.socket, 'vb:graphic', Object.assign({ matchId: S.matchId }, cmd));
-    if (r && r.graphic) setAir(r.graphic);
-    if (!r || !r.ok) toast(r && r.stale ? 'That graphic is no longer on air' : r && r.error && !/^[a-z-]+$/.test(r.error) ? r.error : 'Could not change the graphic', 'err');
+    if (key) delete S.busy[key];
+    if (r && r.graphic) setAir(r.graphic); else renderSelState();
+    if (!r || !r.ok) toast(r && r.stale ? 'That graphic is no longer on air' : r && r.error && !/^[a-z-]+$/.test(r.error) ? r.error : 'Could not change the graphic — check the connection', 'err');
     return r || { ok: false };
   }
 
@@ -312,7 +340,10 @@
   function avail(k) {
     const s = S.summary;
     if (!s || !S.match) return { ok: false, hint: 'Choose a match' };
-    if (k === 'bar' || k === 'compact') return { ok: true, hint: 'Always on, automatic' };
+    if (k === 'bar' || k === 'compact') {
+      const c = GX.liveCard(k, S.air, S.saved, S.outputs, airNow(), airLabel(S.air)), mode = GX.liveOf(S.air).mode === 'auto' ? 'Automatic' : 'Manual';
+      return { ok: true, hint: c.word + (c.chosen || c.k === 'on' ? ' · ' + mode : ''), live: c };
+    }
     const lineupSets = () => { const sets = new Set(); S.timeline.forEach((e) => { if (e && !e.voided && e.type === 'LINEUP') sets.add(e.set); }); return sets; };
     switch (k) {
       case 'intro': return { ok: true, hint: 'Ready' };
@@ -351,15 +382,16 @@
     const g = S.air || {};
     const vars = `--ta:${color('A')};--tb:${color('B')}`;
     $('#galleryHost').innerHTML = Object.keys(GROUPS).map((grp) => `<div class="section-title">${esc(GROUPS[grp])}</div><div class="gallery">${ITEMS.filter((it) => it.group === grp).map((it) => {
-      const a = avail(it.k), live = g.scene === it.k;
-      return `<button class="tpl ${S.sel === it.k ? 'sel' : ''} ${live ? 'onair' : ''}" data-k="${it.k}"><div class="th" style="${vars}">${thumb(it.k)}</div><div class="tb"><b>${esc(it.label)}</b><span class="st ${live ? 'live' : a.ok ? 'ok' : 'na'}">${live ? '● ON AIR' : esc(a.hint)}</span><small>${esc(DESC[it.k])}</small></div></button>`;
+      const a = avail(it.k), c = a.live || GX.sceneCard(it.k, g, S.outputs, airNow());
+      const cls = !c ? (a.ok ? 'ok' : 'na') : c.k === 'on' || c.k === 'failed' ? 'live' : c.k === 'off' ? 'na' : 'move';
+      return `<button class="tpl ${S.sel === it.k ? 'sel' : ''} ${c && c.k === 'on' ? 'onair' : ''}" data-k="${it.k}"><div class="th" style="${vars}">${thumb(it.k)}</div><div class="tb"><b>${esc(it.label)}</b><span class="st ${cls}">${esc(a.live ? a.hint : c ? c.word : a.hint)}</span><small>${esc(DESC[it.k])}</small></div></button>`;
     }).join('')}</div>`).join('');
     $$('[data-k]', $('#galleryHost')).forEach((b) => b.onclick = () => { S.sel = b.dataset.k; S.opt = {}; renderGallery(); renderSel(); preview(true); });
   }
   // the selected template: its choices, preview, take / dismiss
   function renderSel() {
     if (!$('#selBox')) return;
-    const k = S.sel, it = ITEMS.find((x) => x.k === k), a = avail(k), g = S.air || {};
+    const k = S.sel, it = ITEMS.find((x) => x.k === k);
     $('#selName').textContent = it.label;
     $('#pvNext').classList.toggle('hide', !(k === 'lineup' && !S.opt.team));
     const s = S.summary;
@@ -381,13 +413,13 @@
       opts = `<label class="field"><span class="small muted">Group</span><select class="input" id="oGroup"><option value="">This match’s group</option>${S.tournament.format.groups.map((x) => `<option value="${esc(x.name)}" ${S.opt.group === x.name ? 'selected' : ''}>Group ${esc(x.name)}</option>`).join('')}</select></label>`;
     }
     const scene = GX.SCENES[k];
-    const live = scene && g.scene === k;
     const def = scene ? GX.defaultDuration(k, S.saved) : null;
-    $('#selBox').innerHTML = `<div class="opts"><div><b>${esc(it.label)}</b> <span class="small ${a.ok ? '' : 'muted'}">· ${esc(a.hint)}</span><p class="tiny muted" style="margin-top:4px">${esc(DESC[k])}</p></div>${opts}
+    $('#selBox').innerHTML = `<div class="opts"><div><b>${esc(it.label)}</b> <span class="small" id="selHint"></span><p class="tiny muted" style="margin-top:4px">${esc(DESC[k])}</p></div>${opts}
       ${scene ? `<div class="field"><span class="small muted">Time on screen</span><div class="seg" id="oDur">${[['default', def == null ? 'Default (hold)' : `Default (${def} s)`], ['hold', 'Hold'], ['custom', 'Seconds…']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${(typeof S.dur === 'number' ? 'custom' : S.dur) === v}">${esc(l)}</button>`).join('')}</div>
-        <input class="input ${typeof S.dur === 'number' ? '' : 'hide'}" id="oSecs" type="number" min="1" max="${GX.MAX_SEC}" value="${typeof S.dur === 'number' ? S.dur : 15}" style="margin-top:6px"></div>` : ''}
-      <div class="row wrapr">${scene ? `<button class="btn primary" id="take" ${S.matchId ? '' : 'disabled'} style="background:#dc2626">● Take to air</button>${live ? '<button class="btn" id="dismiss">Dismiss</button>' : ''}` : `<button class="btn primary" id="toLive">Show the live score</button>`}</div>
-      <p class="tiny muted">${scene ? 'The score bar leaves while it is on air and comes back with the latest score when it ends.' : 'The score bar is the overlay’s own: it follows every point by itself.'}</p></div>`;
+        <input class="input ${typeof S.dur === 'number' ? '' : 'hide'}" id="oSecs" type="number" min="1" max="${GX.MAX_SEC}" value="${typeof S.dur === 'number' ? S.dur : 15}" style="margin-top:6px"></div>`
+        : `<div class="field"><span class="small muted">The live overlay runs</span><div class="seg" id="oMode"><button data-m="auto">Automatic</button><button data-m="manual">Manual</button></div></div>`}
+      <div class="row wrapr" id="selAct"></div>
+      <p class="tiny muted" id="selNote"></p></div>`;
     const re = () => { renderSel(); preview(true); };
     $$('#oTeam button').forEach((b) => b.onclick = () => { S.opt.team = b.dataset.v; re(); });
     $$('#oToss button').forEach((b) => b.onclick = () => { S.opt.set = Number(b.dataset.v); re(); });
@@ -396,9 +428,37 @@
     if ($('#oGroup')) $('#oGroup').onchange = (e) => { S.opt.group = e.target.value; re(); };
     $$('#oDur button').forEach((b) => b.onclick = () => { S.dur = b.dataset.v === 'custom' ? Number($('#oSecs').value) || 15 : b.dataset.v; renderSel(); });
     if ($('#oSecs')) $('#oSecs').oninput = (e) => { const n = Math.round(Number(e.target.value)); if (n >= 1 && n <= GX.MAX_SEC) S.dur = n; };
+    $$('#oMode button').forEach((b) => b.onclick = () => { if (b.getAttribute('aria-pressed') !== 'true') airCmd({ action: 'live-mode', mode: b.dataset.m }, 'mode'); });
+    renderSelState();
+  }
+  // the selected template's state and its take / off-air buttons — from the
+  // server's state and the outputs, redrawn on every change of either
+  function renderSelState() {
+    if (!$('#selAct')) return;
+    const k = S.sel, a = avail(k), g = S.air || {}, scene = GX.SCENES[k];
+    let hint, act, note;
+    if (scene) {
+      const c = GX.sceneCard(k, g, S.outputs, airNow()), busy = S.busy['g:' + k], isOn = g.scene === k;
+      hint = busy ? 'Taking to air…' : c ? c.word + (c.why ? ' — ' + c.why : '') : a.hint;
+      act = `<button class="btn primary" id="take" ${S.matchId && !busy ? '' : 'disabled'} style="background:#dc2626">● Take to air</button>${isOn ? `<button class="btn" id="dismiss" ${S.busy.master ? 'disabled' : ''}>Take off air</button>` : ''}`;
+      note = GX.liveLayout(g, S.saved, null) ? 'The live overlay steps off while it is on air and comes back with the latest score when it ends.' : 'The live overlay is off air (Manual), so nothing comes back when it ends.';
+    } else {
+      const lv = GX.liveOf(g), busy = S.busy['live:' + k] || S.busy.mode;
+      hint = busy ? 'Working…' : a.hint;
+      $$('#oMode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === lv.mode)));
+      act = a.live && a.live.chosen && !g.clean ? `<button class="btn" id="lvOff" ${busy ? 'disabled' : ''}>Take off air</button>`
+        : `<button class="btn primary" id="lvOn" ${busy || !S.matchId ? 'disabled' : ''} style="background:#dc2626">● Take on air</button>`;
+      note = (lv.mode === 'auto' ? 'Automatic: the tournament’s layout shows by itself and comes back after every graphic.' : 'Manual: only what is taken on air shows — a point, a timer or the end of a graphic never brings it back.')
+        + ' The score bar and the corner bug are alternatives: taking one on air replaces the other.';
+    }
+    $('#selHint').className = 'small' + (a.ok ? '' : ' muted');
+    $('#selHint').textContent = '· ' + hint;
+    $('#selAct').innerHTML = act;
+    $('#selNote').textContent = note;
     if ($('#take')) $('#take').onclick = take;
-    if ($('#dismiss')) $('#dismiss').onclick = () => airCmd({ action: 'stop', id: g.id });
-    if ($('#toLive')) $('#toLive').onclick = () => airCmd({ action: 'live' });
+    if ($('#dismiss')) $('#dismiss').onclick = () => airCmd({ action: 'stop', id: g.id }, 'master');
+    if ($('#lvOn')) $('#lvOn').onclick = () => airCmd({ action: 'live-on', layout: k }, 'live:' + k);
+    if ($('#lvOff')) $('#lvOff').onclick = () => airCmd({ action: 'live-off', layout: k }, 'live:' + k);
   }
   function dataOf() {
     const d = {};
@@ -412,8 +472,8 @@
     if (S.sel === 'playerStat' && !S.opt.playerId) return toast('Choose a player first', 'err');
     const cmd = { action: 'take', scene: S.sel, data: dataOf(), reqId: VB.uid() };
     if (S.dur !== 'default') cmd.durationSec = S.dur;
-    const r = await airCmd(cmd);
-    if (r.ok) toast(r.same ? 'Already on air' : 'On air');
+    const r = await airCmd(cmd, 'g:' + S.sel);
+    if (r.ok) toast(r.same ? 'Already on air' : 'Taken to air');
   }
 
   /* ---------- the preview: a private overlay, the look as edited ---------- */

@@ -1977,7 +1977,55 @@ module.exports = function setupVolleyball(deps) {
   setTimeout(() => { graphicSweep().catch(() => {}); }, 3000).unref();
   setInterval(() => { graphicSweep().catch((e) => log('graphic sweep error', e.message || e)); }, 60 * 1000).unref();
 
+  /* 📡 THE OUTPUTS — every overlay that is showing this match somewhere
+     (vMix, OBS, a studio monitor) says what it shows right now. The panels
+     read ON AIR from here — a graphic is "on air" once an output says it
+     is up, not because a button was pressed — and see one that could not
+     be drawn. Memory only: an output says it again every 15 s and on
+     reconnect, and is forgotten when it disconnects. */
+  const outputs = new Map();     // matchId -> Map(socket.id -> state)
+  const outputEmits = new Map();
+  const OUTPUT_STATES = ['IDLE', 'OVERLAY_ENTERING', 'OVERLAY_VISIBLE', 'OVERLAY_EXITING', 'GRAPHIC_ENTERING', 'GRAPHIC_VISIBLE', 'GRAPHIC_EXITING', 'OVERLAY_RETURNING'];
+  function publicOutputs(matchId) {
+    const m = outputs.get(matchId);
+    if (!m) return [];
+    const now = Date.now();
+    return [...m.values()].filter((o) => now - o.at < 40000);
+  }
+  function emitOutputs(matchId) {
+    if (outputEmits.has(matchId)) return;
+    outputEmits.set(matchId, setTimeout(() => {
+      outputEmits.delete(matchId);
+      nsp.to(room(matchId)).emit('vb:outputs', { matchId, outputs: publicOutputs(matchId), now: Date.now() });
+    }, 60));
+  }
+
   nsp.on('connection', (socket) => {
+    socket.on('vb:output', (d) => {
+      d = d && typeof d === 'object' ? d : {};
+      const matchId = safeId(d.matchId);
+      if (!matchId || !socket.rooms.has(room(matchId))) return;   // only an overlay that joined this match
+      const idx = (v) => (v == null ? null : safeId(v).slice(0, 40) || null);
+      const o = {
+        outputId: idx(d.outputId) || socket.id.slice(0, 12), monitor: d.monitor === true,
+        layoutParam: ['bar', 'compact', 'graphics'].includes(d.layoutParam) ? d.layoutParam : null,
+        state: OUTPUT_STATES.includes(d.state) ? d.state : 'IDLE', graphicId: idx(d.graphicId), scene: G.SCENES[d.scene] ? d.scene : null,
+        layout: d.layout === 'bar' || d.layout === 'compact' ? d.layout : null,
+        failed: d.failed && typeof d.failed === 'object' ? { id: idx(d.failed.id), error: str(d.failed.error, 160) } : null,
+        airSeq: num(d.airSeq, null), at: Date.now()
+      };
+      let m = outputs.get(matchId);
+      if (!m) outputs.set(matchId, m = new Map());
+      m.set(socket.id, o);
+      (socket.data.outputs = socket.data.outputs || new Set()).add(matchId);
+      emitOutputs(matchId);
+    });
+    socket.on('disconnect', () => {
+      for (const mid of socket.data.outputs || []) {
+        const m = outputs.get(mid);
+        if (m && m.delete(socket.id)) { if (!m.size) outputs.delete(mid); emitOutputs(mid); }
+      }
+    });
     socket.data.user = null;
     const authed = (async () => {
       const tok = socket.handshake.auth && socket.handshake.auth.idToken;
@@ -2010,7 +2058,8 @@ module.exports = function setupVolleyball(deps) {
         const L = await getLedger(c, a.m);
         const graphic = G.publicState(await currentAir(c, a.m), Date.now());
         reply({ ok: true, match: Object.assign(publicMatch(a.m, a.manage), { graphic }), summary: E.summary(L.setup, L.state), seq: L.seq, timeline: d && d.timeline ? publicTimeline(L, a.manage) : undefined,
-          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic, style: G.normalizeStyle(a.t && a.t.broadcast), photos: await photosOf(c, a.m), now: Date.now() });
+          events: a.manage && d && d.events ? L.events.map(publicEvent) : undefined, graphic, style: G.normalizeStyle(a.t && a.t.broadcast), photos: await photosOf(c, a.m), now: Date.now(),
+          outputs: a.manage ? publicOutputs(a.m.matchId) : undefined });
       } catch (e) { log('join error', e.message || e); reply({ ok: false, error: 'join-failed' }); }
     });
 

@@ -428,7 +428,7 @@ const FAKE_FIREBASE = `(function(){
       await sleep(400);
       ok(`${label}: on air, inside the frame, the score bar off air under it`, shown && await insideFrame(overlay) && await barOff(overlay), { shown });
       eq(`${label}: no team or player name cut short`, await clipped(overlay, '#gfx .scene [data-fit]'), []);
-      ok(`${label}: the panel says it is on air`, await panel.waitForFunction((l) => new RegExp('ON AIR · ' + l).test(document.querySelector('#gfxAir').textContent), label, { timeout: 5000 }).then(() => true, () => false));
+      ok(`${label}: the panel says it is on air — once the overlay has it up`, await panel.waitForFunction((l) => new RegExp(l + '.* is on air').test(document.querySelector('#gfxAir').textContent) && document.querySelector('#gfxAir .airbox.k-on'), label, { timeout: 5000 }).then(() => true, () => false), await panel.textContent('#gfxAir'));
       await shot(overlay, 'overlay-' + scene);
     }
     const pc = await overlay.textContent('#gfx .scene');
