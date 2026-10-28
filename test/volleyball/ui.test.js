@@ -1,18 +1,20 @@
 /* 🏐 The volleyball module in a REAL browser (Chromium via Playwright),
    against the REAL server.js (in-memory MongoDB, stand-in Firebase) and the
-   REAL Stream Engine (a temp copy, cutting from a synthetic master
-   recording with real ffmpeg):
+   REAL Clipper Helper (clipper-helper/, a temp copy — the app the Cricket
+   Panel uses) cutting from a recording that is still being written, the
+   way vMix writes one:
 
      dashboard  — two teams and a tournament made through the UI, fixtures
                   generated, the match opened;
-     panel      — on a "phone" that cannot reach any clip engine: toss,
+     panel      — on a "phone" that cannot reach any Clipper app: toss,
                   line-ups, set 1 started, points (+1, a kill with its
                   attacker), a time-out, an undo, a substitution — every
                   number checked against the server's ledger;
-     clipper    — on the "recording PC": the engine found, the match
-                  registered, and the phone's kill clipped by relay: the
-                  press converted to this PC's clock, 7 s before + 3 s after
-                  — proven from the frames of the finished clip;
+     clipper    — on the "recording PC": ▶ Start Clipper, READY only once
+                  the recording is really growing; the phone's kill clipped
+                  by relay: the press converted to this PC's clock, 15 s
+                  before + 3 s after — proven from the frames of the clip;
+                  the attacker named after the point, the clip follows;
      overlay    — 1920×1080, transparent; the bar follows every point;
                   time-out, match point and final pills; each on-air
                   graphic shown, never overlapping the bar; compact layout;
@@ -64,13 +66,15 @@ function call(port, method, url, { json, token, headers } = {}) {
     r.end();
   });
 }
-// The master second a clip frame came from (the master's luma = 16 + 3·second).
-function secondAt(file, which) {
+// The recording's own time at a frame of a clip (left third: second,
+// middle: minute, right: the fraction — see the recorder below).
+function timeAt(file, which) {
   const args = which === 'first'
-    ? ['-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=16:8', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', 'pipe:1']
-    : ['-v', 'error', '-sseof', '-0.2', '-i', file, '-frames:v', '1', '-vf', 'scale=16:8', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', 'pipe:1'];
-  const y = execFileSync(FFMPEG, args).subarray(0, 16 * 8);
-  return (y.reduce((a, b) => a + b, 0) / y.length - 16) / 3;
+    ? ['-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=6:2:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', 'pipe:1']
+    : ['-v', 'error', '-sseof', '-0.25', '-i', file, '-frames:v', '1', '-vf', 'scale=6:2:flags=area', '-f', 'rawvideo', '-pix_fmt', 'yuv420p', 'pipe:1'];
+  const y = execFileSync(FFMPEG, args).subarray(0, 12);
+  const col = (a) => (y[a] + y[a + 1] + y[a + 6] + y[a + 7]) / 4;
+  return Math.round((col(2) - 16) / 3) * 60 + Math.round((col(0) - 16) / 3) + Math.max(0, Math.min(0.999, (col(4) - 16) / 200));
 }
 function duration(file) {
   const m = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(String(spawnSync(FFMPEG, ['-hide_banner', '-i', file]).stderr));
@@ -104,8 +108,8 @@ const FAKE_FIREBASE = `(function(){
   const browser = await chromium.launch();
   const pageErrors = [];
   const contexts = [];
-  // engine: 'block' (a phone: no clip engine reachable), a port (the recording PC), or null (untouched)
-  async function open(url, { who = 'work', viewport = { width: 1366, height: 768 }, engine = 'block', scheme = 'light', init } = {}) {
+  // helper: 'block' (a phone: no Clipper app reachable), a port (the recording PC's Clipper Helper), or null (untouched)
+  async function open(url, { who = 'work', viewport = { width: 1366, height: 768 }, helper = 'block', scheme = 'light', init } = {}) {
     const ctx = await browser.newContext({ viewport, colorScheme: scheme });
     contexts.push(ctx);
     const page = await ctx.newPage();
@@ -116,8 +120,8 @@ const FAKE_FIREBASE = `(function(){
     await page.route('https://www.gstatic.com/**', (r) => r.fulfill({ contentType: 'application/javascript', body: FAKE_FIREBASE }));
     await page.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
     await page.route('https://fonts.gstatic.com/**', (r) => r.abort());
-    if (engine === 'block') await page.route('http://127.0.0.1:5006/**', (r) => r.abort());
-    else if (engine) await page.route('http://127.0.0.1:5006/**', (r) => r.continue({ url: r.request().url().replace('127.0.0.1:5006', '127.0.0.1:' + engine) }));
+    if (helper === 'block') await page.route('http://localhost:5005/**', (r) => r.abort());
+    else if (helper) await page.route('http://localhost:5005/**', (r) => r.continue({ url: r.request().url().replace('localhost:5005', '127.0.0.1:' + helper) }));
     page.on('pageerror', (e) => pageErrors.push(url.split('?')[0] + ': ' + String(e)));
     await page.goto(base + url);
     return page;
@@ -134,7 +138,7 @@ const FAKE_FIREBASE = `(function(){
   const toastSeen = (page, text) => page.waitForSelector(`.toast:has-text("${text}")`, { timeout: 8000 }).then(() => true, () => false);
   const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
-  let engineProc = null;
+  let helperProc = null, recProc = null, hLog = '';
   try {
     /* ------------------------------------------------------------ dashboard */
     head('DASHBOARD — teams, tournament and fixtures through the UI');
@@ -178,38 +182,41 @@ const FAKE_FIREBASE = `(function(){
     const six = (t) => M.squads[t].filter((p) => !p.libero).slice(0, 6).map((p) => p.playerId);
 
     /* ------------------------------------------------------------ engine + clipper */
-    head('CLIPPER on the recording PC — the real Stream Engine');
+    head('CLIPPER on the recording PC — the real Clipper Helper, vMix recording');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vb-ui-'));
-    const master = path.join(tmp, 'master.mp4');
-    execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', "color=black:s=320x180:r=25:d=420,format=yuv420p,geq=lum='16+3*mod(floor(T),70)':cb=128:cr=128",
-      '-f', 'lavfi', '-i', 'sine=f=440:d=420', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', '-c:a', 'aac', '-shortest', master]);
-    fs.cpSync(path.join(REPO, 'stream-engine'), path.join(tmp, 'stream-engine'), { recursive: true, filter: (s) => !/\.local\.json$|StreamEngineData|[\\/]buffer$/.test(s) });
-    const sePort = 5300 + Math.floor(Math.random() * 600);
-    const masterStart = Date.now() - 5000;   // the press lands ~20-40 s in: clear of the 70-second brightness wrap
-    engineProc = spawn(process.execPath, [path.join(tmp, 'stream-engine', 'server.js')], {
-      env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), STREAM_ENGINE_PORT: String(sePort), STREAM_ENGINE_DATA_ROOT: path.join(tmp, 'data'), FFMPEG_PATH: FFMPEG,
-        STREAM_ENGINE_TEST_MASTER: `${master}|${masterStart}|420|${MID}` }), stdio: ['ignore', 'pipe', 'pipe'] });
-    let seLog = '';
-    engineProc.stdout.on('data', (d) => { seLog += d; }); engineProc.stderr.on('data', (d) => { seLog += d; });
-    for (let i = 0; i < 100; i++) { await sleep(100); try { if ((await call(sePort, 'GET', '/health')).status === 200) break; } catch (e) { /* booting */ } }
+    const recDir = path.join(tmp, 'vMix Recordings');
+    fs.mkdirSync(recDir, { recursive: true });
+    // what vMix writes while it records: a fragmented MP4, growing in real time;
+    // every frame carries its own time in its brightness
+    const W0 = Date.now();
+    recProc = spawn(FFMPEG, ['-v', 'error', '-re', '-f', 'lavfi', '-i', "color=black:s=384x192:r=25,format=yuv420p,geq=lum='if(lt(X,128),16+3*mod(floor(T),60),if(lt(X,256),16+3*floor(T/60),16+200*(T-floor(T))))':cb=128:cr=128",
+      '-f', 'lavfi', '-i', 'sine=f=440:r=48000', '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '25', '-keyint_min', '25', '-c:a', 'aac',
+      '-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-flush_packets', '1', '-f', 'mp4', path.join(recDir, 'capture.mp4')], { stdio: 'ignore' });
+    // the Clipper Helper, from a temp copy, set up once for this PC (the recording folder)
+    const hDir = path.join(tmp, 'ClipperHelper');
+    fs.mkdirSync(hDir);
+    for (const f of ['server.js', 'fmp4.js', 'clipOrganizer.js', 'volleyballOrganizer.js', 'package.json']) fs.copyFileSync(path.join(REPO, 'clipper-helper', f), path.join(hDir, f));
+    const hPort = 5300 + Math.floor(Math.random() * 600);
+    fs.writeFileSync(path.join(hDir, 'config.json'), JSON.stringify({ port: hPort, vmixRecordingFile: recDir, mainServerUrl: '' }));
+    helperProc = spawn(process.execPath, [path.join(hDir, 'server.js')], { env: Object.assign({}, process.env, { NODE_PATH: path.join(REPO, 'node_modules'), CLIPPER_NO_BROWSER: '1', FFMPEG_PATH: FFMPEG }), stdio: ['ignore', 'pipe', 'pipe'] });
+    helperProc.stdout.on('data', (d) => { hLog += d; }); helperProc.stderr.on('data', (d) => { hLog += d; });
+    for (let i = 0; i < 100; i++) { await sleep(100); try { if ((await call(hPort, 'GET', '/status')).status === 200) break; } catch (e) { /* booting */ } }
 
-    const clipper = await open(`/volleyball-clipper?match=${MID}`, { engine: sePort, viewport: { width: 1280, height: 900 }, init: { vb_clipper_prefs: JSON.stringify({ audio: 'Test microphone' }) } });
-    await clipper.waitForSelector('#recStart', { timeout: 15000 });
-    ok('the Clipper finds the Stream Engine on this PC', await clipper.locator('.big-status:has-text("Running")').count() === 1);
-    await clipper.click('#recStart');
-    // on Linux the recorder itself cannot capture (Windows only); the match is registered for clips all the same
-    await clipper.waitForSelector('.toast', { timeout: 15000 });
-    const toastText = await clipper.locator('.toast').first().textContent();
-    ok('starting the recording registers the match with the engine (the honest message says the capture itself needs Windows here)', /registered the match|Recording/.test(toastText), toastText);
-    const reg = (await call(sePort, 'GET', `/recording-info?matchId=${MID}`)).json;
-    eq('…the engine now clips this match', reg.registered, true);
-    ok('the relay switch is on by default', (await clipper.getAttribute('#relay', 'aria-checked')) === 'true');
-    ok('the record button is usable again after the answer', await clipper.evaluate(() => { const b = document.querySelector('#recStart, #recStop'); return !!b && !b.disabled; }));
-    await shot(clipper, 'clipper-engine');
+    const clipper = await open(`/volleyball-clipper?match=${MID}`, { helper: hPort, viewport: { width: 1280, height: 900 } });
+    await clipper.waitForSelector('#clpStart', { timeout: 15000 });
+    ok('before Start Clipper: STOPPED — never "ready" just because the page is open', await clipper.locator('.clphead .clpword:has-text("STOPPED")').count() === 1);
+    await clipper.click('#clpStart');
+    const ready = await clipper.waitForSelector('.clphead .clpword:has-text("READY")', { timeout: 30000 }).then(() => true, () => false);
+    ok('▶ Start Clipper → READY: the Clipper app, this match, the recording vMix is writing, the website — all found, nothing typed', ready, await clipper.textContent('#clp').catch(() => ''));
+    const hs = (await call(hPort, 'GET', '/status')).json;
+    eq('…the helper is set up for THIS match and THIS website', [hs.matchId, hs.sport, hs.mainServerUrl, hs.currentRecordingFile && path.basename(hs.currentRecordingFile)], [MID, 'volleyball', base, 'capture.mp4']);
+    const ck = await clipper.$$eval('.clpchecks > div', (d) => d.map((x) => x.className));
+    ok('…every check ticked', ck.length === 4 && ck.every((c) => c === 'ok'), ck);
+    await shot(clipper, 'clipper-ready');
 
     /* ------------------------------------------------------------ overlay */
     head('OVERLAY — 1920×1080, transparent');
-    const overlay = await open(`/volleyball-overlay?match=${MID}`, { who: null, engine: null, viewport: { width: 1920, height: 1080 } });
+    const overlay = await open(`/volleyball-overlay?match=${MID}`, { who: null, helper: null, viewport: { width: 1920, height: 1080 } });
     await overlay.waitForFunction(() => document.body.classList.contains('ready'), null, { timeout: 15000 });
     const bg = await overlay.evaluate(() => [getComputedStyle(document.documentElement).backgroundColor, getComputedStyle(document.body).backgroundColor]);
     eq('the page background is transparent (OBS shows the camera through it)', bg, ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
@@ -260,12 +267,18 @@ const FAKE_FIREBASE = `(function(){
     let s = await sum();
     eq('set 1 is on, the toss winner serves', [s.status, s.set, s.serving], ['in_set', 1, 'A']);
 
-    // the kill, by a named attacker — this is the point the clipper PC clips
+    // the kill — this is the point the clipper PC clips. The tap counts the
+    // point at once; who scored it is asked afterwards, never in the way
     const attacker = six('A')[3];
     const tPress = Date.now();
     await panel.click('[data-q="ATTACK_KILL"][data-qt="A"]');
-    await panel.click(`.sheet [data-pid="${attacker}"]`);
+    await panel.waitForSelector('#ask:not([hidden])', { timeout: 4000 });
+    const countedFirst = await panel.evaluate(() => document.querySelector('.bigscore[data-team="A"]').textContent);
+    eq('the tap counts the point at once — before anyone is named', countedFirst, '1');
+    ok('…and asks "Who earned this point?" without blocking anything (no dialog)', await panel.locator('.scrim').count() === 0 && /Who earned this point/.test(await panel.textContent('#ask')));
+    await panel.click(`#ask [data-ap="${attacker}"]`);
     const tAfter = Date.now();
+    await panel.waitForSelector('#ask', { state: 'hidden', timeout: 4000 }).catch(() => {});
     await sleep(800);
     const plus = async (t, n) => { for (let i = 0; i < n; i++) { await panel.click(`[data-point="${t}"]`); await sleep(680); } };
     await plus('B', 2);
@@ -345,31 +358,28 @@ const FAKE_FIREBASE = `(function(){
       if (clip && ['SERVER_ONLY', 'COMPLETE'].includes(clip.status)) break;
       await sleep(250);
     }
-    ok('the clipper relayed the point and the engine’s clip reached the website', clip && ['SERVER_ONLY', 'COMPLETE'].includes(clip.status), clip && { status: clip.status, local: clip.local, error: clip.error, log: seLog.slice(-600) });
+    ok('the Clipper PC relayed the point and its clip reached the website', clip && ['SERVER_ONLY', 'COMPLETE'].includes(clip.status), clip && { status: clip.status, local: clip.local, error: clip.error, log: hLog.slice(-800) });
     if (clip && clip.watchUrl) {
       const vid = await call(port, 'GET', clip.watchUrl);
       const f = path.join(tmp, 'kill.mp4');
       fs.writeFileSync(f, vid.buf);
-      const first = secondAt(f, 'first'), last = secondAt(f, 'last'), dur = duration(f);
-      // the panel takes the press at the FIRST tap (the "Kill" chip), before the attacker is picked
-      const pressSec = (tPress - masterStart) / 1000;
-      ok(`the attacker was picked ${((tAfter - tPress) / 1000).toFixed(1)} s after the tap — the clip still keys on the tap`, tAfter > tPress);
-      ok(`the clip is ~10 s long (${dur && dur.toFixed(2)} s)`, dur && Math.abs(dur - 10) < 0.8, dur);
-      // a frame's brightness gives the whole second it came from: the first frame
-      // is from second floor(T0 - 7), the last from second floor(T0 + 3) (±1 for
-      // the cut landing on a frame either side of a second boundary)
-      ok(`it starts 7 s before the press (first frame from second ${first.toFixed(1)}, press at ${pressSec.toFixed(2)} s)`, Math.abs(first - Math.floor(pressSec - 7)) <= 1.05, { first, pressSec });
-      ok(`it ends 3 s after the press (last frame from second ${last.toFixed(1)})`, Math.abs(last - Math.floor(pressSec + 3)) <= 1.05, { last, pressSec });
-      eq('the clip belongs to the attacker (the same point event)', clip.players.filter((p) => p.playerId === attacker).map((p) => p.role), ['attacker']);
+      const first = timeAt(f, 'first'), last = timeAt(f, 'last'), dur = duration(f);
+      // the press is the TAP (the "Kill" chip); the attacker was named afterwards
+      const pressSec = (tPress - W0) / 1000;
+      ok(`the attacker was named ${((tAfter - tPress) / 1000).toFixed(1)} s after the tap — the clip still keys on the tap`, tAfter > tPress);
+      ok(`the clip is 18 s long (${dur && dur.toFixed(2)} s): 15 s of the rally + 3 s after`, dur && Math.abs(dur - 18) < 0.8, dur);
+      ok(`it starts 15 s before the press (first frame at ${first.toFixed(2)} s of the recording, press at ${pressSec.toFixed(2)} s)`, Math.abs(first - (pressSec - 15)) <= 1.2, { first, pressSec });
+      ok(`it ends 3 s after the press (last frame at ${last.toFixed(2)} s)`, Math.abs(last - (pressSec + 3)) <= 1.2, { last, pressSec });
+      eq('the clip belongs to the attacker (named after the point, by id)', clip.players.filter((p) => p.playerId === attacker).map((p) => p.role), ['attacker']);
+      eq('…its attribution says so', [clip.attribution.type, clip.attribution.playerId], ['kill', attacker]);
     }
-    await sleep(6500);   // the phone's own "no engine here" note arrives after 6 s …
-    const after = (await api('GET', `/api/volleyball/matches/${MID}/clips?eventId=${killEv.eventId}`)).json.clips[0];
-    ok('…and never overwrites the clip the PC made', after && after.status !== 'UNAVAILABLE', after && after.status);
-    await clipper.waitForSelector('.clip .badge:has-text("Saved on the website"), .clip .badge:has-text("Upload complete")', { timeout: 10000 }).then(() => ok('the Clipper lists the clip with its real state', true), () => ok('the Clipper lists the clip with its real state', false));
-    ok('…with the attacker named', /Pune Player 4/.test(await clipper.textContent(`.clip[data-id="${clip.clipId}"] .who`)));
+    await clipper.waitForSelector(`.clprow[data-ev="${killEv.eventId}"] .clipst:has-text("Ready")`, { timeout: 20000 }).then(() => ok('the Clipper page lists the clip with its real state', true), () => ok('the Clipper page lists the clip with its real state', false));
+    ok('…with the attacker named and how the point was won', /#4/.test(await clipper.textContent(`.clprow[data-ev="${killEv.eventId}"] .whoc`)) && /Kill/.test(await clipper.textContent(`.clprow[data-ev="${killEv.eventId}"] .whoc`)));
+    const hj = (await call(hPort, 'GET', `/clip-jobs/${MID}_${killEv.eventId}`)).json.job;
+    ok('…and on the Clipper PC the file is named for the kill and linked into the attacker’s folder', hj && /_Kill_4-/.test(hj.localPath) && hj.links.some((l) => l.playerId === attacker), hj && { path: hj.localPath, links: hj.links });
     eq('every point the phone scored was clipped (the relay clips them all)', (await api('GET', `/api/volleyball/matches/${MID}/clips`)).json.clips.filter((c) => !c.eventVoided).length >= 4, true);
     await shot(clipper, 'clipper-clips');
-    ok('the phone panel’s chip says the clipper PC is clipping', await panel.locator('.chip:has-text("Clipper PC")').count() === 1);
+    ok('the phone panel’s chip says the Clipper on the vMix PC is clipping', /Clipper page/.test(await panel.textContent('#clpChip')), await panel.textContent('#clpChip').catch(() => ''));
 
     /* ------------------------------------------------------------ rest of the match */
     head('REST OF THE MATCH — another device takes over; the panel follows');
@@ -426,7 +436,7 @@ const FAKE_FIREBASE = `(function(){
     await panel.click('.sheet #gfxAir [data-a="stop"]');
     await overlay.waitForFunction(() => window.__vbOverlay.state === 'OVERLAY_VISIBLE' && !document.querySelector('#gfx .scene'), null, { timeout: 12000 }).then(() => ok('“Dismiss · back to live” clears the graphic and the bar returns', true), () => ok('“Dismiss · back to live” clears the graphic and the bar returns', false));
 
-    const compact = await open(`/volleyball-overlay?match=${MID}&layout=compact`, { who: null, engine: null, viewport: { width: 1920, height: 1080 } });
+    const compact = await open(`/volleyball-overlay?match=${MID}&layout=compact`, { who: null, helper: null, viewport: { width: 1920, height: 1080 } });
     await compact.waitForFunction(() => document.body.classList.contains('ready') && window.__vbOverlay.state === 'OVERLAY_VISIBLE', null, { timeout: 15000 });
     await backdrop(compact);
     eq('compact layout: the team names fit the corner bug', await clipped(compact, '.crow .cn'), []);
@@ -446,7 +456,7 @@ const FAKE_FIREBASE = `(function(){
 
     /* ------------------------------------------------------------ scorecard */
     head('SCORECARD — statistics, the attacker’s video icon, the report link');
-    const sc = await open(`/volleyball/match/${MID}`, { who: null, engine: null, viewport: { width: 1280, height: 900 } });
+    const sc = await open(`/volleyball/match/${MID}`, { who: null, helper: null, viewport: { width: 1280, height: 900 } });
     await sc.waitForSelector('.tbl', { timeout: 15000 });
     ok('the result is shown (3–0, Final)', /3\s*–\s*0/.test(await sc.textContent('.score')) && (await sc.locator('.badge.done:has-text("Final")').count()) === 1);
     ok('the PDF link is there because the PDF exists', await sc.locator('a:has-text("Match report (PDF")').count() === 1);
@@ -466,10 +476,10 @@ const FAKE_FIREBASE = `(function(){
     await shot(sc, 'scorecard-points');
     await sc.click('#tabs [data-t="card"]');
     await shot(sc, 'scorecard-light');
-    const scDark = await open(`/volleyball/match/${MID}`, { who: null, engine: null, viewport: { width: 1280, height: 900 }, scheme: 'dark' });
+    const scDark = await open(`/volleyball/match/${MID}`, { who: null, helper: null, viewport: { width: 1280, height: 900 }, scheme: 'dark' });
     await scDark.waitForSelector('.tbl');
     await shot(scDark, 'scorecard-dark');
-    const scPhone = await open(`/volleyball/match/${MID}`, { who: null, engine: null, viewport: { width: 390, height: 844 } });
+    const scPhone = await open(`/volleyball/match/${MID}`, { who: null, helper: null, viewport: { width: 390, height: 844 } });
     await scPhone.waitForSelector('.tbl');
     ok('the scorecard fits a 390 px phone (tables scroll inside their cards)', await noOverflow(scPhone));
     eq('…with both team names in full', await clipped(scPhone, '.side .nm'), []);
@@ -477,7 +487,7 @@ const FAKE_FIREBASE = `(function(){
 
     /* ------------------------------------------------------------ tournament page */
     head('TOURNAMENT PAGE — table, leaders, teams');
-    const tp = await open(`/volleyball/tournament/${TID}`, { who: null, engine: null, viewport: { width: 1280, height: 900 } });
+    const tp = await open(`/volleyball/tournament/${TID}`, { who: null, helper: null, viewport: { width: 1280, height: 900 } });
     await tp.waitForSelector('.m');
     ok('the result is listed (FT, 3–0)', /3–0/.test(await tp.textContent('.m .sc')));
     await tp.click('#tabs [data-t="table"]');
@@ -494,7 +504,7 @@ const FAKE_FIREBASE = `(function(){
     await tp.click('#hgo');
     await tp.waitForSelector('#hout p');
     ok('head-to-head: Pune 1 – 0 Goa', /Pune Panthers 1 – 0 Goa Waves/.test(await tp.textContent('#hout')));
-    const tpPhone = await open(`/volleyball/tournament/${TID}`, { who: null, engine: null, viewport: { width: 390, height: 844 } });
+    const tpPhone = await open(`/volleyball/tournament/${TID}`, { who: null, helper: null, viewport: { width: 390, height: 844 } });
     await tpPhone.waitForSelector('.m');
     ok('the tournament page fits a 390 px phone', await noOverflow(tpPhone));
     await shot(tpPhone, 'tournament-phone');
@@ -507,7 +517,8 @@ const FAKE_FIREBASE = `(function(){
   } finally {
     for (const c of contexts) await c.close().catch(() => {});
     await browser.close().catch(() => {});
-    if (engineProc) engineProc.kill('SIGKILL');
+    if (helperProc) helperProc.kill('SIGKILL');
+    if (recProc) recProc.kill('SIGKILL');
   }
   console.log(`\n${pass} passed, ${fails.length} failed${fails.length ? ':\n  - ' + fails.join('\n  - ') : ''}`);
   console.log('screenshots: ' + OUT);
