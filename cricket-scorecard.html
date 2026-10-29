@@ -267,9 +267,10 @@
   html.page-hidden .team-logo-watermark--team-a,
   html.page-hidden .team-logo-watermark--team-b,
   html.page-hidden .tlw-ghost,
-  html.page-hidden .conn-dot.on,
-  html.page-hidden .chip.live .lv-dot,
-  html.page-hidden #commentary-page-head .cp-live::before{
+  html.page-hidden .conn-dot.on::after,
+  html.page-hidden .chip.live .lv-dot::after,
+  html.page-hidden #commentary-page-head .cp-live::after,
+  html.page-hidden .sct-live::after{
     animation-play-state:paused;
   }
   @keyframes driftA{
@@ -435,8 +436,25 @@
     color:var(--text-dim); letter-spacing:.3px; flex:none;
   }
   .conn-dot{ width:7px; height:7px; border-radius:50%; background:var(--text-faint); }
-  .conn-dot.on{ background:var(--live); box-shadow:0 0 0 0 rgba(239,68,68,.6); animation:pulseDot 1.6s infinite; }
-  @keyframes pulseDot{ 0%{box-shadow:0 0 0 0 rgba(239,68,68,.45);} 70%{box-shadow:0 0 0 7px rgba(239,68,68,0);} 100%{box-shadow:0 0 0 0 rgba(239,68,68,0);} }
+  .conn-dot.on{ background:var(--live); position:relative; }
+  /* ⚡ The live pulse: a ring that grows and fades, drawn as a pseudo-element
+     animated with transform + opacity only, so the compositor runs it on its
+     own. It used to animate box-shadow, which re-styled and repainted the dot
+     (and the bar it sits in) on the main thread every frame for as long as a
+     match was live — measured at 28% of a throttled phone CPU with the page
+     otherwise idle. Same look: the ring reaches 7px round the dot and fades. */
+  .conn-dot.on::after, .chip.live .lv-dot::after, .sct-live::after, #commentary-page-head .cp-live::after{
+    content:''; position:absolute; border-radius:50%; background:rgb(239,68,68); pointer-events:none; opacity:0;
+    animation:pulseRing 1.4s infinite;
+  }
+  .conn-dot.on::after{ inset:0; animation-duration:1.6s; }
+  @keyframes pulseRing{ 0%{ transform:scale(1); opacity:.45; } 70%{ transform:scale(3.3); opacity:0; } 100%{ transform:scale(3.3); opacity:0; } }
+  /* (the page's reduced-motion rule is written for elements — `*` — and does
+     not reach pseudo-elements: the ring stays still for those viewers, as
+     the old dot did) */
+  @media (prefers-reduced-motion:reduce){
+    .conn-dot.on::after, .chip.live .lv-dot::after, .sct-live::after, #commentary-page-head .cp-live::after{ animation:none; }
+  }
 
   /* ---------- Layout ---------- */
   /* 1180px left roughly 370px of dead margin each side of a 1920 laptop,
@@ -595,7 +613,8 @@
     font-size:11px; font-weight:700; letter-spacing:.3px; white-space:nowrap; line-height:1.4;
   }
   .chip.live{ background:rgba(239,68,68,.12); color:var(--live); border-color:transparent; display:flex; align-items:center; gap:5px; }
-  .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); animation:pulseDot 1.4s infinite; }
+  .chip.live .lv-dot{ width:6px; height:6px; border-radius:50%; background:var(--live); position:relative; }
+  .chip.live .lv-dot::after{ inset:0; }
   .chip.result{
     background:var(--accent-soft); color:var(--accent); border-color:transparent;
     padding:5px 13px; font-size:11.5px; display:flex; align-items:center; gap:5px;
@@ -917,10 +936,19 @@
     background:linear-gradient(90deg, color-mix(in srgb, var(--mm-a-color, var(--team-a-color)) 55%, var(--panel-2)), color-mix(in srgb, var(--mm-b-color, var(--team-b-color)) 55%, var(--panel-2)));
     border:1px solid var(--border-soft);
   }
+  /* ⚡ The marker slides by transform, not by `left`: a rail as wide as the
+     track is moved (translateX % of the rail = % of the track) and the dot is
+     its ::before. Animating `left` re-laid out the page on every frame of the
+     0.6 s slide after every ball — measured at ~40% of a live update's cost
+     on a throttled phone. Same look, same spring. */
   #momentum-marker{
-    position:absolute; top:50%; width:20px; height:20px; border-radius:50%;
+    position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none;
+    transform:translateX(50%); transition:transform .6s cubic-bezier(.34,1.4,.64,1);
+  }
+  #momentum-marker::before{
+    content:''; position:absolute; left:0; top:50%; width:20px; height:20px; border-radius:50%; box-sizing:border-box;
     background:var(--panel); border:3px solid var(--text); box-shadow:0 2px 8px rgba(0,0,0,.3);
-    transform:translate(-50%,-50%); left:50%; transition:left .6s cubic-bezier(.34,1.4,.64,1);
+    transform:translate(-50%,-50%);
   }
   #momentum-labels{ display:flex; justify-content:space-between; margin-top:9px; font-size:12px; font-weight:700; }
   #momentum-labels .mm-a{ color:var(--mm-a-color, var(--team-a-color)); }
@@ -1608,9 +1636,10 @@
   #commentary-page-back svg{ width:16px; height:16px; }
   #commentary-page-head h3{ margin:0; font-family:var(--font-display); font-size:16px; font-weight:800; flex:1; }
   #commentary-page-head .cp-live{
-    font-size:10px; font-weight:800; letter-spacing:.4px; color:var(--live); display:flex; align-items:center; gap:5px; flex:none;
+    font-size:10px; font-weight:800; letter-spacing:.4px; color:var(--live); display:flex; align-items:center; gap:5px; flex:none; position:relative;
   }
-  #commentary-page-head .cp-live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
+  #commentary-page-head .cp-live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); }
+  #commentary-page-head .cp-live::after{ left:0; top:50%; width:6px; height:6px; margin-top:-3px; }
   #commentary-page-body{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 16px calc(24px + env(safe-area-inset-bottom)); max-width:720px; margin:0 auto; width:100%; box-sizing:border-box; }
   /* ---- Commentary filter bar: two custom dropdowns (innings/team +
      event type). Sticky under the page head so they stay reachable while
@@ -2412,6 +2441,13 @@
     100%{ transform:scale(1); color:inherit; }
   }
   .val-pop{ display:inline-block; animation:valPop .38s cubic-bezier(.22,1,.36,1); }
+  /* ⚡ Phones / touch: the same pop as a scale only. The colour tint can only
+     be animated on the main thread — restyle + repaint every frame for every
+     number that changed (often 15-20 of them on one ball) — which measured at
+     ~40% of a live update's cost on a throttled phone. The scale runs on the
+     compositor; the number still visibly "pops" when it changes. */
+  @keyframes valPopScale{ 0%{ transform:scale(1); } 35%{ transform:scale(1.06); } 100%{ transform:scale(1); } }
+  @media (max-width: 900px), (pointer: coarse){ .val-pop{ animation-name:valPopScale; } }
 
   /* ===== DOWNLOAD HIGHLIGHTS — Player/Team/Full-match MP4 compilation ====
      Advanced pass 2: icon chips with per-type tint, fluid clamp()-based
@@ -2500,15 +2536,19 @@
   /* Shimmer sweep across the two hero buttons — a slow diagonal light
      band, purely decorative, ::after so it never intercepts clicks. */
   .hl-btn.hl-primary::after, .hl-btn.hl-full::after{
-    content:''; position:absolute; inset:0; z-index:1; pointer-events:none;
+    /* ⚡ The band is a 220%-wide layer slid by transform (compositor only);
+       sliding background-position instead repainted both buttons on the
+       main thread every frame. Same picture, same timing: -65.45% / 21.82%
+       of its own width = background-position 120% / -40% at size 220%. */
+    content:''; position:absolute; top:0; bottom:0; left:0; width:220%; z-index:1; pointer-events:none;
     background:linear-gradient(115deg, transparent 30%, rgba(255,255,255,.28) 45%, transparent 60%);
-    background-size:220% 100%; background-position:120% 0;
+    transform:translateX(-65.45%);
     animation:hlShimmer 3.6s ease-in-out infinite;
   }
   .hl-btn.hl-full::after{ animation-delay:.6s; }
   @keyframes hlShimmer{
-    0%, 55%{ background-position:120% 0; }
-    100%{ background-position:-40% 0; }
+    0%, 55%{ transform:translateX(-65.45%); }
+    100%{ transform:translateX(21.82%); }
   }
   /* 📱 Phones/tablets — scroll smoothness (desktop untouched). These loops
      animate background-position / box-shadow, which repaints on the main
@@ -2520,7 +2560,7 @@
        paint until scrolled near; 'auto' keeps their measured size. */
     .cm2-row, .cm2-over-head{ content-visibility:auto; contain-intrinsic-size:auto 46px; }
     .hl-btn.hl-primary::after, .hl-btn.hl-full::after{ animation:none; }
-    .conn-dot.on, .chip.live .lv-dot, #commentary-page-head .cp-live::before{ animation:none; }
+    .conn-dot.on::after, .chip.live .lv-dot::after, #commentary-page-head .cp-live::after, .sct-live::after{ animation:none; opacity:0; }
   }
   /* …and with per-over wagon wheels, whole overs (card + wheel + balls): only
      the overs on screen get styled and laid out. Only where the browser
@@ -2538,7 +2578,7 @@
   /* Never animate what can't be seen: the commentary page's live dot while
      that page is closed, and the clip loader while the player is closed or
      the video is already playing. */
-  #commentary-page:not(.open) .cp-live::before{ animation:none; }
+  #commentary-page:not(.open) .cp-live::after{ animation:none; opacity:0; }
   #video-modal-backdrop:not(.open) .vm-brand,
   #video-modal-backdrop:not(.open) .vm-bar::after,
   .vm-stage.is-ready:not(.is-buffering) .vm-brand,
@@ -2712,7 +2752,8 @@
   .sct-tab[aria-selected="true"]{ color:var(--text); }
   .sct-tab[aria-selected="true"] svg{ color:var(--accent); opacity:1; }
   .sct-tab:focus-visible{ outline:2px solid var(--accent); outline-offset:-4px; border-radius:10px; }
-  .sct-live{ width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
+  .sct-live{ width:6px; height:6px; border-radius:99px; background:var(--live); position:relative; flex:none; }
+  .sct-live::after{ inset:0; }
   .sct-live[hidden]{ display:none; }
   .sct-ink{
     position:absolute; left:0; bottom:0; height:3px; width:0; border-radius:3px 3px 0 0; background:var(--accent);
@@ -2722,13 +2763,17 @@
   @media (max-width:640px){ .sct-track{ padding:0 8px; } .sct-tab{ padding:12px 11px 11px; font-size:13px; gap:6px; } .sct-tab svg{ width:15px; height:15px; } }
 
   /* every tab but Scorecard: the score header on top, then that section only */
-  html[data-sc-tab]:not([data-sc-tab="scorecard"]) #wrap > :not(#hero-row):not(#sc-panels){ display:none !important; }
-  html:not([data-sc-tab]) #sc-panels, html[data-sc-tab="scorecard"] #sc-panels{ display:none; }
+  /* ⚡ Sections are hidden by a class on #wrap matched against a class on each
+     section — so switching tabs re-styles only those sections. The rule used
+     to key off an attribute on <html> with :not(), which made the browser
+     re-style the whole page on every switch (60-140 ms on a throttled phone). */
+  #wrap.sct-off > .sct-sec{ display:none !important; }
+  #sc-panels[hidden]{ display:none; }
   #sc-panels{ display:flex; flex-direction:column; gap:14px; min-width:0; }
   .sct-panel{ display:flex; flex-direction:column; gap:14px; min-width:0; animation:sctIn .26s ease both; }
   .sct-panel[hidden]{ display:none; }
   @keyframes sctIn{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:none; } }
-  @media (prefers-reduced-motion: reduce){ .sct-panel{ animation:none; } .sct-ink{ transition:none; } }
+  @media (prefers-reduced-motion: reduce){ .sct-panel{ animation:none; } .sct-ink{ transition:none; } .sct-live::after{ animation:none; opacity:0; } }
 
   .sct-grid{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
   .sct-grid > *{ min-width:0; }
@@ -2739,7 +2784,6 @@
   .sct-empty b{ display:block; color:var(--text); font-family:var(--font-display); font-size:15px; margin-bottom:4px; }
   .sct-pill{ display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:99px; font-size:11px; font-weight:800; letter-spacing:.3px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); white-space:nowrap; }
   .sct-pill.live{ color:var(--live); border-color:color-mix(in srgb, var(--live) 40%, var(--border)); }
-  .sct-pill.live::before{ content:''; width:6px; height:6px; border-radius:99px; background:var(--live); animation:pulseDot 1.4s infinite; }
   .sct-tcol{ color:var(--tc, var(--accent)); }
   .sct-dot{ display:inline-block; width:10px; height:10px; border-radius:3px; background:var(--tc, var(--accent)); flex:none; }
 
@@ -5218,7 +5262,7 @@ function renderMomentum(s){
 
   if(!log.length){
     if(sub) sub.textContent = 'Not enough deliveries yet this innings';
-    marker.style.left = '50%';
+    marker.style.transform = 'translateX(50%)';
     verdict.textContent = 'Evenly poised — no balls bowled yet';
     return;
   }
@@ -5237,7 +5281,7 @@ function renderMomentum(s){
   // momentum: higher = batting side on top. Marker sits on the A→B track,
   // so flip the position when Team B is the one batting.
   const posFromA = battingKey === 'A' ? momentum : 100 - momentum;
-  marker.style.left = posFromA.toFixed(1) + '%';
+  marker.style.transform = 'translateX(' + posFromA.toFixed(1) + '%)';
 
   const battingName = battingObj.short || battingObj.name || 'Batting side';
   const bowlingName = bowlingObj.short || bowlingObj.name || 'Bowling side';
@@ -6322,9 +6366,10 @@ function flushValPop(){
   const els = Array.from(pendingValPop);
   pendingValPop.clear();
   els.forEach(el => el.classList.remove('val-pop'));
-  // Single shared forced layout for the whole batch, not one per element.
-  void document.body.offsetWidth;
-  els.forEach(el => el.classList.add('val-pop'));
+  // ⚡ Restart on the next frame: the browser styles the "removed" state in
+  // its own frame, so no synchronous layout is forced here at all (this was
+  // one forced reflow of the whole page per live update).
+  requestAnimationFrame(() => els.forEach(el => el.classList.add('val-pop')));
 }
 function setText(id, val){
   const el = document.getElementById(id);
@@ -6800,7 +6845,9 @@ function renderBalls(s){
     else if(/^(Wd|Nb|B|LB)/.test(b)) cls = 'extra';
     return `<div class="ball-chip ${cls}">${escapeHtml(String(b).replace(/^Nb/, 'NB'))}</div>`;
   }).join('');
-  wrap.scrollLeft = wrap.scrollWidth;
+  // ⚡ After this frame's own layout — reading scrollWidth right after the
+  // innerHTML forced a synchronous layout of the page on every ball.
+  requestAnimationFrame(() => { wrap.scrollLeft = wrap.scrollWidth; });
 }
 
 /* ---------- Over-by-over + progression, computed from ballLog ---------- */
@@ -7113,7 +7160,24 @@ function matchStatsForPlayer(name){
 // scorecard just never asked for that page. Now pages through with
 // skip/limit until the server returns a short page (fewer than asked),
 // so the WHOLE match's clips end up in the map regardless of count.
-async function fetchMatchClips(type, includeHidden, matchIdOverride){
+// ⚡ One request at a time per list: page start, the finished-match snapshot
+// and the sign-in callback all ask for the match's clips within the same
+// second — before, each paged through the whole list on its own (3x the
+// requests on every page open). A call made while the same list is already
+// on its way — and was asked for moments ago — shares that answer; an older
+// request is never reused (a refresh after an edit must see the edit).
+const CLIP_FETCH_SHARE_MS = 1500;
+const clipFetchInflight = new Map();   // key -> { p, at }
+function fetchMatchClips(type, includeHidden, matchIdOverride){
+  const k = [matchIdOverride || getClipMatchId(), type || '', includeHidden ? 1 : 0].join('|');
+  const cur = clipFetchInflight.get(k);
+  if(cur && Date.now() - cur.at < CLIP_FETCH_SHARE_MS) return cur.p;
+  const entry = { at: Date.now(), p: null };
+  entry.p = fetchMatchClipsNow(type, includeHidden, matchIdOverride).finally(() => { if(clipFetchInflight.get(k) === entry) clipFetchInflight.delete(k); });
+  clipFetchInflight.set(k, entry);
+  return entry.p;
+}
+async function fetchMatchClipsNow(type, includeHidden, matchIdOverride){
   const matchId = matchIdOverride || getClipMatchId();
   if(!matchId) return [];
   const pageSize = 100;
@@ -10455,8 +10519,10 @@ startWatching();
     brand.insertAdjacentElement('afterend', nav);
     const panels = document.createElement('div');
     panels.id = 'sc-panels';
+    panels.hidden = true;
     panels.innerHTML = TABS.filter(t => t.id !== 'scorecard').map(t => `<section class="sct-panel" id="sct-p-${t.id}" role="tabpanel" aria-labelledby="sct-tab-${t.id}" hidden>${t.id === 'commentary' ? '<div class="card" id="sc-cm-card"><div id="sc-cm-host"></div></div>' : ''}</section>`).join('');
     hero.insertAdjacentElement('afterend', panels);
+    markSections();
     panels.querySelector('#sct-p-summary').addEventListener('click', (e) => {
       const b = e.target.closest('[data-sum-inn]');
       if(!b) return;
@@ -10476,12 +10542,18 @@ startWatching();
       const b = document.getElementById('sct-tab-' + to); if(b) b.focus();
     });
     // the page swaps its whole content for a message (no match / could not load): no sections then
-    if(window.MutationObserver) new MutationObserver(() => { if(!document.getElementById('hero-row')) window.scTabsRefresh(); }).observe(wrap, { childList: true });
+    if(window.MutationObserver) new MutationObserver(() => { if(!document.getElementById('hero-row')) window.scTabsRefresh(); else markSections(); }).observe(wrap, { childList: true });
     measure();
     window.addEventListener('resize', () => { measure(); ink(); });
     if(window.ResizeObserver) new ResizeObserver(() => { measure(); ink(); }).observe(brand);
     built = true;
     return true;
+  }
+  // Every section of the Scorecard tab (all of #wrap but the score header and the panels).
+  function markSections(){
+    const wrap = document.getElementById('wrap');
+    if(!wrap || !document.getElementById('hero-row')) return;
+    [...wrap.children].forEach(c => { if(c.id !== 'hero-row' && c.id !== 'sc-panels' && !c.classList.contains('sct-sec')) c.classList.add('sct-sec'); });
   }
   // The bar sits under the (sticky) brand bar; Commentary's filters sit under both.
   function measure(){
@@ -10516,6 +10588,9 @@ startWatching();
     const prev = active;
     active = id;
     root.dataset.scTab = id;
+    const wrapEl = document.getElementById('wrap'), panelsEl = document.getElementById('sc-panels');
+    if(wrapEl) wrapEl.classList.toggle('sct-off', id !== 'scorecard');
+    if(panelsEl) panelsEl.hidden = id === 'scorecard';
     document.querySelectorAll('#sc-tabs .sct-tab').forEach(b => {
       const on = b.dataset.tab === id;
       b.setAttribute('aria-selected', on ? 'true' : 'false');
@@ -10714,7 +10789,7 @@ startWatching();
   }
   const empty = (title, text) => `<div class="card"><div class="sct-empty"><b>${E(title)}</b>${E(text)}</div></div>`;
   const card = (title, body, extra) => `<div class="card${extra ? ' ' + extra : ''}"><div class="section-title"><span class="dash"></span>${title}</div>${body}</div>`;
-  const statusPill = (m) => m.finished ? `<span class="sct-pill">Result</span>` : m.live ? `<span class="sct-pill live">Live</span>` : `<span class="sct-pill">Snapshot</span>`;
+  const statusPill = (m) => m.finished ? `<span class="sct-pill">Result</span>` : m.live ? `<span class="sct-pill live"><span class="sct-live" aria-hidden="true"></span>Live</span>` : `<span class="sct-pill">Snapshot</span>`;
   function formatText(st){
     if(!st.format) return '';
     if(st.format === 'Custom') return `${st.customOvers || 20} overs a side`;
@@ -11604,6 +11679,7 @@ startWatching();
       // the page replaced its content with a message (no match / could not load) — no sections
       const nav = document.getElementById('sc-tabs'); if(nav) nav.hidden = true;
       root.removeAttribute('data-sc-tab');
+      const wrapEl = document.getElementById('wrap'); if(wrapEl) wrapEl.classList.remove('sct-off');
       return;
     }
     liveDot();
