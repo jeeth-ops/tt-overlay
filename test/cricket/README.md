@@ -65,7 +65,7 @@ NODE_PATH=$(npm root -g) node test/cricket/broadcast-graphics-test.js  # 🎬 PL
                                                   # duration changed while up, ends by itself; replace + old timer; double clicks; missing XI / toss
                                                   # result; reduced motion; the controls one block in both panels (ONLY=rules: no browser);
                                                   # Playing XI AUTO / HOLD (no timer behind HOLD, NEXT TEAM, AUTO from where it is); the Match
-                                                  # Arena intro held, reloaded without replaying; INNINGS picked in one panel → the other; BAT /
+                                                  # Intro team reveal held, reloaded without replaying; INNINGS picked in one panel → the other; BAT /
                                                   # BOWL SCORECARD of each innings with its real figures, every player once, the rest of the
                                                   # squad by name (did not bat / yet to bat / did not bowl / not in XI), the scoring untouched;
                                                   # over-end cards wait while a card is pinned and run again after HIDE SCORECARD; the knockout

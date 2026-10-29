@@ -439,14 +439,15 @@ async function chain(){
       const k = document.querySelector('#bcg .ar-ko');
       return k ? [k.className, k.querySelector('.ar-ko-t').textContent, k.querySelectorAll('.ar-ko-ico').length, +getComputedStyle(k.querySelector('.ar-ko-plate')).opacity] : null;
     }), ['ar-ko final', 'FINAL', 2, 1]);
-    eq('…in the Match Arena over the picture: no team-coloured halves, no stadium drawn over the camera — floodlight beams, the teams on plinths, VS between them',
-      await OV.page.evaluate(() => [!!document.querySelector('#bcg .ar-env svg .ar-stands'), !!document.querySelector('#bcg .ar-env svg .ar-beams'), document.querySelectorAll('#bcg .ar-frame').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [false, true, 2, true, false]);
+    eq('…the team reveal over the picture: the two teams\' strands of light, the glass, both logos (no player photos), VS between them, no team-coloured halves',
+      await OV.page.evaluate(() => [document.querySelectorAll('#bcg .ar-env svg .ar-str.a').length > 0 && document.querySelectorAll('#bcg .ar-env svg .ar-str.b').length > 0, !!document.querySelector('#bcg .ar-panel'),
+        document.querySelectorAll('#bcg .ar-frame .bcg-plate').length, document.querySelectorAll('#bcg .bcg-matchIntro img:not(.bcg-brand)').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [true, true, 2, 0, true, false]);
     // reloaded while it holds: it comes back as it is — not a second opening sequence
     await OV.page.reload();
     await OV.page.waitForFunction(() => window.gsap && document.querySelector('#bcg .bcg-scene[data-ready="1"]'), null, { timeout: 6000 });
     await sleep(150);
     eq('the overlay reloaded during the intro → the one intro, already on its final picture (not played again)',
-      await OV.page.evaluate(() => [document.querySelectorAll('#bcg .bcg-scene').length, document.querySelector('#bcg .bcg-scene').dataset.hold, getComputedStyle(document.querySelector('#bcg .ar-vs-t')).opacity, getComputedStyle(document.querySelector('#bcg .ar-info-bar')).opacity]),
+      await OV.page.evaluate(() => [document.querySelectorAll('#bcg .bcg-scene').length, document.querySelector('#bcg .bcg-scene').dataset.hold, getComputedStyle(document.querySelector('#bcg .ar-vs-t')).opacity, getComputedStyle(document.querySelector('#bcg .ar-venue')).opacity]),
       [1, 'until-hidden', '1', '1']);
     await P1.page.click('#bcg-intro-btn');
     o = await until(ov, v => !v.on, 3000);

@@ -1928,7 +1928,8 @@
      Text and logos keep 54 design px (5%) clear of its edges.
      Only transform and opacity move (plus a clip on a few small boxes
      while they reveal) — no animated filters or shadows, nothing that
-     keeps running once a graphic has settled.
+     keeps running once a graphic has settled (but for the Match Intro's
+     few small ambient loops: see its block).
      ============================================================ */
   #bcg{
     position:absolute; inset:0; z-index:45; pointer-events:none; overflow:hidden; display:none;
@@ -2180,137 +2181,196 @@
   }
   .bcg-ko-tag.ko{ background:linear-gradient(180deg, #ffffff 0%, #d9e0ea 52%, #a8b3c4 100%); color:#141a26; }
 
-  /* ---------------- MATCH INTRO — THE MATCH ARENA ----------------
-     The ground itself is the arena: the picture stays in view, under a
-     light scrim, and the floodlights' beams swing in from the top corners
-     and settle, faint, over it. The teams are its subjects — each logo,
-     big, in a metal octagon on a plinth, the name on a glass plate under
-     it — and their colours are only accents: the octagon's thin rim, the
-     light pooled on its plinth, the rule under the name. VS sits in the
-     middle as the match-up. A knockout game says so in gold, big, under
-     the tournament (koRound in the script) — a final with its trophies.
-     The "camera" eases in over the opening, then the picture is still. */
-  .ar-env{ position:absolute; inset:0; transform-origin:50% 40%; }
-  .ar-env svg{ position:absolute; inset:0; width:100%; height:100%; display:block; }
-  .ar-column{
-    position:absolute; left:50%; top:0; width:calc(6 * var(--u)); height:68%; margin-left:calc(-3 * var(--u)); opacity:0; transform-origin:50% 0;
-    background:linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(235,242,255,.75) 55%, rgba(255,255,255,0) 100%);
+  /* ---------------- MATCH INTRO — THE TEAM REVEAL ----------------
+     A cinematic opening played OVER the live picture, never instead of it:
+     the camera stays in view all round the glass and faintly through it.
+     1  the picture dims a touch; each team's colour glows in from its own
+        edge, dust rises, slanted shards slide in at the sides
+     2  two bundles of light — one per team — draw in from opposite corners
+        along one S-curve, a light racing down every strand; they meet in
+        the middle in a flash
+     3  out of the flash a glass panel unrolls and turns to face the camera
+     4  the logos are the heroes: each turns in out of the depth on its own
+        side, a ring of its colour round it, its light and rays behind it
+     5  VS lands between them — a column of light, the diamond drawing
+        itself in both colours, rings and a shockwave across both logos
+     6  down the right, line by line: the competition, the match, TEAM A /
+        V / TEAM B, the venue and the date; a light sweeps the glass
+     7  it holds with only ambient life, kept small: embers rising round
+        the logos, a glint running round each ring, a sheen crossing the
+        glass now and then (CSS transform / opacity only, composited,
+        nothing repainting; the dust over the picture and the strands are
+        still once the glass is up — what moves full-screen costs a frame)
+     On the way out it folds into a band of light that shoots off and the
+     strands withdraw to their own sides. Every colour comes from the two
+     teams (introPalette in the script): nothing here is any one team's.
+     A knockout says so in gold above the teams (koRound) — a final with
+     its trophies. Panel coordinates below are design px inside the glass
+     (1712 x 852, at 104,92 on the 1920 x 1080 picture). */
+  /* the scrim, with each team's colour glowing in from its own side (one layer) */
+  .bcg-scrim.ar-scrim{
+    background:radial-gradient(75% 95% at 0% 20%, var(--ar-a-tint) 0%, rgba(0,0,0,0) 72%), radial-gradient(75% 95% at 100% 84%, var(--ar-b-tint) 0%, rgba(0,0,0,0) 72%),
+      radial-gradient(130% 115% at 50% 46%, rgba(3,6,12,.26) 0%, rgba(3,6,12,.4) 62%, rgba(3,6,12,.6) 100%);
   }
-  .ar-stage{ position:absolute; inset:0; }
-  .ar-top{ position:absolute; left:0; right:0; top:calc(48 * var(--u)); display:flex; justify-content:center; }
-  .ar-top-in{
-    display:flex; align-items:center; gap:calc(20 * var(--u)); max-width:calc(1500 * var(--u));
-    padding:calc(10 * var(--u)) calc(28 * var(--u)) calc(10 * var(--u)) calc(12 * var(--u)); border-radius:calc(8 * var(--u));
+  /* the strands: one S-curve, drawn in by dash offset (pathLength 1000) */
+  .ar-env{ position:absolute; inset:0; pointer-events:none; }
+  .ar-env svg{ position:absolute; inset:0; width:100%; height:100%; display:block; overflow:visible; }
+  .ar-str, .ar-glowline{ fill:none; stroke-linecap:round; stroke-dasharray:1000 1000; }
+  .ar-comet{ fill:none; stroke-linecap:round; stroke-dasharray:70 2000; stroke-dashoffset:70; }
+  /* dust: tiny lights drifting up, each on its own loop (--d, --dl) — over
+     the picture while the intro builds, then only as embers round the
+     logos (.ar-embers, inside the glass), so what keeps moving stays small */
+  .ar-dust{ position:absolute; inset:0; pointer-events:none; }
+  .ar-embers{ left:0; top:0; width:calc(950 * var(--u)); bottom:0; pointer-events:none; }
+  .ar-dust i, .ar-embers i{
+    position:absolute; width:calc(var(--s) * var(--u)); height:calc(var(--s) * var(--u)); margin:calc(var(--s) * -.5 * var(--u)) 0 0 calc(var(--s) * -.5 * var(--u));
+    border-radius:50%; opacity:0; background:radial-gradient(circle, #fff 0%, var(--c) 32%, rgba(0,0,0,0) 70%);
+    animation:ar-dust var(--d) linear var(--dl) infinite;
   }
-  .ar-top-in.solo{ padding:calc(10 * var(--u)); }
-  .ar-top .bcg-brand{ position:static; width:calc(56 * var(--u)); height:calc(56 * var(--u)); box-shadow:none; flex:none; }
-  .ar-top .bcg-plate{ --ps:50; }
-  .ar-div{ flex:none; width:calc(2 * var(--u)); height:calc(38 * var(--u)); background:rgba(255,255,255,.22); }
-  .ar-tour{
-    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-family:var(--font-event); font-size:calc(40 * var(--u)); line-height:1.15; letter-spacing:.14em; text-transform:uppercase; color:#eef2f8;
+  @keyframes ar-dust{
+    0%{ opacity:0; transform:translate3d(0, 0, 0); }
+    20%, 78%{ opacity:var(--o); }
+    100%{ opacity:0; transform:translate3d(calc(var(--dx) * var(--u)), calc(var(--dy) * var(--u)), 0); }
   }
+  @keyframes ar-spin{ to{ transform:rotate(360deg); } }
+  /* slanted shards at the two sides, in the two colours, half behind the glass */
+  .ar-shard{ position:absolute; left:calc(var(--x) * var(--u)); top:calc(var(--y) * var(--u)); width:calc(var(--w) * var(--u)); height:calc(var(--h) * var(--u)); }
+  .ar-shard b{ position:absolute; inset:0; transform:skewX(-22deg); border-radius:calc(2 * var(--u)); opacity:.8;
+    background:linear-gradient(180deg, var(--sh-0) 0%, var(--sh) 30%, var(--sh) 64%, var(--sh-0) 100%); }
+  .ar-shard.a{ --sh:var(--ar-a); --sh-0:var(--ar-a-0); }
+  .ar-shard.b{ --sh:var(--ar-b); --sh-0:var(--ar-b-0); }
+  .ar-shard.thin b{ opacity:.5; }
+  /* where the two bundles meet */
+  .ar-flash{
+    position:absolute; left:calc(260 * var(--u)); top:calc(388 * var(--u)); width:calc(1400 * var(--u)); height:calc(260 * var(--u)); opacity:0; pointer-events:none;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(255,255,255,.95) 0%, var(--ar-mix-glow) 26%, rgba(0,0,0,0) 70%);
+  }
+  /* ---- the glass ---- */
+  .ar-panel-wrap{ position:absolute; left:calc(104 * var(--u)); top:calc(92 * var(--u)); width:calc(1712 * var(--u)); height:calc(852 * var(--u)); }
+  .ar-panel{
+    position:absolute; inset:0; border-radius:calc(26 * var(--u)); overflow:hidden; transform-origin:50% 50%;
+    box-shadow:0 calc(30 * var(--u)) calc(80 * var(--u)) rgba(0,0,0,.42);
+  }
+  .ar-panel > *{ position:absolute; }
+  .ar-p-bg{ inset:0; background:linear-gradient(112deg, var(--ar-a-deep) 0%, var(--ar-mid) 50%, var(--ar-b-deep) 100%); }
+  .ar-p-glow{ inset:0; pointer-events:none; }
+  .ar-p-glow.a{ background:radial-gradient(75% 90% at 6% 0%, var(--ar-a-glow) 0%, rgba(0,0,0,0) 72%); }
+  .ar-p-glow.b{ background:radial-gradient(65% 80% at 100% 100%, var(--ar-b-glow) 0%, rgba(0,0,0,0) 70%); }
+  .ar-p-lines{ inset:0; width:100%; height:100%; overflow:visible; }
+  .ar-p-lines path{ fill:none; stroke-dasharray:1000 1000; }
+  .ar-p-speed{ inset:0; pointer-events:none; }
+  .ar-p-speed i{
+    position:absolute; left:0; top:calc(var(--y) * var(--u)); width:calc(var(--w) * var(--u)); height:calc(var(--h) * var(--u)); border-radius:99px; opacity:0;
+    background:linear-gradient(90deg, rgba(255,255,255,0), var(--c) 60%, #fff);
+  }
+  .ar-p-div{ left:calc(950 * var(--u)); top:calc(110 * var(--u)); bottom:calc(110 * var(--u)); width:calc(2 * var(--u)); transform-origin:50% 50%;
+    background:linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.26) 30%, rgba(255,255,255,.26) 70%, rgba(255,255,255,0)); }
+  .ar-p-sweep, .ar-p-sheen{ top:-20%; bottom:-20%; left:0; width:30%; pointer-events:none; }
+  .ar-p-sweep{ opacity:0; background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.16) 50%, rgba(255,255,255,0)); }
+  .ar-p-sheen{
+    background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.065) 50%, rgba(255,255,255,0));
+    transform:translate3d(-130%, 0, 0) skewX(-16deg); animation:ar-sheen 12s ease-in-out 6s infinite;
+  }
+  @keyframes ar-sheen{ 0%{ transform:translate3d(-130%, 0, 0) skewX(-16deg); } 24%, 100%{ transform:translate3d(470%, 0, 0) skewX(-16deg); } }
+  .ar-p-line{ left:0; right:0; height:calc(2 * var(--u)); transform-origin:50% 50%; }
+  .ar-p-line.t{ top:0; background:linear-gradient(90deg, var(--ar-a-0) 2%, var(--ar-a) 22%, rgba(255,255,255,.75) 50%, var(--ar-b) 78%, var(--ar-b-0) 98%); }
+  .ar-p-line.b{ bottom:0; opacity:.7; background:linear-gradient(90deg, var(--ar-a-0) 6%, var(--ar-a) 30%, var(--ar-b) 70%, var(--ar-b-0) 94%); }
+  .ar-p-edge{ inset:0; border-radius:inherit; pointer-events:none; box-shadow:inset 0 0 0 calc(1 * var(--u)) rgba(255,255,255,.12), inset 0 calc(1 * var(--u)) 0 rgba(255,255,255,.2); }
+  /* ---- the two logos, and VS between them ---- */
+  .ar-team{ top:calc(418 * var(--u)); left:calc(var(--cx) * var(--u)); width:0; height:0; }
+  .ar-team > *{ position:absolute; left:0; top:0; }
+  .ar-glow{ width:calc(720 * var(--u)); height:calc(720 * var(--u)); margin:calc(-360 * var(--u)) 0 0 calc(-360 * var(--u)); border-radius:50%;
+    background:radial-gradient(circle, var(--t-glow) 0%, rgba(0,0,0,0) 62%); }
+  .ar-rays{ width:0; height:0; }
+  .ar-rays .bcg-burst{ --bs:860; }
+  .ar-orbit{ width:0; height:0; }
+  .ar-orbit svg{ position:absolute; left:calc(-200 * var(--u)); top:calc(-200 * var(--u)); width:calc(400 * var(--u)); height:calc(400 * var(--u)); overflow:visible; }
+  .ar-plinth{ width:calc(460 * var(--u)); height:calc(70 * var(--u)); margin:calc(160 * var(--u)) 0 0 calc(-220 * var(--u)); border-radius:50%;
+    background:radial-gradient(50% 50% at 50% 50%, var(--t-pool) 0%, rgba(0,0,0,0) 70%); }
+  .ar-frame{ width:calc(322 * var(--u)); height:calc(322 * var(--u)); margin:calc(-161 * var(--u)) 0 0 calc(-161 * var(--u)); }
+  .ar-ring{
+    position:absolute; inset:0; border-radius:50%;
+    background:conic-gradient(from 0deg, var(--t-v) 0deg, rgba(255,255,255,.95) 36deg, var(--t-v) 84deg, var(--t-v0) 160deg, var(--t-v) 236deg, rgba(255,255,255,.75) 292deg, var(--t-v) 360deg);
+    -webkit-mask-image:radial-gradient(closest-side, rgba(0,0,0,0) 92.5%, #000 93.5%, #000 98.6%, rgba(0,0,0,0) 99.6%);
+    mask-image:radial-gradient(closest-side, rgba(0,0,0,0) 92.5%, #000 93.5%, #000 98.6%, rgba(0,0,0,0) 99.6%);
+  }
+  /* two glints running round the ring (a plain stroke: no mask to redraw as it turns) */
+  .ar-glint{ position:absolute; inset:0; width:100%; height:100%; overflow:visible; animation:ar-spin 9s linear infinite; }
+  .ar-team.b .ar-glint{ animation-direction:reverse; }
+  .bcg-matchIntro .ar-frame .bcg-plate{ position:absolute; left:calc(16 * var(--u)); top:calc(16 * var(--u)); --ps:290; }
+  .bcg-matchIntro .ar-frame .bcg-plate-img{ inset:14%; }
+  .ar-flare{ width:calc(620 * var(--u)); height:calc(5 * var(--u)); margin:calc(-2.5 * var(--u)) 0 0 calc(-310 * var(--u)); border-radius:99px; opacity:0;
+    background:linear-gradient(90deg, rgba(255,255,255,0), var(--t-v) 28%, #fff 50%, var(--t-v) 72%, rgba(255,255,255,0)); }
+  .ar-vs{ left:calc(475 * var(--u)); top:calc(418 * var(--u)); width:0; height:0; }
+  .ar-vs > *{ position:absolute; left:0; top:0; }
+  .ar-vs-wave{ width:calc(920 * var(--u)); height:calc(3 * var(--u)); margin:calc(-1.5 * var(--u)) 0 0 calc(-460 * var(--u)); opacity:0;
+    background:linear-gradient(90deg, rgba(255,255,255,0), var(--ar-a) 22%, #fff 50%, var(--ar-b) 78%, rgba(255,255,255,0)); }
+  .ar-vs-beam{ width:calc(4 * var(--u)); height:calc(720 * var(--u)); margin:calc(-360 * var(--u)) 0 0 calc(-2 * var(--u)); opacity:0;
+    background:linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.9) 50%, rgba(255,255,255,0)); }
+  .ar-vs-ring{ width:calc(136 * var(--u)); height:calc(136 * var(--u)); margin:calc(-68 * var(--u)) 0 0 calc(-68 * var(--u)); border-radius:50%; opacity:0;
+    border:calc(2 * var(--u)) solid; border-color:var(--ar-a) var(--ar-b) var(--ar-b) var(--ar-a); }
+  .ar-vs-d{ width:calc(136 * var(--u)); height:calc(136 * var(--u)); margin:calc(-68 * var(--u)) 0 0 calc(-68 * var(--u)); overflow:visible; }
+  .ar-vs-t{
+    width:calc(136 * var(--u)); height:calc(136 * var(--u)); margin:calc(-68 * var(--u)) 0 0 calc(-68 * var(--u));
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--font-event); font-size:calc(58 * var(--u)); line-height:1; letter-spacing:.02em;
+    background:linear-gradient(180deg, #ffffff 0%, #e6ebf3 44%, #8f98a8 56%, #f5f7fb 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 calc(4 * var(--u)) calc(8 * var(--u)) rgba(0,0,0,.5));
+  }
+  /* ---- the match, down the right ---- */
+  .ar-text{
+    left:calc(1000 * var(--u)); right:calc(62 * var(--u)); top:calc(52 * var(--u)); bottom:calc(52 * var(--u));
+    display:flex; flex-direction:column; justify-content:center; align-items:flex-start; overflow:hidden;
+  }
+  .ar-text > *{ flex:none; }
+  .ar-tour{ display:flex; align-items:center; gap:calc(16 * var(--u)); max-width:100%; margin-bottom:calc(24 * var(--u)); }
+  .ar-tour .bcg-plate{ --ps:58; }
+  .ar-tour-t{ min-width:0; font-weight:800; font-size:calc(24 * var(--u)); line-height:1.3; letter-spacing:.14em; text-transform:uppercase; color:rgba(236,241,250,.88); }
+  .ar-kick{ align-self:stretch; display:flex; align-items:center; gap:calc(14 * var(--u)); margin-bottom:calc(16 * var(--u));
+    font-weight:800; font-size:calc(26 * var(--u)); line-height:1.3; letter-spacing:.16em; text-transform:uppercase; color:#f4cb62; }
+  .ar-kick .ar-ii{ flex:none; white-space:nowrap; }
+  .ar-dot{ flex:none; width:calc(6 * var(--u)); height:calc(6 * var(--u)); transform:rotate(45deg); background:rgba(244,203,98,.6); }
+  .ar-nm{ align-self:stretch; display:flex; align-items:stretch; gap:calc(22 * var(--u)); }
+  .ar-bar{ flex:none; width:calc(8 * var(--u)); border-radius:calc(4 * var(--u)); margin:calc(6 * var(--u)) 0; transform-origin:50% 100%;
+    background:linear-gradient(180deg, var(--t-v) 0%, var(--t-accent) 100%); box-shadow:0 0 calc(14 * var(--u)) var(--t-glow); }
+  .ar-nm.a{ --t-v:var(--ar-a); --t-accent:var(--ar-a-accent); --t-glow:var(--ar-a-glow); }
+  .ar-nm.b{ --t-v:var(--ar-b); --t-accent:var(--ar-b-accent); --t-glow:var(--ar-b-glow); }
+  .ar-name{
+    flex:1; min-width:0; font-family:var(--font-num); font-weight:800; font-size:calc(72 * var(--u)); line-height:1.06;
+    letter-spacing:.005em; text-transform:uppercase; color:#fff; text-shadow:0 calc(3 * var(--u)) calc(14 * var(--u)) rgba(0,0,0,.4);
+  }
+  .ar-v{ margin:calc(8 * var(--u)) 0 calc(8 * var(--u)) calc(30 * var(--u)); font-family:var(--font-num); font-weight:800; font-size:calc(40 * var(--u)); line-height:1.1; color:#f4cb62; }
+  .ar-rule{ display:block; align-self:stretch; height:calc(2 * var(--u)); margin:calc(30 * var(--u)) 0 calc(22 * var(--u)); transform-origin:0 50%;
+    background:linear-gradient(90deg, var(--ar-a) 0%, var(--ar-b) 55%, rgba(255,255,255,0) 100%); }
+  .ar-venue{ align-self:stretch; font-weight:800; font-size:calc(28 * var(--u)); line-height:1.25; letter-spacing:.06em; text-transform:uppercase; color:#fff; }
+  .ar-date{ margin-top:calc(8 * var(--u)); font-weight:800; font-size:calc(23 * var(--u)); line-height:1.3; letter-spacing:.16em; color:#94dcff; }
   /* the knockout round — gold (silver for an eliminator / qualifier / quarter-final) */
-  .ar-ko{
-    position:absolute; left:0; right:0; top:calc(140 * var(--u)); height:calc(90 * var(--u));
-    display:flex; align-items:center; justify-content:center; gap:calc(26 * var(--u));
-    --ko-1:#f0c867; --ko-2:#fff0bd; --ko-glow:rgba(240,190,80,.42);
-  }
-  .ar-ko.ko{ --ko-1:#d5dde9; --ko-2:#ffffff; --ko-glow:rgba(200,214,236,.3); }
-  .ar-ko.final::before{
-    content:''; position:absolute; left:50%; top:50%; width:calc(1000 * var(--u)); height:calc(260 * var(--u)); margin:calc(-130 * var(--u)) 0 0 calc(-500 * var(--u));
-    background:radial-gradient(50% 50% at 50% 50%, rgba(240,190,80,.3) 0%, rgba(240,190,80,0) 100%); pointer-events:none;
-  }
-  .ar-ko-wing{ position:relative; flex:none; width:calc(230 * var(--u)); height:calc(3 * var(--u)); }
-  .ar-ko-wing.l{ background:linear-gradient(90deg, rgba(255,255,255,0), var(--ko-1)); transform-origin:100% 50%; }
-  .ar-ko-wing.r{ background:linear-gradient(90deg, var(--ko-1), rgba(255,255,255,0)); transform-origin:0 50%; }
-  .ar-ko-wing::after{
-    content:''; position:absolute; top:50%; width:calc(12 * var(--u)); height:calc(12 * var(--u)); margin-top:calc(-6 * var(--u));
-    transform:rotate(45deg); background:var(--ko-2); box-shadow:0 0 calc(12 * var(--u)) var(--ko-glow);
-  }
-  .ar-ko-wing.l::after{ right:calc(-6 * var(--u)); }
-  .ar-ko-wing.r::after{ left:calc(-6 * var(--u)); }
+  .ar-ko{ margin-bottom:calc(20 * var(--u)); max-width:100%; --ko-1:#f0c867; --ko-glow:rgba(240,190,80,.4); }
+  .ar-ko.ko{ --ko-1:#d5dde9; --ko-glow:rgba(200,214,236,.28); }
   .ar-ko-plate{
-    position:relative; display:flex; align-items:center; gap:calc(18 * var(--u)); height:100%; overflow:hidden;
-    padding:0 calc(38 * var(--u)); border-radius:calc(8 * var(--u));
+    position:relative; display:flex; align-items:center; gap:calc(14 * var(--u)); height:calc(66 * var(--u)); overflow:hidden;
+    padding:0 calc(26 * var(--u)); border-radius:calc(8 * var(--u));
     background:linear-gradient(180deg, rgba(30,25,14,.92) 0%, rgba(10,8,4,.94) 100%);
-    box-shadow:inset 0 0 0 calc(2 * var(--u)) var(--ko-1), inset 0 0 0 calc(5 * var(--u)) rgba(0,0,0,.55), inset 0 0 0 calc(6 * var(--u)) rgba(255,240,190,.22),
-               0 0 calc(46 * var(--u)) var(--ko-glow), 0 calc(14 * var(--u)) calc(34 * var(--u)) rgba(0,0,0,.45);
+    box-shadow:inset 0 0 0 calc(2 * var(--u)) var(--ko-1), inset 0 0 0 calc(5 * var(--u)) rgba(0,0,0,.55), 0 0 calc(34 * var(--u)) var(--ko-glow);
   }
   .ar-ko.ko .ar-ko-plate{ background:linear-gradient(180deg, rgba(26,31,42,.92) 0%, rgba(8,10,15,.94) 100%); }
   .ar-ko-t{
-    white-space:nowrap; font-family:var(--font-event); font-size:calc(var(--kf, 62) * var(--u)); line-height:1.1; letter-spacing:.16em; margin-right:-.16em;
+    white-space:nowrap; font-family:var(--font-event); font-size:calc(var(--kf, 40) * var(--u)); line-height:1.1; letter-spacing:.14em; margin-right:-.14em;
     background:linear-gradient(180deg, #fff8dc 0%, #f7da86 38%, #c99231 58%, #f9e6a8 100%); -webkit-background-clip:text; background-clip:text; color:transparent;
   }
   .ar-ko.ko .ar-ko-t{ background:linear-gradient(180deg, #ffffff 0%, #e6ebf2 40%, #8e98a9 58%, #f4f6fa 100%); -webkit-background-clip:text; background-clip:text; }
-  .ar-ko.final .ar-ko-t{ --kf:70; }
-  .ar-ko-ico{ flex:none; width:calc(52 * var(--u)); height:calc(52 * var(--u)); display:block; }
+  .ar-ko.final .ar-ko-t{ --kf:46; }
+  .ar-ko-ico{ flex:none; width:calc(40 * var(--u)); height:calc(40 * var(--u)); display:block; }
   .ar-ko-glint{
-    position:absolute; top:-30%; bottom:-30%; left:0; width:28%; opacity:0; transform:skewX(-18deg); pointer-events:none;
+    position:absolute; top:-30%; bottom:-30%; left:0; width:30%; opacity:0; transform:skewX(-18deg); pointer-events:none;
     background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,246,214,.5), rgba(255,255,255,0));
   }
-  .ar-team{ position:absolute; top:calc(246 * var(--u)); width:calc(700 * var(--u)); display:flex; flex-direction:column; align-items:center; text-align:center; }
-  .ar-team > *{ position:relative; }
-  .ar-team.a{ left:calc(210 * var(--u)); }
-  .ar-team.b{ left:calc(1010 * var(--u)); }
-  .ar-glow{
-    position:absolute; left:50%; top:calc(346 * var(--u)); width:calc(680 * var(--u)); height:calc(200 * var(--u)); margin-left:calc(-340 * var(--u));
-    background:radial-gradient(50% 50% at 50% 50%, var(--ar-glow) 0%, rgba(0,0,0,0) 100%); pointer-events:none;
-  }
-  .ar-frame{ width:calc(410 * var(--u)); height:calc(410 * var(--u)); filter:drop-shadow(0 calc(18 * var(--u)) calc(26 * var(--u)) rgba(0,0,0,.5)); }
-  .ar-bezel{
-    width:100%; height:100%; display:flex; align-items:center; justify-content:center;
-    clip-path:polygon(29% 0, 71% 0, 100% 29%, 100% 71%, 71% 100%, 29% 100%, 0 71%, 0 29%);
-    background:linear-gradient(150deg, #6a7280 0%, #262b34 34%, #3d444f 56%, #12151b 100%);
-  }
-  .ar-rim{
-    width:calc(366 * var(--u)); height:calc(366 * var(--u)); display:flex; align-items:center; justify-content:center;
-    clip-path:polygon(29% 0, 71% 0, 100% 29%, 100% 71%, 71% 100%, 29% 100%, 0 71%, 0 29%);
-    background:linear-gradient(160deg, var(--ar-line) 0%, rgba(255,255,255,.25) 45%, var(--ar-line) 100%);
-  }
-  .bcg-matchIntro .ar-frame .bcg-plate{
-    --ps:356; border-radius:0; box-shadow:none;
-    clip-path:polygon(29% 0, 71% 0, 100% 29%, 100% 71%, 71% 100%, 29% 100%, 0 71%, 0 29%);
-  }
-  .bcg-matchIntro .ar-frame .bcg-plate-img{ inset:15%; }
-  .bcg-matchIntro .ar-frame .bcg-plate-sheen{ border-radius:0; }
-  .ar-ped{
-    width:calc(530 * var(--u)); height:calc(56 * var(--u)); margin-top:calc(-12 * var(--u)); border-radius:50%;
-    background:radial-gradient(50% 50% at 50% 42%, #4b5360 0%, #232831 48%, rgba(14,17,23,.9) 70%, rgba(0,0,0,0) 72%);
-    box-shadow:0 calc(2 * var(--u)) 0 0 var(--ar-line-soft);
-  }
-  .ar-np{
-    display:flex; flex-direction:column; align-items:center; max-width:100%; margin-top:calc(22 * var(--u));
-    padding:calc(8 * var(--u)) calc(36 * var(--u)) calc(16 * var(--u)); border-radius:calc(10 * var(--u)); overflow:hidden;
-  }
-  .ar-name{
-    max-width:100%; font-family:var(--font-event); font-size:calc(96 * var(--u)); line-height:1.04;
-    letter-spacing:.03em; text-transform:uppercase; color:#fff; text-shadow:0 calc(4 * var(--u)) calc(16 * var(--u)) rgba(0,0,0,.45);
-  }
-  .ar-rule{ position:absolute; left:0; right:0; bottom:0; height:calc(5 * var(--u)); background:var(--ar-line); }
-  .ar-vs{ position:absolute; left:calc(850 * var(--u)); top:calc(341 * var(--u)); width:calc(220 * var(--u)); height:calc(220 * var(--u)); }
-  .ar-vs svg{ position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
-  .ar-vs-t{
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    font-family:var(--font-event); font-size:calc(104 * var(--u)); line-height:1; letter-spacing:.02em;
-    background:linear-gradient(180deg, #ffffff 0%, #e3e8f0 42%, #8e97a7 54%, #f4f6fa 100%);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    filter:drop-shadow(0 calc(6 * var(--u)) calc(10 * var(--u)) rgba(0,0,0,.55));
-  }
-  .ar-link{ position:absolute; top:calc(449.5 * var(--u)); height:calc(3 * var(--u)); width:calc(85 * var(--u)); }
-  .ar-link.a{ left:calc(765 * var(--u)); transform-origin:0 50%; background:linear-gradient(90deg, var(--ar-a), rgba(225,232,242,.9)); }
-  .ar-link.b{ left:calc(1070 * var(--u)); transform-origin:100% 50%; background:linear-gradient(90deg, rgba(225,232,242,.9), var(--ar-b)); }
-  .ar-info{ position:absolute; left:0; right:0; top:calc(944 * var(--u)); display:flex; justify-content:center; }
-  .ar-info-bar{
-    position:relative; display:flex; align-items:center; gap:calc(22 * var(--u)); max-width:calc(1660 * var(--u));
-    padding:calc(14 * var(--u)) calc(40 * var(--u)); border-radius:calc(6 * var(--u));
-  }
-  .ar-info-bar::before, .ar-info-bar::after{ content:''; position:absolute; top:calc(12 * var(--u)); bottom:calc(12 * var(--u)); width:calc(4 * var(--u)); }
-  .ar-info-bar::before{ left:0; background:var(--ar-a); }
-  .ar-info-bar::after{ right:0; background:var(--ar-b); }
-  .ar-ii{ white-space:nowrap; font-weight:800; font-size:calc(var(--if, 23) * var(--u)); line-height:1.25; letter-spacing:.14em; text-transform:uppercase; color:#eef2f8; }
-  .ar-ii.dim{ color:rgba(220,228,240,.76); }
-  .ar-sep{ flex:none; width:calc(6 * var(--u)); height:calc(6 * var(--u)); transform:rotate(45deg); background:rgba(220,228,240,.45); }
+  /* AllSportsLive's own mark, small, in the corner of the glass */
+  .ar-sign{ left:calc(52 * var(--u)); bottom:calc(40 * var(--u)); display:flex; align-items:center; gap:calc(14 * var(--u)); }
+  .ar-sign .bcg-brand{ position:static; width:calc(42 * var(--u)); height:calc(42 * var(--u)); border-radius:calc(10 * var(--u)); flex:none; }
+  .ar-sign span{ font-weight:800; font-size:calc(15 * var(--u)); letter-spacing:.32em; color:rgba(236,241,250,.66); white-space:nowrap; }
+  @media (prefers-reduced-motion: reduce){ .bcg-matchIntro *{ animation:none !important; } }
 
   /* ---------------- MANUAL SCORECARDS ----------------
      One innings' batting or bowling card, pinned by the operator: a dark
@@ -7754,17 +7814,92 @@ const bcg = (() => {
     if(x.expiresAt != null) at(sc, x.expiresAt, () => end(sc));
   }
 
-  /* ================= MATCH INTRO — THE MATCH ARENA ================= */
-  // The floodlights over the picture, drawn once per intro (ids carry the
-  // graphic's gid, so two intros crossfading never share a gradient).
-  function arenaLight(uid){
-    const beam = (pts, ox) => `<polygon class="ar-beam" data-ox="${ox}" points="${pts}" fill="url(#arBeam${uid})"/>`;
+  /* ================= MATCH INTRO — THE TEAM REVEAL ================= */
+  // Each team's colour made into light: its own hue, bright enough to glow
+  // on dark glass (a navy, a maroon), never garish (a pure red is calmed);
+  // a black / white / grey team is silver. An rgb triple.
+  function introVivid(hex, side){
+    const base = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(hex || '').trim()) ? String(hex).trim() : (FALLBACK[side] || FALLBACK.A);
+    let h = base.slice(1);
+    if(h.length === 3) h = h.split('').map(c => c + c).join('');
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16) / 255);
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+    const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+    if(s < 0.12) return [206, 214, 228];
+    let hue = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    hue = (hue * 60 + 360) % 360;
+    const S = Math.min(0.86, Math.max(0.6, s)), L = Math.min(0.64, Math.max(0.52, l));
+    const C = (1 - Math.abs(2 * L - 1)) * S, X = C * (1 - Math.abs((hue / 60) % 2 - 1)), m = L - C / 2;
+    const c = hue < 60 ? [C, X, 0] : hue < 120 ? [X, C, 0] : hue < 180 ? [0, C, X] : hue < 240 ? [0, X, C] : hue < 300 ? [X, 0, C] : [C, 0, X];
+    return c.map(v => Math.round((v + m) * 255));
+  }
+  // The two colours of the match-up as CSS variables on the scene: team
+  // one's light (--ar-a …) and team two's (--ar-b …), the glass running
+  // from one team's deep tone to the other's. When the two colours are
+  // close (two blues, two silvers) team two's light is lifted (or deepened)
+  // so the sides still part — the hue is kept.
+  function introPalette(A, B){
+    const ka = tones(A.color, 'A'), kb = tones(B.color, 'B');
+    const va = introVivid(A.color, 'A');
+    let vb = introVivid(B.color, 'B');
+    if(Math.hypot(va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]) < 110) vb = lumOf(vb) > 0.7 ? mixTo(vb, [24, 30, 46], 0.5) : mixTo(vb, [255, 255, 255], 0.5);
+    const ink = [6, 9, 20];
+    const da = mixTo(mixTo(va, ink, 0.8), rgbOf(ka.deep), 0.35), db = mixTo(mixTo(vb, ink, 0.8), rgbOf(kb.deep), 0.35);
+    const mid = mixTo(mixTo(da, db, 0.5), ink, 0.55);
+    const rgba = (c, k) => `rgba(${c.map(Math.round).join(',')},${k})`;
+    const side = (p, v, k, deep) => `--ar-${p}:${rgb(v)};--ar-${p}-0:${rgba(v, 0)};--ar-${p}-tint:${rgba(v, 0.5 - 0.16 * lumOf(v))};--ar-${p}-glow:${rgba(v, 0.5 - 0.2 * lumOf(v))};`
+      + `--ar-${p}-accent:${k.accent};--ar-${p}-deep:${rgba(deep, 0.88)}`;
+    return {
+      ka, kb, va, vb,
+      vars: `${side('a', va, ka, da)};${side('b', vb, kb, db)};--ar-mid:${rgba(mid, 0.9)};--ar-mix-glow:${rgba(mixTo(mixTo(va, vb, 0.5), [255, 255, 255], 0.3), 0.55)}`,
+      bright: (v) => rgb(mixTo(v, [255, 255, 255], 0.62))
+    };
+  }
+  // A small seeded random, so one intro's dust is the same on every
+  // overlay showing it (and after a reload).
+  function seeded(str){
+    let s = 0;
+    for(const ch of String(str)) s = (Math.imul(s, 31) + ch.charCodeAt(0)) >>> 0;
+    return () => {
+      s = (s + 0x6D2B79F5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  // The strands: ten along one S-curve from the top-left corner, through
+  // the middle of the picture, to the bottom-right — fanned at the ends,
+  // drawn together where the glass will open. Even ones are team one's,
+  // odd ones team two's; each fades out past the middle into the other
+  // side, so the left is one team's light, the right the other's and they
+  // braid in the middle. pathLength 1000 lets every dash be the same.
+  function introStrands(uid, P){
+    const f = (n) => n.toFixed(1);
+    const N = 10, W = [3.6, 2.2, 3, 2, 4.6, 2.6, 1.8, 3.6, 2.2, 3.2];
+    let glow = '', core = '', comet = '';
+    for(let i = 0; i < N; i++){
+      const t = (i - (N - 1) / 2) / ((N - 1) / 2), oe = t * 180, om = t * 36, s = i % 2 ? 'b' : 'a', S = s.toUpperCase();
+      const d = `M-160 ${f(-80 + oe)} C220 ${f(290 + oe * 0.7)} 560 ${f(518 + om)} 960 ${f(518 + om * 0.35)} C1360 ${f(518 - om * 0.3)} 1700 ${f(746 - oe * 0.7)} 2080 ${f(1116 - oe)}`;
+      // the halo the bundle glows in (wide, faint strokes: a blur without a filter)
+      if(i === 4 || i === 5) glow += [[120, 0.07], [64, 0.1], [30, 0.16]].map(([w, o]) => `<path class="ar-glowline ${s}" d="${d}" pathLength="1000" stroke="url(#ar${S}${uid})" stroke-width="${w}" stroke-opacity="${o}"/>`).join('');
+      else if(i % 3 === 0) glow += `<path class="ar-glowline ${s}" d="${d}" pathLength="1000" stroke="url(#ar${S}${uid})" stroke-width="${f(W[i] * 5)}" stroke-opacity=".2"/>`;
+      core += `<path class="ar-str ${s}" d="${d}" pathLength="1000" stroke="url(#ar${S}${uid})" stroke-width="${W[i]}"/>`;
+      comet += `<path class="ar-comet ${s}" d="${d}" pathLength="1000" stroke="url(#ar${S}c${uid})" stroke-width="${f(W[i] + 3)}"/>`;
+    }
+    const grad = (id, c, from) => `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1920" y2="0">`
+      + (from === 'a' ? `<stop offset="0" stop-color="${c}"/><stop offset=".52" stop-color="${c}"/><stop offset=".8" stop-color="${c}" stop-opacity="0"/>`
+        : `<stop offset=".2" stop-color="${c}" stop-opacity="0"/><stop offset=".48" stop-color="${c}"/><stop offset="1" stop-color="${c}"/>`) + `</linearGradient>`;
     return `<svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs>`
-      + `<linearGradient id="arBeam${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef3ff" stop-opacity=".3"/><stop offset=".55" stop-color="#eef3ff" stop-opacity=".05"/><stop offset="1" stop-color="#eef3ff" stop-opacity="0"/></linearGradient>`
-      + `<radialGradient id="arLamp${uid}"><stop offset="0" stop-color="#fff" stop-opacity=".4"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>`
-      + `<g class="ar-beams">${beam('120,-30 160,-40 1130,1100 790,1100', '140 -35')}${beam('100,-10 130,-10 760,1100 420,1100', '115 -10')}`
-      + `${beam('1800,-30 1760,-40 790,1100 1130,1100', '1780 -35')}${beam('1820,-10 1790,-10 1160,1100 1500,1100', '1805 -10')}</g>`
-      + `<circle class="ar-lampglow" cx="130" cy="-20" r="300" fill="url(#arLamp${uid})"/><circle class="ar-lampglow" cx="1790" cy="-20" r="300" fill="url(#arLamp${uid})"/></svg>`;
+      + grad(`arA${uid}`, rgb(P.va), 'a') + grad(`arB${uid}`, rgb(P.vb), 'b') + grad(`arAc${uid}`, P.bright(P.va), 'a') + grad(`arBc${uid}`, P.bright(P.vb), 'b')
+      + `</defs><g class="ar-strands">${glow}${core}${comet}</g></svg>`;
+  }
+  // faint curves inside the glass, echoing the strands (drawn once, still)
+  function introPanelLines(uid, P){
+    const lines = [[0, 0.3, 1.4], [46, 0.2, 1], [-40, 0.16, 1.2], [96, 0.12, 0.9]].map(([o, op, w]) =>
+      `<path d="M-60 ${120 + o} C360 ${300 + o} 640 ${520 + o * 0.4} 1000 ${470 + o * 0.4} S1560 ${640 + o} 1780 ${900 + o}" stroke="url(#arPl${uid})" stroke-opacity="${op}" stroke-width="${w}" pathLength="1000"/>`).join('');
+    return `<svg class="ar-p-lines" viewBox="0 0 1712 852" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="arPl${uid}" x1="0" y1="0" x2="1" y2="0">`
+      + `<stop offset="0" stop-color="${rgb(P.va)}"/><stop offset=".5" stop-color="#ffffff"/><stop offset="1" stop-color="${rgb(P.vb)}"/></linearGradient></defs>${lines}</svg>`;
   }
   function trophySvg(id){
     return `<svg class="ar-ko-ico" viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">`
@@ -7776,100 +7911,188 @@ const bcg = (() => {
   }
   function introBuild(sc){
     const d = sc.g.data, A = d.teamA, B = d.teamB, info = d.info || {};
-    const ka = tones(A.color, 'A'), kb = tones(B.color, 'B');
+    const P = introPalette(A, B);
     const uid = String(sc.g.gid || 'x').replace(/[^a-z0-9]/gi, '');
+    const rnd = seeded(uid);
     const ko = koRound(info);
-    const items = [info.format, ...['stage', 'matchTitle'].filter(k => !ko || k !== ko.key).map(k => info[k]), info.venue, fmtDate(info.date)]
-      .map(s => String(s || '').trim()).filter(Boolean);
-    const tour = String(info.tournament || '').trim(), tourLogo = safeUrl(info.tournamentLogo);
-    const soft = (k) => k.line.replace('rgb(', 'rgba(').replace(')', ',.55)');
-    const team = (t, k, cls) => `<div class="ar-team ${cls}" style="--ar-line:${k.line};--ar-line-soft:${soft(k)};--ar-glow:${k.glow}">`
-      + `<i class="ar-glow"></i><div class="ar-frame"><div class="ar-bezel"><div class="ar-rim">${plateHtml(t, 356, k)}</div></div></div><i class="ar-ped"></i>`
-      + `<div class="ar-np bcg-glass"><div class="ar-name">${escapeHtml(t.name)}</div><i class="ar-rule"></i></div></div>`;
+    const clean = (s) => String(s || '').trim();
+    const kick = [];
+    for(const s of [info.format, ...['stage', 'matchTitle'].filter(k => !ko || k !== ko.key).map(k => info[k])].map(clean)){
+      if(s && !kick.some(x => x.toLowerCase() === s.toLowerCase())) kick.push(s);
+    }
+    const venue = clean(info.venue), date = fmtDate(info.date);
+    const tour = clean(info.tournament), tourLogo = safeUrl(info.tournamentLogo);
+    const rgba = (c, k) => `rgba(${c.join(',')},${k})`;
+    // dust over the picture (each team's on its own side, some white), and embers round the logos
+    const mote = (y0, y1) => {
+      const side = rnd() < 0.5 ? 'a' : 'b';
+      const x = side === 'a' ? 2 + rnd() * 50 : 48 + rnd() * 50, y = y0 + rnd() * (y1 - y0), dur = 7 + rnd() * 7;
+      const c = rnd() < 0.22 ? '#ffffff' : `var(--ar-${side})`;
+      return `<i style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;--s:${(3 + rnd() * 6).toFixed(1)};--dx:${Math.round((side === 'a' ? 1 : -1) * (20 + rnd() * 60))};`
+        + `--dy:${Math.round(-(60 + rnd() * 150))};--d:${dur.toFixed(2)}s;--dl:${(-rnd() * dur).toFixed(2)}s;--o:${(0.45 + rnd() * 0.5).toFixed(2)};--c:${c}"></i>`;
+    };
+    const dust = Array.from({ length: 12 }, () => mote(8, 96)).join(''), embers = Array.from({ length: 12 }, () => mote(30, 92)).join('');
+    const shards = [['a', 30, 150, 18, 520], ['a', 70, 330, 6, 600, 'thin'], ['a', 8, 600, 10, 360, 'thin'], ['b', 1868, 400, 18, 540], ['b', 1840, 160, 6, 560, 'thin'], ['b', 1898, 700, 10, 330, 'thin']]
+      .map(([s, x, y, w, h, c]) => `<i class="ar-shard ${s}${c ? ' ' + c : ''}" style="--x:${x};--y:${y};--w:${w};--h:${h}"><b></b></i>`).join('');
+    const speed = [[150, 840, 3], [262, 1200, 2], [330, 620, 5], [418, 1400, 2], [470, 900, 3], [560, 1100, 2], [640, 760, 4], [712, 1300, 2]]
+      .map(([y, w, h], i) => `<i style="--y:${y};--w:${w};--h:${h};--c:${i % 2 ? rgb(P.vb) : rgb(P.va)}"></i>`).join('');
+    const team = (t, k, v, s, cx) => `<div class="ar-team ${s}" style="--cx:${cx};--t-v:${rgb(v)};--t-v0:${rgba(v, 0)};--t-glow:${rgba(v, 0.4)};--t-pool:${rgba(v, 0.55)}">`
+      + `<i class="ar-glow"></i><div class="ar-rays"><i class="bcg-burst"></i></div><i class="ar-plinth"></i>`
+      + `<div class="ar-orbit"><svg viewBox="0 0 400 400" aria-hidden="true"><circle cx="200" cy="200" r="194" fill="none" stroke="${rgb(v)}" stroke-opacity=".55" stroke-width="1.6" stroke-dasharray="90 34 6 34" stroke-linecap="round"/>`
+      + `<circle cx="200" cy="200" r="178" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1" stroke-dasharray="2 9"/></svg></div>`
+      + `<div class="ar-frame"><i class="ar-ring"></i><svg class="ar-glint" viewBox="0 0 322 322" aria-hidden="true"><circle cx="161" cy="161" r="157" fill="none" stroke="#ffffff" stroke-opacity=".9" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="46 447" pathLength="986"/></svg>`
+      + `${plateHtml(t, 290, k)}</div><i class="ar-flare"></i></div>`;
+    const name = (t, s) => `<div class="ar-nm ${s}"><i class="ar-bar"></i><span class="ar-name">${escapeHtml(t.name)}</span></div>`;
     const cup = (s) => ko && ko.tier === 'final' ? trophySvg(`arCup${uid}${s}`) : '';
-    sc.el.innerHTML = `<div class="bcg-fill bcg-scrim ar-scrim"></div><div class="bcg-fill ar-env">${arenaLight(uid)}</div><i class="ar-column"></i>`
-      + `<div class="bcg-canvas" style="--ar-a:${ka.line};--ar-b:${kb.line}"><div class="ar-stage">`
-      + `<div class="ar-top"><div class="ar-top-in bcg-glass${tour ? '' : ' solo'}">${brandHtml()}${tour ? `<span class="ar-div"></span>${tourLogo ? plateHtml({ logoUrl: tourLogo, name: tour }, 50, tones(info.tournamentColor || NEUTRAL, 'A')) : ''}<span class="ar-tour">${escapeHtml(tour)}</span>` : ''}</div></div>`
-      + (ko ? `<div class="ar-ko ${ko.tier}" data-round="${escapeHtml(ko.label)}"><i class="ar-ko-wing l"></i>`
-        + `<div class="ar-ko-plate">${cup('a')}<span class="ar-ko-t">${escapeHtml(ko.label)}</span>${cup('b')}<i class="ar-ko-glint"></i></div><i class="ar-ko-wing r"></i></div>` : '')
-      + team(A, ka, 'a') + team(B, kb, 'b')
-      + `<i class="ar-link a"></i><i class="ar-link b"></i>`
-      + `<div class="ar-vs"><svg viewBox="0 0 240 240" aria-hidden="true"><defs><linearGradient id="arMetal${uid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3f6fb"/><stop offset=".5" stop-color="#7d8696"/><stop offset="1" stop-color="#e6ebf2"/></linearGradient></defs>`
-      + `<path class="ar-dia" d="M120 6 L234 120 L120 234 L6 120 Z" fill="rgba(8,11,17,.86)" stroke="url(#arMetal${uid})" stroke-width="3"/>`
-      + `<path class="ar-dia2" d="M120 24 L216 120 L120 216 L24 120 Z" fill="none" stroke="rgba(230,236,245,.34)" stroke-width="1.5"/></svg><div class="ar-vs-t">VS</div></div>`
-      + (items.length ? `<div class="ar-info"><div class="ar-info-bar bcg-glass">${items.map((s, i) => `${i ? '<i class="ar-sep"></i>' : ''}<span class="ar-ii${i ? ' dim' : ''}">${escapeHtml(s)}</span>`).join('')}</div></div>` : '')
-      + `</div></div>`;
+    sc.el.setAttribute('style', P.vars);
+    sc.el.innerHTML = `<div class="bcg-fill bcg-scrim ar-scrim"></div>`
+      + `<div class="bcg-fill ar-dust">${dust}</div><div class="bcg-fill ar-env">${introStrands(uid, P)}</div>`
+      + `<div class="bcg-canvas">${shards}<i class="ar-flash"></i><div class="ar-panel-wrap"><div class="ar-panel">`
+      + `<i class="ar-p-bg"></i><i class="ar-p-glow a"></i><i class="ar-p-glow b"></i>${introPanelLines(uid, P)}<div class="ar-p-speed">${speed}</div><div class="ar-embers">${embers}</div>`
+      + `<i class="ar-p-div"></i>`
+      + team(A, P.ka, P.va, 'a', 236) + team(B, P.kb, P.vb, 'b', 714)
+      + `<div class="ar-vs"><i class="ar-vs-wave"></i><i class="ar-vs-beam"></i><i class="ar-vs-ring"></i><i class="ar-vs-ring"></i>`
+      + `<svg class="ar-vs-d" viewBox="0 0 160 160" aria-hidden="true"><defs><linearGradient id="arVs${uid}" x1="0" y1="0" x2="1" y2="0">`
+      + `<stop offset="0" stop-color="${rgb(P.va)}"/><stop offset=".5" stop-color="#ffffff"/><stop offset="1" stop-color="${rgb(P.vb)}"/></linearGradient></defs>`
+      + `<path class="ar-dia" d="M80 3 L157 80 L80 157 L3 80 Z" fill="rgba(7,10,18,.9)" stroke="url(#arVs${uid})" stroke-width="3"/>`
+      + `<path class="ar-dia2" d="M80 18 L142 80 L80 142 L18 80 Z" fill="none" stroke="rgba(255,255,255,.3)" stroke-width="1.2"/></svg><div class="ar-vs-t">VS</div></div>`
+      + `<div class="ar-text">`
+      + (tour ? `<div class="ar-tour">${tourLogo ? plateHtml({ logoUrl: tourLogo, name: tour }, 58, tones(info.tournamentColor || NEUTRAL, 'A')) : ''}<span class="ar-tour-t">${escapeHtml(tour)}</span></div>` : '')
+      + (ko ? `<div class="ar-ko ${ko.tier}" data-round="${escapeHtml(ko.label)}"><div class="ar-ko-plate">${cup('a')}<span class="ar-ko-t">${escapeHtml(ko.label)}</span>${cup('b')}<i class="ar-ko-glint"></i></div></div>` : '')
+      + (kick.length ? `<div class="ar-kick">${kick.map((s, i) => `${i ? '<i class="ar-dot"></i>' : ''}<span class="ar-ii">${escapeHtml(s)}</span>`).join('')}</div>` : '')
+      + name(A, 'a') + `<div class="ar-v">V</div>` + name(B, 'b')
+      + (venue || date ? '<i class="ar-rule"></i>' : '')
+      + (venue ? `<div class="ar-ii ar-venue">${escapeHtml(venue)}</div>` : '')
+      + (date ? `<div class="ar-ii ar-date">${escapeHtml(date)}</div>` : '')
+      + `</div><div class="ar-sign">${brandHtml()}<span>ALL SPORTS LIVE</span></div>`
+      + `<i class="ar-p-sweep"></i><i class="ar-p-sheen"></i><i class="ar-p-line t"></i><i class="ar-p-line b"></i><i class="ar-p-edge"></i>`
+      + `</div></div></div>`;
   }
   function introFit(sc){
-    // both names at one size: one line each if they go on one at 64 or more, else two lines
-    const names = [...sc.el.querySelectorAll('.ar-name')];
-    const one = names.map(el => fitText(el, 96, 64, 1, 1.04));
-    const two = names.some((el, i) => Math.round(el.getBoundingClientRect().height / px(one[i] * 1.04)) > 1);
-    const f = two ? Math.min(...names.map(el => fitText(el, 80, 40, 2, 1.04))) : Math.min(...one);
-    names.forEach(el => { el.style.fontSize = `calc(${f} * var(--u))`; });
-    fitLine(sc.el.querySelector('.ar-tour'), 40, 22);
-    const bar = sc.el.querySelector('.ar-info-bar');
-    for(let f = 23; bar && f > 14 && bar.getBoundingClientRect().width > px(1660) - 1; f--) bar.style.setProperty('--if', String(f - 1));
+    const el = sc.el, names = [...el.querySelectorAll('.ar-name')];
+    // both names at one size: one line each if they go on one at 54 or more, else two lines
+    const one = names.map(n => fitText(n, 76, 54, 1, 1.06));
+    const two = names.some((n, i) => Math.round(n.getBoundingClientRect().height / px(one[i] * 1.06)) > 1);
+    let f = two ? Math.min(...names.map(n => fitText(n, 62, 36, 2, 1.06))) : Math.min(...one);
+    const set = () => names.forEach(n => { n.style.fontSize = `calc(${f} * var(--u))`; });
+    set();
+    fitText(el.querySelector('.ar-tour-t'), 24, 17, 2, 1.3);
+    fitLine(el.querySelector('.ar-kick'), 26, 16);
+    fitText(el.querySelector('.ar-venue'), 28, 18, 2, 1.25);
+    // the column never runs past the glass: the names give way first
+    const col = el.querySelector('.ar-text');
+    for(let i = 0; i < 30 && col.scrollHeight > col.clientHeight + 1 && f > 28; i++){ f -= 2; set(); }
   }
   function introEnter(sc){
     const el = sc.el, q = (s) => el.querySelector(s), qa = (s) => [...el.querySelectorAll(s)];
     const tl = gsap.timeline({ paused: true });
     if(reduceMotion()) return tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.3 });
-    // 1 — the lights come on: the picture dims a little, the "camera" eases
-    //     in, the floodlights flare in the top corners and their beams swing in
-    tl.fromTo(q('.ar-scrim'), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power1.out' }, 0)
-      .fromTo(q('.ar-env'), { scale: 1.14, y: -px(8) }, { scale: 1, y: 0, duration: 6.8, ease: 'power2.out' }, 0)
-      .fromTo(q('.ar-env'), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power1.out' }, 0)
-      .fromTo(q('.ar-stage'), { scale: 1.035, y: px(16) }, { scale: 1, y: 0, duration: 6.8, ease: 'power2.out' }, 0)
-      .fromTo(qa('.ar-lampglow'), { opacity: 0 }, { opacity: 1, duration: 0.7, ease: 'power1.out' }, 0.3);
-    qa('.ar-beam').forEach((b, i) => tl.fromTo(b, { opacity: 0, rotation: i < 2 ? -20 : 20, svgOrigin: b.dataset.ox }, { opacity: 0.62, rotation: 0, svgOrigin: b.dataset.ox, duration: 1.5, ease: 'expo.out' }, 0.4 + (i % 2) * 0.12));
-    if(q('.ar-top-in')) tl.fromTo(q('.ar-top-in'), { opacity: 0, y: -px(18) }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 0.7);
-    // 2 / 3 — the teams step into the arena: each octagon comes up out of
-    //     the depth onto its plinth, the logo settles, light runs across it,
-    //     the name plate reveals — team two answering team one from the other side
-    const team = (s, t0, dir) => {
+    // 1 — the atmosphere: the picture dims a touch, each team's colour
+    //     glows in from its own edge, dust rises, the shards slide in
+    tl.fromTo(q('.ar-scrim'), { opacity: 0 }, { opacity: 1, duration: 1.2, ease: 'power1.out' }, 0)
+      .fromTo(q('.ar-dust'), { opacity: 0 }, { opacity: 1, duration: 1.4, ease: 'power1.out' }, 0.2)
+      .to(q('.ar-dust'), { opacity: 0, duration: 0.9, ease: 'power1.inOut' }, 1.9)
+      .set(q('.ar-dust'), { display: 'none' }, 2.8)
+      .fromTo(qa('.ar-shard.a'), { opacity: 0, x: -px(280) }, { opacity: 1, x: 0, duration: 1.1, ease: 'expo.out', stagger: 0.09 }, 0.25)
+      .fromTo(qa('.ar-shard.b'), { opacity: 0, x: px(280) }, { opacity: 1, x: 0, duration: 1.1, ease: 'expo.out', stagger: 0.09 }, 0.35);
+    // 2 — the energy: each team's strands draw in from its own corner, a
+    //     light races down every one, and the two meet in the middle
+    const side = (s, from, to, dur, at, stag) => tl.fromTo(qa(s), { strokeDashoffset: from }, { strokeDashoffset: to, duration: dur, ease: 'power3.inOut', stagger: stag }, at);
+    side('.ar-str.a', 1000, 0, 1.05, 0.2, 0.05);
+    side('.ar-str.b', -1000, 0, 1.05, 0.3, 0.05);
+    side('.ar-glowline.a', 1000, 0, 1.1, 0.3, 0.06);
+    side('.ar-glowline.b', -1000, 0, 1.1, 0.4, 0.06);
+    tl.fromTo(qa('.ar-comet.a'), { strokeDashoffset: 70 }, { strokeDashoffset: -1000, duration: 1.1, ease: 'power2.in', stagger: 0.035 }, 0.3)
+      .fromTo(qa('.ar-comet.b'), { strokeDashoffset: -1000 }, { strokeDashoffset: 70, duration: 1.1, ease: 'power2.in', stagger: 0.035 }, 0.36);
+    // 3 — out of the flash where they meet, the glass unrolls and turns to face us
+    const panel = q('.ar-panel');
+    tl.fromTo(q('.ar-flash'), { opacity: 0, scaleX: 0.12, scaleY: 0.5 }, { opacity: 1, scaleX: 1, scaleY: 1, duration: 0.28, ease: 'power2.out' }, 1.0)
+      .to(q('.ar-flash'), { opacity: 0, duration: 0.75, ease: 'power2.in' }, 1.28)
+      .fromTo(panel, { opacity: 0 }, { opacity: 1, duration: 0.12, ease: 'none' }, 1.08)
+      .fromTo(panel, { scaleX: 0.4, rotationY: -36, rotationZ: -1.6, transformPerspective: 1800 }, { scaleX: 1, rotationY: 0, rotationZ: 0, duration: 1.0, ease: 'expo.out' }, 1.08)
+      .fromTo(panel, { scaleY: 0.012 }, { scaleY: 1, duration: 0.6, ease: 'power3.out' }, 1.1)
+      .fromTo(qa('.ar-p-speed i'), { opacity: 1, x: -px(1100) }, { x: px(1900), duration: 0.75, ease: 'power2.out', stagger: 0.035 }, 1.12)
+      .to(q('.ar-p-speed'), { opacity: 0, duration: 0.4, ease: 'power1.in' }, 1.55)
+      .fromTo(qa('.ar-p-glow'), { opacity: 0 }, { opacity: 1, duration: 0.9, ease: 'power1.out' }, 1.35)
+      .fromTo(q('.ar-embers'), { opacity: 0 }, { opacity: 1, duration: 1.4, ease: 'power1.out' }, 1.9)
+      .fromTo(qa('.ar-p-lines path'), { strokeDashoffset: 1000 }, { strokeDashoffset: 0, duration: 1.2, ease: 'power2.out', stagger: 0.08 }, 1.4)
+      .fromTo(qa('.ar-p-line'), { scaleX: 0.3 }, { scaleX: 1, duration: 1.0, ease: 'expo.out', stagger: 0.06 }, 1.08)
+      .fromTo(q('.ar-p-div'), { scaleY: 0, opacity: 0 }, { scaleY: 1, opacity: 1, duration: 0.8, ease: 'expo.out' }, 1.85);
+    // 4 — the logos: each turns in out of the depth on its own side, its
+    //     ring closing round it, its light, rays and orbit coming up behind
+    //     it, a flare across it as it lands and light running over the crest
+    const logo = (s, t0, dir) => {
       const T = (x) => q(`.ar-team.${s} ${x}`);
-      tl.fromTo(T('.ar-frame'), { opacity: 0, scale: 0.55, y: -px(40), clipPath: dir < 0 ? 'inset(50% 0% 50% 0%)' : 'inset(0% 0% 100% 0%)' },
-          { opacity: 1, scale: 1, y: 0, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.95, ease: 'expo.out', clearProps: 'clipPath' }, t0)
-        .fromTo(T('.ar-ped'), { opacity: 0, scaleX: 0.3 }, { opacity: 1, scaleX: 1, duration: 0.7, ease: 'expo.out' }, t0 + 0.12)
-        .fromTo(T('.ar-glow'), { opacity: 0 }, { opacity: 1, duration: 0.9, ease: 'power1.out' }, t0 + 0.3)
-        .fromTo(T('.bcg-plate'), { scale: 1.22 }, { scale: 1, duration: 0.85, ease: 'expo.out' }, t0 + 0.2)
-        .fromTo(T('.bcg-plate-sheen i'), { xPercent: -160, opacity: 1 }, { xPercent: 330, duration: 0.75, ease: 'power2.inOut' }, t0 + 0.55)
-        .fromTo(T('.ar-np'), { opacity: 0, y: px(18) }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, t0 + 0.5)
-        .fromTo(T('.ar-name'), { opacity: 0, x: px(24 * dir), clipPath: dir < 0 ? 'inset(-20% 100% -20% -4%)' : 'inset(-20% -4% -20% 100%)' },
-          { opacity: 1, x: 0, clipPath: 'inset(-20% -4% -20% -4%)', duration: 0.7, ease: 'expo.out', clearProps: 'clipPath' }, t0 + 0.6)
-        .fromTo(T('.ar-rule'), { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'expo.out' }, t0 + 0.85);
+      tl.fromTo(T('.ar-frame'), { opacity: 0, rotationY: 80 * dir, scale: 0.5, x: px(90 * dir), transformPerspective: 1100 }, { opacity: 1, rotationY: 0, scale: 1, x: 0, duration: 1.0, ease: 'expo.out' }, t0)
+        .fromTo(T('.bcg-plate'), { scale: 1.3 }, { scale: 1, duration: 1.0, ease: 'expo.out' }, t0 + 0.05)
+        .fromTo(T('.ar-ring, .ar-glint'), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power1.out' }, t0 + 0.15)
+        .fromTo(T('.ar-glow'), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 1.1, ease: 'power2.out' }, t0)
+        .fromTo(T('.ar-rays'), { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 1.4, ease: 'power2.out' }, t0 + 0.2)
+        .fromTo(T('.ar-orbit'), { opacity: 0, scale: 1.35 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'expo.out' }, t0 + 0.25)
+        .fromTo(T('.ar-plinth'), { opacity: 0, scaleX: 0.2 }, { opacity: 1, scaleX: 1, duration: 0.8, ease: 'expo.out' }, t0 + 0.3)
+        .fromTo(T('.ar-flare'), { opacity: 0, scaleX: 0.1 }, { opacity: 1, scaleX: 1, duration: 0.3, ease: 'power2.out' }, t0 + 0.35)
+        .to(T('.ar-flare'), { opacity: 0, scaleX: 1.4, duration: 0.6, ease: 'power2.in' }, t0 + 0.65)
+        .fromTo(T('.bcg-plate-sheen i'), { xPercent: -160, opacity: 1 }, { xPercent: 330, duration: 0.8, ease: 'power2.inOut' }, t0 + 0.45);
     };
-    team('a', 1.35, -1);
-    team('b', 2.5, 1);
-    // 4 — the match-up: a flash of light drops through the middle, the two
-    //     sides are joined to the centre, the diamond draws itself, VS lands
-    tl.fromTo(q('.ar-column'), { opacity: 0, scaleY: 0 }, { opacity: 1, scaleY: 1, duration: 0.45, ease: 'expo.out' }, 3.75)
-      .to(q('.ar-column'), { opacity: 0, duration: 0.9, ease: 'power2.out' }, 4.2)
-      .fromTo(qa('.ar-beam'), { opacity: 0.62 }, { opacity: 1, duration: 0.25, yoyo: true, repeat: 1, ease: 'power1.inOut', immediateRender: false }, 3.8)
-      .fromTo(qa('.ar-link'), { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'expo.out' }, 3.9)
-      .fromTo(qa('.ar-dia, .ar-dia2'), { strokeDasharray: 700, strokeDashoffset: 700 }, { strokeDashoffset: 0, duration: 0.7, ease: 'power2.out', stagger: 0.08 }, 4.0)
-      .fromTo(q('.ar-dia'), { fillOpacity: 0 }, { fillOpacity: 1, duration: 0.4 }, 4.2)
-      .fromTo(q('.ar-vs-t'), { opacity: 0, scale: 1.5 }, { opacity: 1, scale: 1, duration: 0.55, ease: 'expo.out' }, 4.3);
-    // 5 — a knockout: the round lands in gold under the tournament, its
-    //     wings draw out and light runs across it (a final with its trophies)
-    if(q('.ar-ko')) tl.fromTo(q('.ar-ko-plate'), { opacity: 0, scale: 1.3, clipPath: 'inset(0% 50% 0% 50%)' },
-        { opacity: 1, scale: 1, clipPath: 'inset(-40% -10% -40% -10%)', duration: 0.6, ease: 'expo.out', clearProps: 'clipPath' }, 4.65)
-      .fromTo(qa('.ar-ko-wing'), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: 'expo.out' }, 4.85)
-      .fromTo(q('.ar-ko-glint'), { xPercent: -140, opacity: 1 }, { xPercent: 460, duration: 0.85, ease: 'power2.inOut' }, 5.1);
-    if(q('.ar-ko-ico')) tl.fromTo(qa('.ar-ko-ico'), { opacity: 0, scale: 0.3, rotation: -25 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.55, ease: 'back.out(2.2)', stagger: 0.08 }, 4.9);
-    // 6 — the match, in full: its details rise along the foot, then all is still
-    if(q('.ar-info-bar')) tl.fromTo(q('.ar-info-bar'), { opacity: 0, y: px(40) }, { opacity: 1, y: 0, duration: 0.7, ease: 'expo.out' }, 5.1)
-      .fromTo(qa('.ar-ii, .ar-sep'), { opacity: 0 }, { opacity: 1, duration: 0.35, stagger: 0.06 }, 5.3);
-    tl.to({}, { duration: 0.01 }, timing.introEnterMs / 1000 - 0.01);
+    logo('a', 1.62, -1);
+    logo('b', 1.92, 1);
+    // 5 — VS: a column of light drops through the middle, the diamond draws
+    //     itself in both colours, VS lands, rings and a shockwave run out
+    tl.fromTo(q('.ar-vs-beam'), { opacity: 0, scaleY: 0 }, { opacity: 1, scaleY: 1, duration: 0.35, ease: 'expo.out' }, 2.4)
+      .to(q('.ar-vs-beam'), { opacity: 0, duration: 0.8, ease: 'power2.out' }, 2.75)
+      .fromTo(q('.ar-vs-d'), { opacity: 0, scale: 0.4, rotation: -45 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.75, ease: 'expo.out' }, 2.45)
+      .fromTo(qa('.ar-dia, .ar-dia2'), { strokeDasharray: 700, strokeDashoffset: 700 }, { strokeDashoffset: 0, duration: 0.6, ease: 'power2.out', stagger: 0.08 }, 2.45)
+      .fromTo(q('.ar-dia'), { fillOpacity: 0 }, { fillOpacity: 1, duration: 0.35 }, 2.6)
+      .fromTo(q('.ar-vs-t'), { opacity: 0, scale: 1.9 }, { opacity: 1, scale: 1, duration: 0.5, ease: 'expo.out' }, 2.62)
+      .fromTo(qa('.ar-vs-ring'), { opacity: 0.9, scale: 0.5 }, { opacity: 0, scale: 2.8, duration: 1.0, ease: 'power2.out', stagger: 0.14, immediateRender: false }, 2.68)
+      .fromTo(q('.ar-vs-wave'), { opacity: 1, scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'expo.out', immediateRender: false }, 2.68)
+      .to(q('.ar-vs-wave'), { opacity: 0, duration: 0.5, ease: 'power1.in' }, 2.95);
+    // 6 — the match, down the right, line by line
+    const wipe = (t, t0, dx) => t && tl.fromTo(t, { opacity: 0, x: px(dx == null ? 28 : dx), clipPath: 'inset(-30% 100% -30% 0%)' },
+      { opacity: 1, x: 0, clipPath: 'inset(-30% -6% -30% 0%)', duration: 0.75, ease: 'expo.out', clearProps: 'clipPath' }, t0);
+    wipe(q('.ar-tour'), 2.05);
+    wipe(q('.ar-ko-plate'), 2.2, 0);
+    wipe(q('.ar-kick'), 2.3);
+    tl.fromTo(qa('.ar-bar'), { scaleY: 0 }, { scaleY: 1, duration: 0.5, ease: 'expo.out', stagger: 0.28 }, 2.36);
+    wipe(q('.ar-nm.a .ar-name'), 2.42, 40);
+    tl.fromTo(q('.ar-v'), { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.5, ease: 'back.out(2.4)' }, 2.6);
+    wipe(q('.ar-nm.b .ar-name'), 2.7, 40);
+    if(q('.ar-rule')) tl.fromTo(q('.ar-rule'), { scaleX: 0 }, { scaleX: 1, duration: 0.8, ease: 'expo.out' }, 2.9);
+    wipe(q('.ar-venue'), 3.0);
+    wipe(q('.ar-date'), 3.1);
+    tl.fromTo(q('.ar-sign'), { opacity: 0, y: px(14) }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 3.2);
+    if(q('.ar-ko-glint')) tl.fromTo(q('.ar-ko-glint'), { xPercent: -140, opacity: 1 }, { xPercent: 420, duration: 0.85, ease: 'power2.inOut' }, 2.7);
+    if(q('.ar-ko-ico')) tl.fromTo(qa('.ar-ko-ico'), { opacity: 0, scale: 0.3, rotation: -25 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.55, ease: 'back.out(2.2)', stagger: 0.08 }, 2.45);
+    // 7 — the finish: one light sweeps the whole glass, its edges flare once
+    tl.fromTo(q('.ar-p-sweep'), { opacity: 1, xPercent: -110, skewX: -16 }, { xPercent: 360, duration: 1.0, ease: 'power2.inOut' }, 3.45)
+      .to(q('.ar-p-sweep'), { opacity: 0, duration: 0.2 }, 4.45)
+      .fromTo(qa('.ar-p-line'), { opacity: 1 }, { opacity: 0.6, duration: 0.6, ease: 'power1.inOut', immediateRender: false }, 4.0);
+    tl.to({}, { duration: 0.01 }, Math.max(4.6, timing.introEnterMs / 1000) - 0.01);
     return tl;
   }
+  // off air: the words go, the logos turn away to their own sides, the
+  // glass folds into a band of light that shoots off, the strands withdraw
+  // to their corners, the dust scatters and the picture is clear
   function introExit(sc){
-    const el = sc.el;
-    return gsap.timeline()
-      .to(el.querySelectorAll('.ar-stage > *'), { opacity: 0, y: -px(12), duration: 0.3, ease: 'power2.in', stagger: 0.025 }, 0)
-      .to([el.querySelector('.ar-env'), el.querySelector('.ar-column')], { opacity: 0, duration: 0.45, ease: 'power2.in' }, 0.12)
-      .to(el, { opacity: 0, duration: 0.3, ease: 'power1.in' }, 0.4);
+    const el = sc.el, q = (s) => el.querySelector(s), qa = (s) => [...el.querySelectorAll(s)];
+    const tl = gsap.timeline();
+    tl.to(qa('.ar-text > *, .ar-sign').reverse(), { opacity: 0, x: px(30), duration: 0.28, ease: 'power2.in', stagger: 0.025 }, 0)
+      .to(qa('.ar-comet, .ar-p-sweep, .ar-flash'), { opacity: 0, duration: 0.2 }, 0)
+      .to(q('.ar-vs'), { opacity: 0, scale: 0.6, duration: 0.3, ease: 'power2.in' }, 0.05)
+      .to(q('.ar-team.a .ar-frame'), { opacity: 0, rotationY: -70, scale: 0.7, x: -px(60), transformPerspective: 1100, duration: 0.4, ease: 'power2.in' }, 0.08)
+      .to(q('.ar-team.b .ar-frame'), { opacity: 0, rotationY: 70, scale: 0.7, x: px(60), transformPerspective: 1100, duration: 0.4, ease: 'power2.in' }, 0.12)
+      .to(qa('.ar-glow, .ar-rays, .ar-orbit, .ar-plinth, .ar-flare, .ar-p-div'), { opacity: 0, duration: 0.35, ease: 'power1.in' }, 0.08)
+      .to(q('.ar-panel'), { scaleY: 0.012, duration: 0.32, ease: 'power3.in' }, 0.34)
+      .to(q('.ar-panel'), { scaleX: 0, x: px(380), duration: 0.28, ease: 'power3.in' }, 0.62)
+      .to(q('.ar-panel'), { opacity: 0, duration: 0.12, ease: 'none' }, 0.8)
+      .to(qa('.ar-str.a, .ar-glowline.a'), { strokeDashoffset: 1000, duration: 0.55, ease: 'power2.in', stagger: 0.02 }, 0.3)
+      .to(qa('.ar-str.b, .ar-glowline.b'), { strokeDashoffset: -1000, duration: 0.55, ease: 'power2.in', stagger: 0.02 }, 0.3)
+      .to(qa('.ar-shard.a'), { opacity: 0, x: -px(240), duration: 0.45, ease: 'power2.in', stagger: 0.04 }, 0.3)
+      .to(qa('.ar-shard.b'), { opacity: 0, x: px(240), duration: 0.45, ease: 'power2.in', stagger: 0.04 }, 0.3)
+      .to(qa('.ar-dust, .ar-embers'), { opacity: 0, scale: 1.25, duration: 0.6, ease: 'power2.in' }, 0.3)
+      .to(q('.ar-scrim'), { opacity: 0, duration: 0.45, ease: 'power1.in' }, 0.55)
+      .to(el, { opacity: 0, duration: 0.15, ease: 'power1.in' }, 0.9);
+    return tl;
   }
   function introRun(sc, first){
     clearTimers(sc);
