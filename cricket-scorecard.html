@@ -4369,6 +4369,8 @@ function publicBallToLogEntry(b){
   const overIdx = Number(b.over) || 0;
   const ballInOver = Number(b.ballInOver) || 0;
   return {
+    // the delivery's own id — what its clips name (over.ball repeats on a Wide / No Ball)
+    deliveryId: b.deliveryId || null,
     innings: b.innings || 1,
     over: overIdx + (ballInOver / 10),
     ballType: b.ballType,
@@ -5737,38 +5739,115 @@ function ballBadgeInfo(b){
   return { label:String(b.runs || 0), cls:'' };
 }
 
-// Match-wide clip lookup keyed by "over.ballInOver", refreshed (throttled)
-// each time the commentary page renders, so a clip that finishes cutting
-// while the page is open just quietly grows a play icon on next update.
-let commentaryClipMap = {};
+// 🆔 THE CLIP OF ONE DELIVERY. A ball's clip is the clip that names THAT
+// delivery: its deliveryId, minted by the panel once per delivery and carried
+// by the ball log row and every clip of it. over.ball is never the key — a
+// Wide or No Ball keeps the over.ball of the ball before it (a FOUR at 19.3,
+// then a No Ball also 19.3; a wicket at 19.5, then a Wide + Run Out also
+// 19.5) and those are different deliveries, each with its own clip. A clip
+// from before deliveryId existed is shown on a ball only when that ball is
+// the one delivery at its over.ball the clip fits (same striker, an event
+// that delivery can have been) — never a guess between two.
+const clipRank = c => (c.ready || c.status === 'COMPLETE' ? 2 : 0) + (c.isHighlight !== false ? 1 : 0);
+function buildClipIndex(clips){
+  const byDelivery = new Map(), bySlot = new Map();
+  (clips || []).forEach(c => {
+    if(!c) return;
+    // One delivery can carry two clips (auto wicket clip + a HIGHLIGHTS
+    // press): the one that plays wins, a Highlights-visible one first.
+    if(c.deliveryId){
+      const k = String(c.deliveryId), p = byDelivery.get(k);
+      if(!p || clipRank(c) > clipRank(p)) byDelivery.set(k, c);
+    }
+    if(c.over != null && c.ballInOver != null){
+      const k = `${c.innings || 1}.${c.over}.${c.ballInOver}`;
+      if(!bySlot.has(k)) bySlot.set(k, []);
+      bySlot.get(k).push(c);
+    }
+  });
+  return { byDelivery, bySlot };
+}
+// What a delivery row was, for a clip that names no delivery: WICKET,
+// FOUR / SIX (off the bat, or a boundary as extras) or CLIP.
+function rowClipEvent(r){
+  const d = r.dismissal, dType = d && typeof d === 'object' ? d.type : d;
+  if((r.isWicket || d) && !/retired/i.test(String(dType || ''))) return 'WICKET';
+  const k = String(r.kind || r.ballType || '').toLowerCase(), runs = Number(r.runs) || 0;
+  let b = 0;
+  if(k === '4') b = 4;
+  else if(k === '6') b = 6;
+  else if(k === 'nb' || k === 'noball' || k === 'wd' || k === 'wide') b = Math.max(0, runs - 1);
+  else if(k === 'b' || k === 'bye' || k === 'lb' || k === 'legbye' || k === 'ot') b = runs;
+  if(r.boundary === false) b = 0;
+  return b >= 6 ? 'SIX' : b === 4 ? 'FOUR' : 'CLIP';
+}
+function clipFitsRow(c, r){
+  const nk = (v) => String((v && v.name) || v || '').trim().toLowerCase();
+  const cs = nk(c.striker || c.strikerName), rs = nk(r.striker);
+  if(cs && rs && cs !== rs) return false;
+  const et = String(c.eventType || '').toUpperCase(), ev = rowClipEvent(r);
+  if(et === 'WICKET'){
+    if(ev !== 'WICKET') return false;
+    const d = r.dismissal && typeof r.dismissal === 'object' ? r.dismissal : null;
+    const who = nk(c.dismissedPlayer || c.dismissedPlayerName), out = nk((d && d.batter) || r.dismissedPlayer || r.striker);
+    return !(who && out && who !== out);
+  }
+  if(et === 'FOUR' || et === 'SIX') return ev === et;
+  if(et === 'CLIP') return ev === 'CLIP';
+  return true;
+}
+// row: the delivery (deliveryId or ballUid); slot: "innings.over.ball";
+// rowsAtSlot: every delivery of that over.ball.
+function clipForDelivery(index, row, slot, rowsAtSlot){
+  const id = row.deliveryId || row.ballUid || null;
+  if(id && index.byDelivery.has(String(id))) return index.byDelivery.get(String(id));
+  const ids = new Set((rowsAtSlot || []).map(r => r.deliveryId || r.ballUid).filter(Boolean).map(String));
+  let best = null;
+  (index.bySlot.get(slot) || []).forEach(c => {
+    // a clip that names a delivery belongs to that one alone
+    if(c.deliveryId && (id || ids.has(String(c.deliveryId)))) return;
+    if(!clipFitsRow(c, row)) return;
+    if((rowsAtSlot || []).filter(r => clipFitsRow(c, r)).length > 1) return;
+    if(!best || clipRank(c) > clipRank(best)) best = c;
+  });
+  return best;
+}
+
+// The commentary's clips, refreshed (throttled) each time the commentary
+// page renders, so a clip that finishes cutting while the page is open just
+// quietly grows a play icon on next update. Slots carry the innings —
+// "5.3" exists in both innings.
+let commentaryClipIndex = buildClipIndex([]);
+let commentaryClipSig = '';
 let commentaryClipsFetchedAt = 0;
 async function refreshCommentaryClips(force){
   const now = Date.now();
-  if(!force && now - commentaryClipsFetchedAt < 8000) return commentaryClipMap;
+  if(!force && now - commentaryClipsFetchedAt < 8000) return commentaryClipIndex;
   commentaryClipsFetchedAt = now;
   // includeHidden: a HIGHLIGHTS clip answered NO stays out of the
   // Highlights section but must still play from its ball in commentary.
-  const clips = await fetchMatchClips(undefined, true);
-  const map = {};
-  // Key MUST include innings — over.ballInOver alone repeats every
-  // innings (e.g. "5.3" exists in both the 1st and 2nd innings), so a
-  // boundary/wicket clip from one innings was silently overwriting or
-  // stealing the map slot of the same over.ball in another innings,
-  // making some fours/sixes/wickets show no clip (or the wrong one).
-  // 🩹 Keep EVERY clip here, not just ready ones — the commentary UI
-  // needs to tell "still cutting/uploading" (⏳ preparing/processing)
-  // apart from "no clip job at all" for a ball, and can only do that if
-  // a not-yet-ready job is still visible in this map.
-  // One ball can carry two clips (auto wicket clip + a HIGHLIGHTS press):
-  // keep the one that's playable, preferring a Highlights-visible clip.
-  const rank = c => (c.ready || c.status === 'COMPLETE' ? 2 : 0) + (c.isHighlight !== false ? 1 : 0);
-  (clips || []).forEach(c => {
-    if(!c || c.over == null || c.ballInOver == null) return;
-    const key = `${c.innings || 1}.${c.over}.${c.ballInOver}`;
-    if(!map[key] || rank(c) > rank(map[key])) map[key] = c;
-  });
-  commentaryClipMap = map;
-  return map;
+  // 🩹 Every clip is kept, not just ready ones — the commentary UI needs
+  // to tell "still cutting/uploading" (⏳ preparing/processing) apart from
+  // "no clip job at all" for a ball.
+  const clips = (await fetchMatchClips(undefined, true)) || [];
+  commentaryClipIndex = buildClipIndex(clips);
+  commentaryClipSig = clips.map(c => `${c.clipId}:${c.deliveryId || ''}:${c.status || ''}:${c.ready ? 1 : 0}`).sort().join(',');
+  return commentaryClipIndex;
+}
+// Every delivery of one over.ball in the commentary's log (cached per log).
+let cmSlotRows = { log: null, len: -1, map: null };
+function commentarySlotRows(slot){
+  const s = commentaryState(), log = (s && s.ballLog) || [];
+  if(cmSlotRows.log !== log || cmSlotRows.len !== log.length){
+    const map = new Map();
+    log.forEach(r => {
+      const p = overBallParts(r.over, r.ballType), k = `${r.innings || 1}.${p.over}.${p.ball}`;
+      if(!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    });
+    cmSlotRows = { log, len: log.length, map };
+  }
+  return cmSlotRows.map.get(slot) || [];
 }
 
 // Resolves the WATCH REPLAY state for one commentary ball: null if this
@@ -5788,7 +5867,8 @@ function commentaryClipState(b, inn, ovNum, ballNum, isLive){
   // Any ball with a clip gets a replay (HIGHLIGHTS clips can be on a dot,
   // single, wide... and NO-answered ones too). Only 4/6/W auto-clips get
   // the "preparing" placeholder before their clip doc exists.
-  const clip = commentaryClipMap[`${inn}.${ovNum}.${ballNum}`] || null;
+  const slot = `${inn}.${ovNum}.${ballNum}`;
+  const clip = clipForDelivery(commentaryClipIndex, b, slot, commentarySlotRows(slot));
   if(!clip && !isBoundaryBall(b)) return null;
   if(clip){
     if(clip.ready || clip.status === 'COMPLETE') return { state:'ready', clip };
@@ -5849,7 +5929,7 @@ function commentaryState(){ return latestState || finalCommentaryState; }
 // actually changed, so a live viewer who leaves the page open gets
 // clips appearing on their own instead of needing to close and reopen.
 let commentaryClipPollTimer = null;
-function clipMapFingerprint(){ return Object.keys(commentaryClipMap).sort().join(','); }
+function clipMapFingerprint(){ return commentaryClipSig; }
 // Once the page has slid all the way up it covers the scorecard completely:
 // html.cm-open stops painting what is underneath (see the CSS).
 let commentaryCoverTimer = null;
@@ -6880,8 +6960,14 @@ function renderBalls(s){
 // block — if so, drops the repeat. Loops so a block repeated 3+ times in
 // a row (A,B,A,B,A,B) collapses all the way down to one copy, not just
 // one pair.
+// 🆔 What tells two deliveries apart when their over.ball and line read the
+// same (two Wides at 19.2, a Wide then a No Ball — "1 run — extra" all): the
+// score after each (a live log), or the delivery's own id (a finished
+// match's log, one row per delivery). A row left behind by an Undo and its
+// re-scored copy share the score after, so they still collapse.
 function ballSig(b){
-  return overBallLabel(b.over, b.ballType) + '|' + b.innings + '|' + commentaryLine(b).text + (b.importedText ? '|' + b.importedSeq : '');
+  return overBallLabel(b.over, b.ballType) + '|' + b.innings + '|' + commentaryLine(b).text + (b.importedText ? '|' + b.importedSeq : '')
+    + '|' + (b.scoreAfter || b.deliveryId || '');
 }
 const BALLLOG_DEDUP_MAX_BLOCK = 20; // generous — a full over is ~6-10 deliveries incl. extras
 function dedupeBallLog(log){
@@ -7234,7 +7320,11 @@ const hlInningsOf = (c) => Number(c.innings) || 1;   // same fallback the commen
 const hlTypeOf = (c) => (c.eventType === 'SIX' || c.eventType === 'FOUR' || c.eventType === 'WICKET') ? c.eventType : 'OTHER';
 
 // One card per clip: dedupe by clipId, and collapse an auto clip + its
-// later re-upload for the same ball/event into a single (playable-preferred) card.
+// later re-upload for the same DELIVERY and event into a single
+// (playable-preferred) card. The delivery is its deliveryId — two
+// deliveries can share an over.ball (a wicket at 19.5, then a Wide + Run Out
+// also at 19.5) and each keeps its own card. A clip that names no delivery
+// is told apart by the batter it is about.
 function hlNormalize(clips){
   const byId = new Map();
   (clips || []).forEach(c => { if(c && c.clipId != null) byId.set(String(c.clipId), c); });
@@ -7242,7 +7332,8 @@ function hlNormalize(clips){
   byId.forEach(c => {
     const t = hlTypeOf(c);
     if(t === 'OTHER' || c.over == null){ out.push(c); return; }
-    const k = `${hlInningsOf(c)}.${c.over}.${c.ballInOver}.${t}`;
+    const who = String((t === 'WICKET' && c.dismissedPlayer) || c.striker || '').trim().toLowerCase();
+    const k = c.deliveryId ? `d:${c.deliveryId}.${t}` : `${hlInningsOf(c)}.${c.over}.${c.ballInOver}.${t}.${who}`;
     const prev = byBall.get(k);
     if(!prev || (!prev.ready && c.ready)) byBall.set(k, c);
   });
@@ -8881,12 +8972,25 @@ async function loadDeliveryList(matchId){
       document.getElementById('em-innings').innerHTML = '';
       return;
     }
-    const clipMap = new Map();
-    (clipsData.clips || []).forEach(c => clipMap.set(`${c.innings || 1}.${c.over}.${c.ballInOver}`, c));
-    const overStats = new Map();
+    // 🆔 Each delivery's clip by ITS id (see clipForDelivery) — never by
+    // over.ball, which a Wide / No Ball shares with the ball before it.
+    const clipIndex = buildClipIndex(clipsData.clips || []);
+    const slotRows = new Map();
     balls.forEach(b => {
       b.innings = Number(b.innings) || 1;
-      b._key = `${b.innings}.${b.over}.${b.ballInOver}`;
+      const k = `${b.innings}.${b.over}.${b.ballInOver}`;
+      if(!slotRows.has(k)) slotRows.set(k, []);
+      slotRows.get(k).push(b);
+    });
+    const clipMap = new Map();
+    balls.forEach(b => {
+      const k = `${b.innings}.${b.over}.${b.ballInOver}`;
+      const c = clipForDelivery(clipIndex, b, k, slotRows.get(k));
+      if(c) clipMap.set(b.ballId, c);
+    });
+    const overStats = new Map();
+    balls.forEach(b => {
+      b._key = b.ballId;
       b._h = emHay(b);
       const k = `${b.innings}.${b.over}`;
       let s = overStats.get(k);
@@ -10398,6 +10502,10 @@ async function submitAttachClip(matchId, ball, replace){
 
   const meta = {
     matchId, eventType,
+    // 🆔 THIS delivery, by its own id — another delivery can have the same
+    // over.ball (a Wide after a wicket), and a replace here must never touch
+    // its clip. over/ball stay for an older server.
+    ballId: ball.ballId || '', deliveryId: ball.ballUid || '',
     over: ball.over, ballInOver: ball.ballInOver, innings: ball.innings,
     striker: ball.striker || '', bowler: ball.bowler || '', nonStriker: ball.nonStriker || '',
     battingTeam: ball.battingTeam || '', runs: ball.runs,

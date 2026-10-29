@@ -314,6 +314,7 @@ async function connectMongoOnce() {
         await initScorecardImport();
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
         dedupeCrossTournamentMatches(); // background, never blocks startup
+        backfillClipDeliveryIds().catch(err => console.log('Clip delivery backfill error:', err.message || err)); // background
 
         // 🩹 One-time migration: move any matches still embedded in a league
         // doc's `matches[]` array (the old, size-limited design) into their
@@ -325,6 +326,43 @@ async function connectMongoOnce() {
     } catch (err) {
         console.log('MongoDB connection error:', err);
     }
+}
+
+// 🆔 OLDER CLIPS → THEIR DELIVERY. A clip from before deliveryId existed
+// is linked to its ball row once, when exactly one delivery at its over.ball
+// fits it (ClipAttribution.legacyDeliveryForClip — the same striker, an event
+// that delivery can have been). Two that fit (a wicket at 19.5 and a Wide +
+// Run Out also at 19.5) or none: the clip is left as it was and marked, never
+// given a guess. Clips of the last 10 minutes are left for the panel's own
+// classify, which names the delivery itself. Every clip is looked at once.
+async function backfillClipDeliveryIds() {
+    if (!clipsCollection || !ballsCollection) return { linked: 0, ambiguous: 0, none: 0 };
+    const counts = { linked: 0, ambiguous: 0, none: 0 };
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (;;) {
+        const batch = await clipsCollection.find({
+            deliveryId: { $in: [null] }, deliveryBackfill: { $exists: false }, deliveryDeleted: { $ne: true },
+            over: { $ne: null }, ballInOver: { $ne: null }, createdAt: { $not: { $gte: cutoff } }
+        }).limit(300).toArray();
+        if (!batch.length) break;
+        const byMatch = new Map();
+        batch.forEach(c => { if (!byMatch.has(c.matchId)) byMatch.set(c.matchId, []); byMatch.get(c.matchId).push(c); });
+        for (const [matchId, clips] of byMatch) {
+            const balls = (await ballsCollection.find({ matchId, over: { $in: [...new Set(clips.map(c => c.over))] } }).toArray()).filter(b => b.kind !== 'PEN');
+            for (const c of clips) {
+                const slot = balls.filter(b => (Number(b.innings) || 1) === (Number(c.innings) || 1) && b.over === c.over && b.ballInOver === c.ballInOver);
+                const fits = slot.filter(b => ClipAttribution.clipFitsBall(c, b));
+                const one = fits.length === 1 ? fits[0] : null;
+                const mark = one && one.ballUid ? 'linked' : fits.length > 1 ? 'ambiguous' : 'none';
+                counts[mark]++;
+                await clipsCollection.updateOne({ _id: c._id, deliveryId: { $in: [null] } },
+                    { $set: { deliveryBackfill: mark, deliveryBackfillAt: Date.now(), ...(mark === 'linked' ? { deliveryId: String(one.ballUid), deliveryNamed: false } : {}) } });
+            }
+            if (typeof invalidateClipsCache === 'function') invalidateClipsCache(matchId);
+        }
+    }
+    if (counts.linked || counts.ambiguous) console.log(`🆔 Older clips → their delivery: ${counts.linked} linked, ${counts.ambiguous} left (more than one delivery fits), ${counts.none} with no delivery that fits`);
+    return counts;
 }
 
 // 🩹 See the big comment above matchRecordsCollection's assignment: this
@@ -882,7 +920,12 @@ function insertOnlyDefaults(setDoc, defaults) {
 // and /api/clips/classify (HIGHLIGHTS clips, linked once the operator has
 // entered the ball's outcome).
 async function computeClipLinkage(matchId, ballMeta, uid, eventType) {
-    const canonicalBall = await findCanonicalBall(matchId, ballMeta, eventType);
+    // A HIGHLIGHTS press is cut before its delivery exists: the ballMeta it
+    // comes with is the moment of the press, and whatever delivery sits at
+    // that over.ball is an earlier one — its delivery is named when the
+    // outcome is recorded (/api/clips/classify), never guessed here.
+    const pressOnly = String(eventType || '').toUpperCase() === 'HIGHLIGHT' && !(ballMeta && ballMeta.deliveryId);
+    const canonicalBall = pressOnly ? null : await findCanonicalBall(matchId, ballMeta, eventType);
     const ownerUid = await resolveOwnerUidForMatch(matchId, uid || (canonicalBall && canonicalBall.ownerUid));
     // personName() unwraps any stray {name,...} object (old data, or
     // any future client that sends one) into a clean string — see the
@@ -948,8 +991,12 @@ async function computeClipLinkage(matchId, ballMeta, uid, eventType) {
         fielderName: personName(dismissal && dismissal.fielder),
         fielderKey: playerKey(dismissal && dismissal.fielder), fielderPlayerId,
         dismissedPlayerName: dismissedName || null, dismissedPlayerKey: playerKey(dismissedName), dismissedPlayerId: dismissedPlayerId || null,
-        // The delivery this clip belongs to (the ball row's ballUid).
+        // The delivery this clip belongs to (the ball row's ballUid), and
+        // whether it was NAMED (the panel's own id for it) rather than the one
+        // delivery at its over.ball it fits — only a named one is kept when a
+        // later update names none (see linkFieldsKeepingDelivery).
         deliveryId: (canonicalBall && canonicalBall.ballUid) || (ballMeta && ballMeta.deliveryId) || null,
+        deliveryNamed: !!(ballMeta && ballMeta.deliveryId),
     };
 }
 
@@ -1284,6 +1331,19 @@ app.get('/api/clips/status/:clipId', async (req, res) => {
 // classified here, so this route can't re-label any other clip.
 // ================================================================
 const CLASSIFY_EVENT_TYPES = new Set(['FOUR', 'SIX', 'WICKET', 'CLIP']);
+// 🆔 A clip whose delivery was named (the panel's own id for it) keeps it. A
+// later update that names none (a guess from the moment of the press, an
+// older helper sending it again) never moves it to whichever delivery shares
+// its over.ball; an update that does name one (the panel re-labelling it
+// after an Undo) is taken as sent. Returns the link fields to write.
+async function linkFieldsKeepingDelivery(clipId, ballMeta, linkFields) {
+    if (ballMeta && ballMeta.deliveryId) return linkFields;
+    const prev = await clipsCollection.findOne({ clipId }, { projection: { deliveryId: 1, deliveryNamed: 1 } }).catch(() => null);
+    if (!prev || !prev.deliveryId) return linkFields;
+    // named → kept; and an update that finds no delivery at all never takes one away
+    return prev.deliveryNamed === true || !linkFields.deliveryId ? {} : linkFields;
+}
+
 app.post('/api/clips/classify', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Mongo not connected' });
     const body = req.body || {};
@@ -1301,7 +1361,8 @@ app.post('/api/clips/classify', async (req, res) => {
     const ballMeta = body.ballMeta && typeof body.ballMeta === 'object' ? body.ballMeta : null;
     try {
         const link = await computeClipLinkage(matchId, ballMeta, null, eventType);
-        const { linkedToCanonicalBall, ...linkFields } = link;
+        const { linkedToCanonicalBall, ...computed } = link;
+        const linkFields = await linkFieldsKeepingDelivery(clipId, ballMeta, computed);
         await clipsCollection.updateOne(
             { clipId },
             {
@@ -1385,7 +1446,8 @@ app.post('/api/clips/attach', async (req, res) => {
     try {
         const refinedType = String(meta.outcomeType || meta.eventType || '').toUpperCase();
         const link = await computeClipLinkage(matchId, ballMeta, null, refinedType);
-        const { linkedToCanonicalBall, ...linkFields } = link;
+        const { linkedToCanonicalBall, ...computed } = link;
+        const linkFields = await linkFieldsKeepingDelivery(clipId, ballMeta, computed);
         // Only the fields the offline queue is authoritative about. Upload
         // state, file paths and retry counters are deliberately untouched.
         const set = {
@@ -1444,13 +1506,16 @@ app.post('/api/clips/attach', async (req, res) => {
             { upsert: true }
         );
         invalidateClipsCache(matchId);
-        const doc = await clipsCollection.findOne({ clipId }, { projection: { r2Url: 1, driveFileId: 1, status: 1, r2Status: 1, driveStatus: 1 } }).catch(() => null);
+        const doc = await clipsCollection.findOne({ clipId }, { projection: { r2Url: 1, driveFileId: 1, status: 1, r2Status: 1, driveStatus: 1, innings: 1, over: 1, ballInOver: 1, strikerName: 1, strikerPlayerId: 1, bowlerName: 1, bowlerPlayerId: 1, deliveryId: 1 } }).catch(() => null) || {};
+        // (what the clip is attached to now — a delivery it already named is kept)
+        Object.assign(linkFields, { innings: doc.innings, over: doc.over, ballInOver: doc.ballInOver, strikerName: doc.strikerName, strikerPlayerId: doc.strikerPlayerId, bowlerName: doc.bowlerName, bowlerPlayerId: doc.bowlerPlayerId });
         console.log(`📌 [CLIP ATTACHED] clipId=${clipId} match=${matchId} innings=${linkFields.innings} over=${linkFields.over}.${linkFields.ballInOver} ${set.outcomeLabel || ''} striker=${linkFields.strikerName || '?'}(${linkFields.strikerPlayerId || '-'}) bowler=${linkFields.bowlerName || '?'}(${linkFields.bowlerPlayerId || '-'}) canonicalBall=${linkedToCanonicalBall}${set.cutOffline ? ' [cut offline]' : ''}`);
         res.json({
             success: true, clipId, linkedToCanonicalBall,
             attachedTo: {
                 matchId, innings: linkFields.innings, over: linkFields.over, ballInOver: linkFields.ballInOver,
                 strikerPlayerId: linkFields.strikerPlayerId || null, bowlerPlayerId: linkFields.bowlerPlayerId || null,
+                deliveryId: doc.deliveryId || null,
                 isHighlight: set.isHighlight === undefined ? null : set.isHighlight,
             },
             r2Status: doc && doc.r2Status, driveStatus: doc && doc.driveStatus, status: doc && doc.status,
@@ -2186,6 +2251,7 @@ function panelStateFromSavedMatch(rec, balls, prevRev) {
         if (b.dismissal) running[inn].wickets++;
         return {
             innings: inn, battingTeam: b.battingTeam === 'B' ? 'B' : 'A',
+            deliveryId: b.ballUid || null,
             over: `${b.over}.${b.ballInOver}`, ballType: b.kind,
             striker: b.striker || '', nonStriker: b.nonStriker || '', bowler: b.bowler || '',
             runs: b.runs || 0, isWicket: !!b.dismissal,
@@ -3360,22 +3426,30 @@ async function resolveOwnerUidForMatch(matchId, hintUid) {
 //     on a delivery that has a dismissal (ClipAttribution.sameDelivery).
 // No consistent match → null, and the clip keeps the identity captured
 // at the delivery (its own ballMeta) instead of borrowing a neighbour's.
+//   - a clip that names its delivery is linked to THAT row or to none: if
+//     the row is not stored yet (still in the panel's outbox), no other
+//     delivery at the same over.ball stands in for it;
+//   - without a deliveryId the slot must hold exactly ONE delivery the
+//     clip fits (ClipAttribution.legacyDeliveryForClip) — two that fit
+//     (a wicket at 19.5, then a Wide + Run Out also at 19.5) is no answer.
 async function findCanonicalBall(matchId, ballMeta, eventType) {
     if (!ballsCollection || !ballMeta) return null;
     try {
         if (ballMeta.deliveryId) {
-            const exact = await ballsCollection.findOne({ matchId, ballUid: String(ballMeta.deliveryId) });
-            if (exact) return exact;
+            return await ballsCollection.findOne({ matchId, ballUid: String(ballMeta.deliveryId) });
         }
         const query = { matchId };
         if (ballMeta.innings !== undefined && ballMeta.innings !== null) query.innings = ballMeta.innings;
         if (ballMeta.over !== undefined && ballMeta.over !== null) query.over = ballMeta.over;
         if (ballMeta.ballInOver !== undefined && ballMeta.ballInOver !== null) query.ballInOver = ballMeta.ballInOver;
-        if (Object.keys(query).length <= 1) return null; // nothing specific enough to match on
-        // Most recent first: a correction may have re-logged the same ball.
+        if (query.over === undefined || query.ballInOver === undefined) return null; // nothing specific enough to match on
         const candidates = await ballsCollection.find(query).sort({ timestamp: -1 }).limit(10).toArray();
         const et = String(eventType || '').toUpperCase();
-        return candidates.find(b => ClipAttribution.sameDelivery(b, ballMeta, et)) || null;
+        return ClipAttribution.legacyDeliveryForClip({
+            innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver, eventType: et,
+            striker: personName(ballMeta.striker), strikerId: ballMeta.strikerId,
+            dismissedPlayer: personName(ballMeta.dismissedPlayer || (ballMeta.dismissal && ballMeta.dismissal.batter)) || null
+        }, candidates.filter(b => b.kind !== 'PEN'));
     } catch (err) {
         console.log('findCanonicalBall error:', err);
         return null;
@@ -6439,6 +6513,21 @@ adminRouter.get('/clips/match/:matchId', async (req, res) => {
     }
 });
 
+// 🆔 Links older clips (no deliveryId) to their delivery now, the same pass
+// the server makes on start (see backfillClipDeliveryIds) — for clips that
+// were still waiting when it ran. Owner only (adminRouter).
+adminRouter.post('/clips/backfill-deliveries', async (req, res) => {
+    if (!clipsCollection || !ballsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const counts = await backfillClipDeliveryIds();
+        await logAuditAction(req.ownerEmail, 'Linked older clips to their deliveries', null, null, counts);
+        res.json({ success: true, ...counts });
+    } catch (err) {
+        console.log('Clip delivery backfill error:', err);
+        res.status(500).json({ success: false, error: 'Could not link the older clips' });
+    }
+});
+
 // Corrects a clip that got attached to the wrong player/event. Any of these
 // fields may be sent; only the ones present are changed. Renaming
 // striker/bowler/fielder also recomputes their *Key (playerKey() —lower-
@@ -6467,8 +6556,26 @@ adminRouter.put('/clips/:clipId', async (req, res) => {
     // Reassigning a wicket clip's dismissed batter (the owner of a WICKET
     // clip). The old id no longer describes the new name, so it is cleared.
     if (body.dismissedPlayerName !== undefined) { set.dismissedPlayerName = body.dismissedPlayerName || null; set.dismissedPlayerKey = playerKey(body.dismissedPlayerName); set.dismissedPlayerId = null; }
-    if (Object.keys(set).length === 0) return res.status(400).json({ success: false, error: 'No correctable fields provided' });
+    if (Object.keys(set).length === 0 && body.deliveryId === undefined) return res.status(400).json({ success: false, error: 'No correctable fields provided' });
     try {
+        // 🆔 The delivery the clip belongs to follows the correction: named
+        // outright (deliveryId), or — when its innings / over / ball moved —
+        // the one delivery at the new over.ball it fits; none, or more than
+        // one there, leaves it naming no delivery rather than the old one.
+        if (body.deliveryId !== undefined || set.over !== undefined || set.ballInOver !== undefined || set.innings !== undefined || set.matchId !== undefined) {
+            const cur = await clipsCollection.findOne({ _id });
+            if (!cur) return res.status(404).json({ success: false, error: 'Clip not found' });
+            const next = { ...cur, ...set };
+            if (body.deliveryId !== undefined) {
+                const want = body.deliveryId ? String(body.deliveryId) : null;
+                if (want && !(ballsCollection && await ballsCollection.findOne({ matchId: next.matchId, ballUid: want }))) return res.status(400).json({ success: false, error: 'That delivery is not part of this match' });
+                set.deliveryId = want; set.deliveryNamed = !!want;
+            } else if (ballsCollection) {
+                const slot = await ballsCollection.find({ matchId: next.matchId, innings: Number(next.innings) || 1, over: next.over, ballInOver: next.ballInOver }).toArray();
+                const fit = ClipAttribution.legacyDeliveryForClip({ ...next, innings: Number(next.innings) || 1 }, slot.filter(b => b.kind !== 'PEN'));
+                set.deliveryId = (fit && fit.ballUid) || null; set.deliveryNamed = false;
+            }
+        }
         const result = await clipsCollection.findOneAndUpdate({ _id }, { $set: set }, { returnDocument: 'after' });
         if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
         invalidateClipsCache(result.value.matchId);
@@ -6649,6 +6756,55 @@ async function findExistingClipForBall({ matchId, innings, over, ballInOver }) {
     return clipsCollection.findOne(query);
 }
 
+// 🎯 The delivery a manual attach / replace is for. The scorecard names the
+// delivery itself (ballId — the row's _id — or its deliveryId): two
+// deliveries can share an over.ball (a wicket at 19.5, then a Wide + Run Out
+// also at 19.5), so a replace on one must never touch the other's clip. An
+// over.ball alone is enough only when one delivery there is, or fits the
+// event; more than one → refused, never a guess. { ball } (null = no ball
+// log for it: the clip carries the details sent) or { status, error }.
+async function resolveAttachDelivery(matchId, src, eventType) {
+    if (!ballsCollection) return { ball: null };
+    const { ObjectId } = require('mongodb');
+    let ball = null;
+    if (src.ballId) {
+        let _id;
+        try { _id = new ObjectId(String(src.ballId)); } catch { return { status: 400, error: 'Invalid delivery id' }; }
+        ball = await ballsCollection.findOne({ _id, matchId });
+        if (!ball) return { status: 404, error: 'That delivery is not part of this match' };
+    } else if (src.deliveryId) {
+        ball = await ballsCollection.findOne({ matchId, ballUid: String(src.deliveryId) });
+        if (!ball) return { status: 404, error: 'That delivery is not part of this match' };
+    } else {
+        const m = parseAttachBallMeta(src);
+        if (m.over === undefined || m.ballInOver === undefined) return { ball: null };
+        const q = { matchId, over: m.over, ballInOver: m.ballInOver };
+        if (m.innings !== undefined) q.innings = m.innings;
+        const slot = (await ballsCollection.find(q).toArray()).filter(b => b.kind !== 'PEN');
+        if (!slot.length) return { ball: null };
+        ball = slot.length === 1 ? slot[0] : ClipAttribution.legacyDeliveryForClip({ ...m, eventType, striker: m.striker }, slot);
+        if (!ball) return { status: 409, code: 'AMBIGUOUS_DELIVERY', error: `More than one delivery is numbered ${m.over}.${m.ballInOver} — attach the clip from that delivery's own row.` };
+    }
+    // A delivery from before ids were minted gets its own now, so the clip
+    // can name it (an id only this row will ever carry).
+    if (!ball.ballUid) {
+        const uid = `legacy_${String(ball._id)}`;
+        await ballsCollection.updateOne({ _id: ball._id, ballUid: { $exists: false } }, { $set: { ballUid: uid } });
+        ball = await ballsCollection.findOne({ _id: ball._id });
+    }
+    return { ball };
+}
+// What an attach to that target replaces: the clips of THAT delivery only
+// (or, with no ball log for it, the old one-clip-per-over.ball rule).
+async function clipsAtAttachTarget(matchId, target, ballMeta) {
+    if (target.ball) return findClipsForDelivery(target.ball);
+    const one = await findExistingClipForBall({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver });
+    return one ? [one] : [];
+}
+const attachTargetLockKey = (matchId, target, ballMeta, eventType) => target.ball
+    ? `${matchId}::delivery::${target.ball.ballUid}`
+    : attachLockKey({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver, eventType });
+
 // POST /api/admin/clips/attach/upload?matchId=...&eventType=FOUR|SIX|WICKET
 //      &over=&ballInOver=&innings=&striker=&bowler=&nonStriker=&battingTeam=
 //      &runs=&dismissalType=&fielder=&replace=true
@@ -6659,27 +6815,31 @@ adminRouter.post('/clips/attach/upload', express.raw({ type: '*/*', limit: '80mb
     if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
     if (!req.body || !req.body.length) return res.status(400).json({ success: false, error: 'Empty clip file' });
 
-    const ballMeta = parseAttachBallMeta(req.query);
+    const target = await resolveAttachDelivery(matchId, req.query, eventType);
+    if (target.error) return res.status(target.status).json({ success: false, error: target.error, code: target.code || null });
+    const ballMeta = target.ball ? clipBallMetaFromBall(target.ball) : parseAttachBallMeta(req.query);
     const replace = String(req.query.replace || '').toLowerCase() === 'true';
-    const lockKey = attachLockKey({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver, eventType });
+    const lockKey = attachTargetLockKey(matchId, target, ballMeta, eventType);
     if (attachLocks.has(lockKey)) return res.status(409).json({ success: false, error: 'Another attach is already in progress for this ball — try again in a moment' });
     attachLocks.add(lockKey);
 
     try {
-        const existing = await findExistingClipForBall({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver });
-        if (existing && !replace) {
-            return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing._id.toString() });
+        const existing = await clipsAtAttachTarget(matchId, target, ballMeta);
+        if (existing.length && !replace) {
+            return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing[0]._id.toString() });
         }
-        // (for good: the helper must not send the replaced clip back)
-        if (existing && replace) await deleteClipForGood(existing, req.ownerEmail);
 
         const clipDir = path.join(CLIPS_DIR, matchId);
         if (!fs.existsSync(clipDir)) fs.mkdirSync(clipDir, { recursive: true });
         const outFile = path.join(clipDir, `${eventType}_manual_${Date.now()}.mp4`);
         await new Promise((resolve, reject) => fs.writeFile(outFile, req.body, (err) => err ? reject(err) : resolve()));
-        await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
+        const made = await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
+        // The old clip(s) of THIS delivery go only once the new one is in
+        // place — a failed attach never leaves the event with no clip.
+        // (for good: the helper must not send a replaced clip back)
+        if (replace) for (const c of existing) await deleteClipForGood(c, req.ownerEmail);
         await logAuditAction(req.ownerEmail, replace ? 'Manually replaced clip (upload)' : 'Manually attached clip (upload)', matchId, null, ballMeta);
-        res.json({ success: true });
+        res.json({ success: true, clipId: made && made.clipId, deliveryId: ballMeta.deliveryId || null, replaced: replace ? existing.map(c => String(c._id)) : [] });
     } catch (err) {
         console.log('Manual clip attach (upload) error:', err.message || err);
         res.status(500).json({ success: false, error: 'Could not attach clip' });
@@ -6706,17 +6866,19 @@ adminRouter.post('/clips/attach/drive', async (req, res) => {
     if (!fileId) return res.status(400).json({ success: false, error: 'A valid Drive file link or file ID is required' });
     if (!driveClient) return res.status(503).json({ success: false, error: 'Drive is not configured on the server' });
 
-    const ballMeta = parseAttachBallMeta(body);
+    const target = await resolveAttachDelivery(matchId, body, eventType);
+    if (target.error) return res.status(target.status).json({ success: false, error: target.error, code: target.code || null });
+    const ballMeta = target.ball ? clipBallMetaFromBall(target.ball) : parseAttachBallMeta(body);
     const replace = body.replace === true || String(body.replace || '').toLowerCase() === 'true';
-    const lockKey = attachLockKey({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver, eventType });
+    const lockKey = attachTargetLockKey(matchId, target, ballMeta, eventType);
     if (attachLocks.has(lockKey)) return res.status(409).json({ success: false, error: 'Another attach is already in progress for this ball — try again in a moment' });
     attachLocks.add(lockKey);
 
     let outFile = null;
     try {
-        const existing = await findExistingClipForBall({ matchId, innings: ballMeta.innings, over: ballMeta.over, ballInOver: ballMeta.ballInOver });
-        if (existing && !replace) {
-            return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing._id.toString() });
+        const existing = await clipsAtAttachTarget(matchId, target, ballMeta);
+        if (existing.length && !replace) {
+            return res.status(409).json({ success: false, error: 'This ball already has a clip attached', existingClipId: existing[0]._id.toString() });
         }
 
         const clipDir = path.join(CLIPS_DIR, matchId);
@@ -6731,16 +6893,15 @@ adminRouter.post('/clips/attach/drive', async (req, res) => {
             driveRes.data.pipe(dest);
         });
 
-        // Only remove the OLD clip record once the new file has downloaded
-        // successfully — if the Drive fetch above had failed, the existing
-        // clip stays exactly as it was (spec section 15: never leave the
-        // event with no clip because of a failed replace).
+        const made = await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
+        // Only remove the OLD clip record(s) of THIS delivery once the new
+        // clip is in place — if the Drive fetch above had failed, the
+        // existing clip stays exactly as it was (spec section 15: never
+        // leave the event with no clip because of a failed replace).
         // (for good: the helper must not send the replaced clip back)
-        if (existing && replace) await deleteClipForGood(existing, req.ownerEmail);
-
-        await finalizeClip({ matchId, eventType, eventTimestamp: Date.now(), ballMeta, uid: req.ownerUid, outFile });
+        if (replace) for (const c of existing) await deleteClipForGood(c, req.ownerEmail);
         await logAuditAction(req.ownerEmail, replace ? 'Manually replaced clip (Drive)' : 'Manually attached clip (Drive)', matchId, null, { fileId, ...ballMeta });
-        res.json({ success: true });
+        res.json({ success: true, clipId: made && made.clipId, deliveryId: ballMeta.deliveryId || null, replaced: replace ? existing.map(c => String(c._id)) : [] });
     } catch (err) {
         console.log('Manual clip attach (Drive) error:', err.message || err);
         if (outFile) fs.unlink(outFile, () => {});
@@ -6849,6 +7010,9 @@ function sanitizeShot(s) {
 }
 function mapBallForPublic(b) {
     return {
+        // 🆔 The delivery's own id (the ball row's ballUid) — what its clips
+        // name; over.ball repeats on a Wide / No Ball, so it is never the key.
+        deliveryId: b.ballUid || null,
         innings: b.innings || 1,
         over: b.over,
         ballInOver: b.ballInOver,
@@ -7132,7 +7296,7 @@ function clipLinkFromBall(ball) {
     const ev = ClipAttribution.clipEventForBall(ball);
     const dismissedName = isOut ? (personName(d.batter) || personName(ball.striker) || null) : null;
     return {
-        deliveryId: ball.ballUid || null,
+        deliveryId: ball.ballUid || null, deliveryNamed: !!ball.ballUid,
         innings: ball.innings, over: ball.over, ballInOver: ball.ballInOver,
         runs: ball.runs, battingTeam: ball.battingTeam || null,
         strikerName: personName(ball.striker) || null, strikerKey: playerKey(ball.striker), strikerPlayerId: ball.strikerPlayerId || null,
@@ -7177,16 +7341,19 @@ function serializeClipForEditor(c) {
 }
 
 // Every clip of ONE delivery: by deliveryId; a clip from before deliveryId
-// existed only when it has the same over.ball, the same striker AND the
-// same event — a Wide sharing 12.5 with a FOUR never takes its clip.
+// existed only when it fits this delivery (same over.ball, striker and
+// event — ClipAttribution.clipFitsBall) and no other delivery at that
+// over.ball: a Wide sharing 12.5 with a FOUR never takes its clip, and a
+// clip two deliveries could both be stays where it is.
 async function findClipsForDelivery(ball) {
     if (!clipsCollection || !ball) return [];
     const byUid = ball.ballUid ? await clipsCollection.find({ matchId: ball.matchId, deliveryId: String(ball.ballUid) }).toArray() : [];
     const sameSlot = await clipsCollection.find({ matchId: ball.matchId, innings: ball.innings, over: ball.over, ballInOver: ball.ballInOver }).toArray();
-    const ev = ClipAttribution.clipEventForBall(ball).eventType;
-    const legacy = sameSlot.filter(c => !c.deliveryId
-        && (!c.strikerKey || !ball.strikerKey || c.strikerKey === ball.strikerKey)
-        && c.eventType === ev);
+    const others = (ballsCollection && sameSlot.some(c => !c.deliveryId))
+        ? (await ballsCollection.find({ matchId: ball.matchId, innings: ball.innings, over: ball.over, ballInOver: ball.ballInOver }).toArray())
+            .filter(b => String(b._id) !== String(ball._id) && b.kind !== 'PEN')
+        : [];
+    const legacy = sameSlot.filter(c => !c.deliveryId && ClipAttribution.clipFitsBall(c, ball) && !others.some(o => ClipAttribution.clipFitsBall(c, o)));
     const seen = new Set();
     return [...byUid, ...legacy].filter(c => { const k = String(c._id); if (seen.has(k)) return false; seen.add(k); return true; });
 }
@@ -7277,8 +7444,8 @@ async function findDeliveryForClip(clip) {
     if (clip.over == null || clip.ballInOver == null) return null;
     return findCanonicalBall(clip.matchId, {
         innings: clip.innings == null ? undefined : clip.innings, over: clip.over, ballInOver: clip.ballInOver,
-        striker: clip.strikerName || undefined
-    }, clip.eventType === 'WICKET' ? 'WICKET' : null);
+        striker: clip.strikerName || undefined, dismissedPlayer: clip.dismissedPlayerName || undefined
+    }, clip.eventType || null);
 }
 
 // What the editor's form starts from: the delivery expressed as the
@@ -11959,6 +12126,8 @@ function panelStateFromMatchRecord(rec, balls, previous) {
         return {
             innings: inn,
             battingTeam: bt,
+            // the delivery's id, as the panel's own log keeps it (its clips name it)
+            deliveryId: b.ballUid || null,
             over: `${b.over}.${b.ballInOver}`,
             ballType: b.kind,
             striker: b.striker || '',

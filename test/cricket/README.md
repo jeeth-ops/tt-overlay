@@ -24,6 +24,13 @@ NODE_PATH=$(npm root -g) node test/cricket/result-matches-panel-test.js  # 🧮 
 NODE_PATH=$(npm root -g) node test/cricket/clip-delete-test.js  # 🪦 an owner-deleted clip stays deleted: real server + stand-in R2 —
                                                   # video + poster off R2; sent again / status / attach / classify / replace
                                                   # never bring it back; a refused R2 delete is kept for the retry sweep
+NODE_PATH=$(npm root -g) node test/cricket/clip-identity-e2e-test.js  # 🆔 every delivery plays ITS clip, even when deliveries share an over.ball:
+                                                  # the real panel scores FOUR → No Ball (both 19.1), FOUR → Wide → Wide → No Ball (all 19.2),
+                                                  # caught at 19.5 → Wide + Run Out (also 19.5); a stand-in helper cuts each as a video of its own
+                                                  # colour (late uploads, a re-send, a stale attach); real server + stand-in R2; Chromium plays
+                                                  # every WATCH REPLAY (finished and live) and reads the colour on screen; Highlights keep both
+                                                  # wickets; the owner replaces one 19.5 clip, then the other; reload / a fresh visit; older
+                                                  # clips with no delivery linked only where one delivery fits
 node test/cricket/clip-editor-ui-test.js         # Advanced Clip Editor, scorecard UI (owner-only ⋯, preview, save)
 node test/cricket/scorecard-clip-download-test.js # scorecard player drawer: download all / 4s / 6s / 4s + 6s / wickets as one video, after picking 16:9 / 9:16 + wagon wheel
 node test/cricket/commentary-wagon-wheel-test.js # Full Commentary: a wagon wheel per over (MCA President Cup 2026 + matches from 10 Oct 2026 on), over pips, Fours / Sixes wheel, only changed overs rebuilt
