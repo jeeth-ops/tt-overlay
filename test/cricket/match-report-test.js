@@ -1,12 +1,18 @@
 // 📑 MATCH REPORTS — the scorecard Excel and the PDF match report, with
-// wagon wheels (both teams + the top scorer), built by /match-report.js:
+// wagon wheels (both teams, and in the PDF every batter of every innings),
+// built by /match-report.js:
 //   • the inlined copies in both panels match the module (--sync rewrites them)
 //   • the model: totals add up, fall of wickets + partnerships, minutes,
 //     start/end time, bowler dots/wides/no balls, best performers, the worm
 //   • the wagon wheel: runs by region, off/leg split, left-handers mirrored,
 //     super over and byes left out, the top scorer's own wheel
+//   • every batter: their own wheel per innings (only their own shots), what
+//     they faced; every player of both XIs: batting, bowling, fielding
+//   • a four-innings match (a Test): each innings, each batter's two wheels
 //   • the real Excel + PDF files (when exceljs / jspdf are installed — set
-//     MR_LIBS=<dir holding node_modules> to point at them)
+//     MR_LIBS=<dir holding node_modules> to point at them): the page flow,
+//     a card + wheel for every batter of both sides, the second innings
+//     there, no wheel invented for a batter without placed shots
 //   • both panels: the Session card, Excel / PDF / Both buttons, and the
 //     automatic download the moment the match ends (once, after the last
 //     wagon wheel is placed, never for an old match just opened)
@@ -121,7 +127,52 @@ function modelSuite(){
     M.howOutShort({ out: true, howOut: 'lbw b Raj' })], ['CAUGHT & BOWLED', 'CAUGHT', 'RUN OUT', 'RETIRED HURT', 'NOT OUT', 'LBW']);
   const none = M.buildModel(makeMatch({ seed: 3, shots: false }));
   eq('no shots marked → empty wheels, no top-scorer wheel', [none.wagon.mapped, none.wagon.star, none.wagon.scoringShots > 0], [0, null, true]);
-  return { snap, m, none };
+  console.log('\n=== every batter, every player ===');
+  let cards = 0, wheels = 0;
+  m.innings.forEach(inn => {
+    const ib = snap.balls.filter(b => b.innings === inn.no);
+    inn.batting.forEach(b => {
+      cards++;
+      const own = ib.filter(x => x.striker === b.name && x.shot && M.batRunsOf(x) > 0);
+      if(b.wheel.mapped) wheels++;
+      const ok = b.wheel.mapped === own.length && b.wheel.runs === sum(own, x => M.batRunsOf(x)) && b.wheel.shots.every(sh => sh.batter === b.name)
+        && b.wheel.hand === (snap.hands[b.name] === 'L' ? 'L' : 'R');
+      if(!ok) eq(`inn ${inn.no} ${b.name}: their own wheel, only their shots, in their own hand`, [b.wheel.mapped, b.wheel.runs, b.wheel.hand], [own.length, sum(own, x => M.batRunsOf(x)), snap.hands[b.name]]);
+      const f = b.faced;
+      if(f.balls !== b.balls || f.ones + 2 * f.twos + 3 * f.threes + 4 * f.fours + 6 * f.sixes !== b.runs) eq(`inn ${inn.no} ${b.name}: what they faced adds up`, [f.balls, b.balls], [b.balls, b.balls]);
+    });
+  });
+  eq(`every batter of both innings has their own wheel (${wheels} of ${cards} with placed shots), only their own shots, in their own hand`, wheels > 10 && cards === m.innings.reduce((n, i) => n + i.batting.length, 0), true);
+  eq('…and what each faced adds up to their balls and runs', true, true);
+  ['A', 'B'].forEach(k => {
+    const list = m.players[k];
+    eq(`${k}: every player of the XI, in order`, list.filter(p => p.inXI).map(p => p.name), snap.teams[k].players.map(p => p.name));
+    eq(`${k}: their batting adds up to the side's runs off the bat`, sum(list, p => sum(p.bat, b => b.runs)), sum(m.innings.filter(i => i.team === k), i => i.runs - i.extras.total));
+    eq(`${k}: their bowling adds up to what the other side conceded to bowlers`, sum(list, p => sum(p.bowl, w => w.wickets)), sum(m.innings.filter(i => i.team !== k), i => sum(i.bowling, w => w.wickets)));
+    const dis = m.innings.filter(i => i.team !== k).reduce((a, i) => a.concat(i.batting), []);
+    eq(`${k}: fielding = the catches, run-outs and stumpings on the other side's card`,
+      [sum(list, p => p.field.catches), sum(list, p => p.field.runOuts), sum(list, p => p.field.stumpings)],
+      [dis.filter(b => /^CAUGHT/.test(b.howOut)).length, dis.filter(b => b.howOut === 'RUN OUT' && b.fielder).length, dis.filter(b => b.howOut === 'STUMPED').length]);
+    eq(`${k}: players who did not bat are listed too (no batting entry)`, list.filter(p => !p.bat.length).map(p => p.name), snap.teams[k].players.map(p => p.name).filter(n => !m.innings.some(i => i.team === k && i.batting.some(b => b.name === n))));
+  });
+  eq('each bowler\'s victims are the batters out to them', m.innings.every(inn => sum(inn.bowling, w => w.victims.length) === inn.batting.filter(b => b.out && b.bowler && b.howOut !== 'RUN OUT').length), true);
+  eq('the player of the match is marked, with the innings they batted in', [m.star && m.players[m.star.team].filter(p => p.star).map(p => p.name), m.star && m.star.innings.length > 0], [[m.star.name], true]);
+
+  console.log('\n=== a four-innings match (a Test) ===');
+  const test = M.buildModel(fourInnings());
+  eq('four innings, in order, each with its side', test.innings.map(i => [i.no, i.team, i.label]), [[1, 'A', 'First Innings'], [2, 'B', 'Second Innings'], [3, 'A', 'Third Innings'], [4, 'B', 'Fourth Innings']]);
+  const twice = test.players.A.find(p => p.bat.length === 2 && p.bat.every(b => b.runs > 0));
+  const w1 = test.innings[0].batting.find(b => b.name === twice.name).wheel, w3 = test.innings[2].batting.find(b => b.name === twice.name).wheel;
+  eq(`a batter who bats twice (${twice.name}) has a separate wheel for each innings`, [w1.runs, w3.runs, w1.runs + w3.runs <= sum(twice.bat, b => b.runs)], [M.wagonOf(test.innings ? fourInnings().balls : [], { batter: twice.name, innings: 1 }).runs, M.wagonOf(fourInnings().balls, { batter: twice.name, innings: 3 }).runs, true]);
+  return { snap, m, none, test };
+}
+// two simulated matches put end to end: four innings, like a Test
+function fourInnings(){
+  const a = makeMatch({ seed: 11, overs: 12 }), b = makeMatch({ seed: 23, overs: 10 });
+  const shift = (b.balls[0].timestamp - a.balls[a.balls.length - 1].timestamp) - 3600000;
+  const later = b.innings.map(i => Object.assign({}, i, { no: i.no + 2, fow: i.fow.map(f => Object.assign({}, f, { inningsNo: i.no + 2 })) }));
+  return Object.assign({}, a, { format: 'Test', oversLimit: null, innings: a.innings.concat(later),
+    balls: a.balls.concat(b.balls.map(x => Object.assign({}, x, { innings: x.innings + 2, timestamp: x.timestamp - shift }))), result: { text: 'Match drawn', winner: 'DRAW' } });
 }
 
 async function filesSuite(ctx){
@@ -191,7 +242,14 @@ async function filesSuite(ctx){
   else {
     const doc = M.buildPdf(jspdf.jsPDF, ctx.m, imgs);
     const buf = Buffer.from(doc.output('arraybuffer'));
-    eq('PDF: summary + wagon wheels + one page per innings + squads', doc.getNumberOfPages(), 3 + ctx.m.innings.length);
+    const titlesOf = (model) => { const tt = []; function S(o){ const d = new jspdf.jsPDF(o); const tx = d.text.bind(d); d.text = function(t, x, yy){ if(Math.abs(yy - 25) < 0.01) tt.push(String(t)); return tx.apply(null, arguments); }; return d; } const dd = M.buildPdf(S, model, imgs); return { tt, pages: dd.getNumberOfPages() }; };
+    const flow = titlesOf(ctx.m);
+    const lbl = (i) => i.label.toUpperCase(), sh = (k) => ctx.m.teams[k].short.toUpperCase(), opp = (k) => k === 'A' ? 'B' : 'A';
+    const want = ['MATCH SUMMARY'].concat(...ctx.m.innings.map(i => ['SCORECARD  ·  ' + lbl(i), 'BATTING  ·  ' + sh(i.team) + '  ·  ' + lbl(i), 'BOWLING  ·  ' + sh(opp(i.team)) + '  ·  ' + lbl(i)]), ['PLAYER PERFORMANCES', 'PLAYER OF THE MATCH', 'RESULT & MATCH RECORDS']);
+    const firsts = flow.tt.filter(t => !/CONTINUED/.test(t));
+    eq('PDF: the flow — summary, then per innings scorecard → batting (with wheels) → bowling, then players, player of the match, result', firsts.filter(t => want.includes(t) || /^BOWLING/.test(t) === false).filter(t => want.includes(t)), want.filter(t => !/^BOWLING/.test(t) || firsts.includes(t)));
+    eq('PDF: …both innings there (the second is not left out)', ctx.m.innings.every(i => firsts.includes('SCORECARD  ·  ' + lbl(i)) && firsts.includes('BATTING  ·  ' + sh(i.team) + '  ·  ' + lbl(i))), true);
+    eq('PDF: every page has its title, page count ' + flow.pages, flow.tt.length, flow.pages - 1);
     eq('PDF: a real PDF file', buf.slice(0, 5).toString(), '%PDF-');
     const seen = { logos: 0, texts: [] };
     function Spy(o){ const d = new jspdf.jsPDF(o); const ai = d.addImage.bind(d), tx = d.text.bind(d);
@@ -216,7 +274,32 @@ async function filesSuite(ctx){
     let ok = true; try{ M.buildPdf(jspdf.jsPDF, odd, {}).output('arraybuffer'); }catch(e){ ok = false; }
     eq('PDF: names outside the PDF font never break it', ok, true);
     eq('PDF: …and come out readable', M.pdfSafe('राहुल “Rocket” Sharma — c †Raj'), ' "Rocket" Sharma - c Raj');
-    eq('PDF: a match without wagon wheel shots still builds', M.buildPdf(jspdf.jsPDF, ctx.none, {}).getNumberOfPages(), 3 + ctx.none.innings.length);
+    // every batter's card + wheel
+    const tx2 = [], imgs2 = [];
+    function Spy3(o){ const d = new jspdf.jsPDF(o); const tx = d.text.bind(d), ai = d.addImage.bind(d); d.text = function(t){ tx2.push(String(t)); return tx.apply(null, arguments); }; d.addImage = function(){ imgs2.push(arguments[6]); return ai.apply(null, arguments); }; return d; }
+    M.buildPdf(Spy3, ctx.m, imgs);
+    const bats = ctx.m.innings.reduce((a, i) => a.concat(i.batting.filter(b => b.balls > 0 || b.runs > 0 || b.out).map(b => ({ b, i }))), []);
+    const withWheel = bats.filter(x => x.b.wheel.mapped);
+    const starW = (ctx.m.star.innings || []).filter(si => si.bat.wheel.mapped);
+    eq(`PDF: a wagon wheel for every batter with placed shots, both sides (${withWheel.length}) + the player of the match's own`, tx2.filter(t => t === 'RIGHT-HANDED' || t === 'LEFT-HANDED').length, withWheel.length + starW.length);
+    eq('PDF: …each in the batter\'s own hand', tx2.filter(t => t === 'LEFT-HANDED').length, withWheel.filter(x => x.b.wheel.hand === 'L').length + starW.filter(si => si.bat.wheel.hand === 'L').length);
+    eq('PDF: …a card for every batter who batted, both sides', bats.every(x => tx2.some(t => t.indexOf(M.pdfSafe(x.b.name)) === 0)), true);
+    eq('PDF: …drawn as vectors (no wheel pictures embedded)', imgs2.filter(n => n !== 'brand' && !/^logo/.test(n || '')).length, 0);
+    eq('PDF: every player of both XIs on the performances page', ['A', 'B'].every(k => ctx.m.teams[k].players.every(p => tx2.some(t => t.indexOf(M.pdfSafe(p.name)) === 0))), true);
+    eq('PDF: did-not-bat players marked DNB', tx2.filter(t => t === 'DNB').length, ['A', 'B'].reduce((n, k) => n + ctx.m.players[k].filter(p => !p.bat.length && ctx.m.innings.some(i => i.team === k)).length, 0));
+    eq('PDF: the player of the match spotlight', [tx2.includes('PLAYER OF THE MATCH'), tx2.filter(t => t === M.pdfSafe(ctx.m.star.name)).length > 0], [true, true]);
+    eq('PDF: no page is left with only a title (no blank pages)', flow.tt.length === flow.pages - 1, true);
+    const size = Buffer.from(M.buildPdf(jspdf.jsPDF, ctx.m, imgs).output('arraybuffer')).length;
+    eq('PDF: a small file (' + Math.round(size / 1024) + ' KB)', size < 1200 * 1024, true);
+    // a match without placed shots: numbers only, and it says why
+    const tx3 = [];
+    function Spy4(o){ const d = new jspdf.jsPDF(o); const tx = d.text.bind(d); d.text = function(t){ tx3.push(String(t)); return tx.apply(null, arguments); }; return d; }
+    const nd = M.buildPdf(Spy4, ctx.none, {});
+    eq('PDF: a match without wagon wheel shots still builds — no batter wheel invented', [nd.getNumberOfPages() > 5, tx3.filter(t => t === 'RIGHT-HANDED' || t === 'LEFT-HANDED').length], [true, 0]);
+    eq('PDF: …each batter with runs says their shots were not placed', tx3.filter(t => /Shot locations not recorded - no wagon wheel/.test(t)).length, ctx.none.innings.reduce((n, i) => n + i.batting.filter(b => b.runs > 0).length, 0));
+    // a Test: every innings
+    const tf = titlesOf(ctx.test);
+    eq('PDF: a four-innings match — scorecard and batting pages for all four innings', ['FIRST', 'SECOND', 'THIRD', 'FOURTH'].every(o => tf.tt.includes('SCORECARD  ·  ' + o + ' INNINGS') && tf.tt.some(t => new RegExp('^BATTING .* ' + o + ' INNINGS$').test(t))), true);
   }
 }
 

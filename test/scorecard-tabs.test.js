@@ -260,14 +260,18 @@ async function pixelDiff(page, a, b) {
   fx.clips = clipsFor(fx.balls);
   const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
   // the fixed background behind the translucent cards is not part of the scorecard: one flat colour in both
-  const hideWash = '#ambient-wash,#logo-wash{display:none!important} html,body{background:#0b0e14!important;background-image:none!important}';
+  // (and the highlight cards drawn in full: off screen they are content-visibility:auto, whose
+  // placeholder size depends on whether the browser has drawn them yet — the same in both pages)
+  const hideWash = '#ambient-wash,#logo-wash{display:none!important} html,body{background:#0b0e14!important;background-image:none!important} .clip-row.hl-card{content-visibility:visible!important}';
 
   head('SCORECARD TAB — the page exactly as before');
   for (const [mode, url, vp] of [['live', LIVE, { width: 1280, height: 900 }], ['finished', FINAL, { width: 1280, height: 900 }], ['live', LIVE, { width: 390, height: 844 }]]) {
     const a = await open(browser, { url, vp, fixtures: fx });
     const b = await open(browser, { url, vp, fixtures: fx, html: PAGE_WITHOUT_TABS });
-    for (const x of [a, b]) { if (mode === 'live') await fire(x.page, fx.live); await x.page.waitForTimeout(900); await x.page.addStyleTag({ content: hideWash }); await x.page.waitForTimeout(100); }
-    const htmlA = await a.page.evaluate(() => { const w = document.getElementById('wrap').cloneNode(true); const p = w.querySelector('#sc-panels'); if (p) p.remove(); return w.innerHTML; });
+    // both pages fully settled — the clips list loaded and drawn, its poster frames loaded — before they are compared
+    for (const x of [a, b]) { if (mode === 'live') await fire(x.page, fx.live); await x.page.waitForTimeout(900); await x.page.waitForFunction(() => window.__hlDiagFinal && document.querySelectorAll('#highlights-list .hl-card, #highlights-list .empty-state').length > 0 && [...document.images].every((i) => i.complete), null, { timeout: 10000 }).catch(() => {}); await x.page.waitForTimeout(400); await x.page.addStyleTag({ content: hideWash }); await x.page.waitForTimeout(100); }
+    // (each Scorecard section carries the tab bar's marker class "sct-sec" — what the tab bar hides by — and nothing else differs)
+    const htmlA = await a.page.evaluate(() => { const w = document.getElementById('wrap').cloneNode(true); const p = w.querySelector('#sc-panels'); if (p) p.remove(); [...w.children].forEach((c) => { c.classList.remove('sct-sec'); if (!c.getAttribute('class')) c.removeAttribute('class'); }); return w.innerHTML; });
     const htmlB = await b.page.evaluate(() => document.getElementById('wrap').innerHTML);
     ok(htmlA === htmlB, `${mode} ${vp.width}px: #wrap holds exactly the same HTML as the page without the tabs code`, htmlA === htmlB ? undefined : [htmlA.length, htmlB.length]);
     // the only layout change: #wrap starts lower by the bar's height. The page without the tabs gets an
@@ -279,9 +283,9 @@ async function pixelDiff(page, a, b) {
     const pa = await a.page.locator('#wrap').screenshot(), pb = await b.page.locator('#wrap').screenshot();
     const d = await pixelDiff(a.page, pa, pb);
     ok(d.diff === 0, `${mode} ${vp.width}px: …and looks exactly the same (pixel for pixel)`, d);
-    const disp = (pg) => pg.evaluate(() => [...document.getElementById('wrap').children].filter((c) => c.id !== 'sc-panels').map((c) => (c.id || c.className) + ':' + getComputedStyle(c).display));
+    const disp = (pg) => pg.evaluate(() => [...document.getElementById('wrap').children].filter((c) => c.id !== 'sc-panels').map((c) => (c.id || c.className.replace(/\s*\bsct-sec\b/, '')) + ':' + getComputedStyle(c).display + ':' + Math.round(c.getBoundingClientRect().height)));
     const da = await disp(a.page), db = await disp(b.page);
-    ok(JSON.stringify(da) === JSON.stringify(db), `${mode} ${vp.width}px: every section of the scorecard shown / hidden exactly as without the tabs`, [da, db]);
+    ok(JSON.stringify(da) === JSON.stringify(db), `${mode} ${vp.width}px: every section of the scorecard shown / hidden exactly as without the tabs`, da.map((x, i) => x === db[i] ? null : [x, db[i]]).filter(Boolean));
     ok(a.errors.length === 0 && b.errors.length === 0, `${mode} ${vp.width}px: no page errors`, a.errors.concat(b.errors));
     await a.ctx.close(); await b.ctx.close();
   }
