@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Volleyball Graphics Studio · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/volleyball-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🏐 The volleyball broadcast graphics — every template, previewed with the
+  chosen match's real data, taken to air and dismissed from here.
+
+  PREVIEW is a private copy of the overlay (?preview=1): it shows what this
+  page asks, with the look being edited, and is never on air. ON AIR is the
+  real overlay, exactly what vMix / OBS shows. Taking a graphic asks the
+  server (the same command the scoring panel sends); the look is saved on
+  the tournament and every overlay of it follows at once.
+-->
+<style>
+  body { background: radial-gradient(70vmax 50vmax at 0% 0%, rgba(30, 64, 175, .22), transparent 60%), radial-gradient(70vmax 50vmax at 100% 100%, rgba(225, 29, 72, .14), transparent 60%), #05060c; }
+  .topbar .title { font-weight: 800; font-size: 16px; letter-spacing: -.01em; }
+  .topbar .title small { display: block; font-weight: 500; font-size: 12px; color: var(--mute); }
+  .studio { max-width: 1680px; margin: 0 auto; padding: 14px clamp(10px, 1.6vw, 24px) 60px; }
+  .pickrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 10px; align-items: end; margin-bottom: 14px; }
+  @media (max-width: 860px) { .pickrow { grid-template-columns: minmax(0, 1fr); } }
+  .main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 440px); grid-template-areas: "top side" "bottom side"; gap: 16px; align-items: start; }
+  .ltop { grid-area: top; min-width: 0; } .lbot { grid-area: bottom; min-width: 0; } .main > .side { grid-area: side; }
+  /* narrow: the on-air state and the controls right under the preview */
+  @media (max-width: 1100px) { .main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "side" "bottom"; } }
+  .mon { position: relative; border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--line2), 0 30px 70px -30px rgba(0, 0, 0, .9); }
+  .mon .scr { position: relative; width: 100%; padding-top: 56.25%; background: #111 center / cover no-repeat; }
+  .mon .scr.court { background-image: linear-gradient(180deg, #27324a 0%, #4b5b78 33%, #b98450 34%, #d39b5f 60%, #9b6a38 100%); }
+  .mon .scr.black { background: #000; }
+  .mon .scr.check { background: repeating-conic-gradient(#2a2a2e 0% 25%, #1c1c1f 0% 50%) 50% / 28px 28px; }
+  /* the overlay page has the normal colour scheme: the frame must too, or Chromium paints it an opaque white */
+  .mon iframe { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+  /* top right: the corner bug lives top left */
+  .mon .tag { position: absolute; right: 12px; top: 12px; z-index: 2; padding: 4px 10px; border-radius: 8px; font: 800 11px/1.2 system-ui, sans-serif; letter-spacing: .12em; color: #fff; background: rgba(0, 0, 0, .55); }
+  .mon .tag.pv { background: #15803d; }
+  .mon .tag.pg { background: #dc2626; }
+  .mon .note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; max-width: 80%; text-align: center; padding: 12px 18px; border-radius: 14px; background: rgba(0, 0, 0, .7); font-weight: 600; }
+  .monbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 2px 0; }
+  .side { display: grid; gap: 14px; position: sticky; top: 70px; }
+  @media (max-width: 1100px) { .side { position: static; } }
+  .airbox { padding: 14px; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line); }
+  .airbox.k-on { box-shadow: 0 0 0 2px #dc2626; background: color-mix(in srgb, #dc2626 10%, var(--card)); }
+  .airbox.k-live { box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 55%, transparent); }
+  .airbox.k-move { box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 60%, transparent); }
+  .airbox.k-warn, .airbox.k-bad { box-shadow: 0 0 0 2px var(--orange); background: color-mix(in srgb, var(--orange) 10%, var(--card)); }
+  .airbox.k-bad { box-shadow: 0 0 0 2px #dc2626; }
+  .airbox .outs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: var(--mute); }
+  .airbox .outs span { display: inline-flex; align-items: center; gap: 6px; } .airbox .outs .warn { color: var(--orange); font-weight: 700; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .tpl { text-align: left; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line); overflow: hidden; transition: transform .25s var(--bounce), box-shadow .2s; display: flex; flex-direction: column; min-width: 0; }
+  .tpl:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--line2), 0 18px 40px -20px rgba(0, 0, 0, .8); }
+  .tpl.sel { box-shadow: 0 0 0 2px var(--blue), 0 18px 40px -20px rgba(10, 132, 255, .5); }
+  .tpl.onair { box-shadow: 0 0 0 2px #dc2626; }
+  .tpl .th { position: relative; height: 128px; background: linear-gradient(160deg, #1a2250, #070b24); overflow: hidden; }
+  .tpl .tb { padding: 10px 12px 12px; display: grid; gap: 3px; }
+  .tpl .tb b { font-size: 14.5px; }
+  .tpl .tb small { color: var(--mute); font-size: 12px; line-height: 1.35; }
+  .tpl .tb .st { font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+  .tpl .tb .st.ok { color: var(--green); } .tpl .tb .st.na { color: var(--mute); } .tpl .tb .st.live { color: #ff453a; } .tpl .tb .st.move { color: var(--orange); }
+  /* the thumbnails: schematic, drawn in the match's own colours — never data */
+  .th i, .th b, .th span { position: absolute; display: block; }
+  .th .sb { left: 18%; right: 18%; bottom: 14px; height: 18px; background: #0a1136; box-shadow: 0 0 0 1px rgba(255, 255, 255, .1); }
+  .th .sb::before, .th .sb::after { content: ''; position: absolute; top: 0; bottom: 0; width: 34%; }
+  .th .sb::before { left: 0; background: var(--ta); } .th .sb::after { right: 0; background: var(--tb); }
+  .th .cb { left: 12px; top: 12px; width: 44%; height: 12px; background: var(--ta); box-shadow: 0 15px 0 var(--tb); }
+  .th .fa { left: 8%; top: 22%; width: 40%; height: 56%; background: var(--ta); clip-path: polygon(0 0, 100% 0, 88% 100%, 0 100%); }
+  .th .fb { right: 8%; top: 22%; width: 40%; height: 56%; background: var(--tb); clip-path: polygon(12% 0, 100% 0, 100% 100%, 0 100%); }
+  .th .vs { left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: #0a1136; box-shadow: 0 0 0 3px #ffd60a; }
+  .th .pn { left: 22%; right: 22%; top: 16%; bottom: 14%; background: rgba(255, 255, 255, .07); box-shadow: inset 0 3px 0 #ffd60a; }
+  .th .coin { left: 50%; top: 30%; width: 34px; height: 34px; margin-left: -17px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff7d1, #ffd60a 50%, #a37a00); }
+  .th .ln { left: 30%; right: 30%; height: 6px; background: rgba(255, 255, 255, .5); }
+  .th .g6 { left: 8%; right: 8%; top: 28%; bottom: 14%; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 6px; }
+  .th .g6 i { position: static; background: linear-gradient(90deg, var(--ta) 0 34%, rgba(255, 255, 255, .09) 34%); }
+  .th .court { left: 14%; right: 14%; top: 22%; bottom: 16%; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .6); }
+  .th .court::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; margin-left: -1px; background: #fff; }
+  .th .dt { width: 10px; height: 10px; border-radius: 50%; }
+  .th .row6 { left: 18%; right: 18%; height: 7px; background: rgba(255, 255, 255, .12); }
+  .th .bigt { left: 0; right: 0; top: 34%; text-align: center; font: 800 30px/1 system-ui, sans-serif; color: #fff; letter-spacing: .04em; }
+  .th .ring { right: 26%; top: 24%; width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 4px #ffd60a; }
+  .th img { position: absolute; width: 34px; height: 34px; object-fit: contain; background: #fff; border-radius: 7px; padding: 3px; }
+  .opts { display: grid; gap: 10px; }
+  .opts .seg { width: 100%; }
+  .dirty { color: var(--orange); font-weight: 700; font-size: 12px; }
+  .look { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 12px; }
+  .look .full { grid-column: 1 / -1; }
+  .look label.field > span { font-size: 12px; color: var(--mute); font-weight: 600; }
+  .look input[type=color] { width: 100%; height: 38px; border: 0; border-radius: 10px; background: var(--fill); padding: 3px; }
+  .durs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .durs label { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 6px; align-items: center; font-size: 12.5px; padding: 6px 8px; border-radius: 10px; background: var(--fill); }
+  .durs input { height: 30px; padding: 0 6px; border-radius: 8px; border: 0; background: var(--card); text-align: center; }
+  .teamed { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; }
+  .teamed .lp { width: 64px; height: 64px; border-radius: 14px; background: #fff center / 80% no-repeat; display: grid; place-items: center; font-weight: 800; color: #0a1136; cursor: pointer; box-shadow: 0 0 0 1px var(--line2); }
+  .linkrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .linkrow input { min-width: 0; font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .gate { max-width: 560px; margin: 40px auto; text-align: center; }
+  .seg button { white-space: nowrap; }
+  @media (max-width: 680px) {
+    .topbar { flex-wrap: wrap; }
+    .topbar .title small, #who .muted { display: none; }
+    .look { grid-template-columns: minmax(0, 1fr); }
+    .seg { display: flex; flex-wrap: wrap; }
+    .seg button { flex: 1 1 auto; }
+  }
+  .gate .ball { font-size: 42px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" style="color:inherit" title="AllSportsLive"><span class="ball">🏐</span></a>
+  <div class="title grow ellipsis">Volleyball Graphics Studio<small id="sub">Broadcast templates · preview with real data · take to air</small></div>
+  <a class="btn sm" href="/volleyball" title="Tournaments, teams, fixtures">Dashboard</a>
+  <a class="btn sm hide" id="panelLink" target="_blank" rel="noopener">Scoring panel</a>
+  <span id="who" class="row small"></span>
+</header>
+<main class="studio" id="app"><div class="skel" style="height:420px"></div></main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/volleyball-common.js"></script>
+<script src="/volleyball-graphics.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, api, toast } = VB;
+  const GX = window.VolleyballGraphics;
+  document.documentElement.dataset.theme = 'dark';     // a broadcast room: always dark
+  const qs = new URLSearchParams(location.search);
+  const S = { user: null, mine: null, tid: null, tournament: null, teams: [], matches: [], matchId: qs.get('match'), match: null, summary: null, timeline: [],
+    air: null, airOffset: 0, outputs: [], busy: {}, saved: GX.normalizeStyle(null), draft: null, sel: qs.get('tpl') || 'bar', opt: {}, dur: 'default', socket: null, pv: null, bg: VB.store.get('vb_studio_bg', 'court') };
+  const DESC = {
+    bar: 'Score, sets, serve, set history, set / match point, time-outs, substitutions and point tags — every point from the scoring, by itself.',
+    compact: 'The same live score as a two-row bug in the top-left corner — the alternative to the score bar.',
+    intro: 'Both teams with their crests and colours, the competition, venue, date and format — full screen.',
+    toss: 'The toss as recorded: who won, what they chose, the first serve and the starting sides.',
+    lineup: 'A team’s six as they stand on court — front row at the net — with portraits when uploaded, libero, captain and first server. Both teams in turn, or one.',
+    setStart: 'The set number, the sets so far, who serves and which side.',
+    rotation: 'Both teams’ positions right now on a court, the server highlighted.',
+    timeout: 'During a time-out: the team, a live count-down, the score and this set’s figures. Goes when the time-out ends or the next rally is scored.',
+    playerStat: 'One player: portrait (or number), role and this match’s points, kills, blocks and aces.',
+    setSummary: 'End of a set: the set score, the sets, how each team won its points.',
+    final: 'The result — or the score so far: sets, every set score, top scorers, match duration.',
+    scorecard: 'Team comparison and the top scorers of the whole match.',
+    standings: 'The competition’s own table: its points rule, its tie-breaks and, where the format has one, the qualification line.'
+  };
+  const ITEMS = [{ k: 'bar', label: 'Live score bar', group: 'live' }, { k: 'compact', label: 'Corner score bug', group: 'live' }].concat(GX.ORDER.map((k) => ({ k, label: GX.SCENES[k].label, group: GX.SCENES[k].group })));
+  const GROUPS = Object.assign({ live: 'The live overlay' }, GX.GROUPS);
+  if (!ITEMS.some((it) => it.k === S.sel)) S.sel = 'bar';   // ?tpl= from the overlay picker
+  const airNow = () => Date.now() + S.airOffset;
+  const teamOf = (side) => { const t = S.match && S.match['team' + side]; return t || { name: 'Team ' + side, shortName: side, colors: {} }; };
+  const color = (side) => { const c = teamOf(side).colors || {}; return /^#[0-9a-f]{6}$/i.test(c.primary || '') ? c.primary : side === 'A' ? '#c81e3c' : '#e08a00'; };
+
+  /* ---------- sign-in, the matches this account runs ---------- */
+  function renderWho(user) {
+    $('#who').innerHTML = user ? `<span class="muted ellipsis" style="max-width:220px">${esc(user.email)}</span>` : '<button class="btn sm primary" id="si">Sign in</button>';
+    if ($('#si')) $('#si').onclick = () => VB.signIn();
+  }
+  VB.on('auth', (u) => { renderWho(u); if (u && !S.user) boot(); });
+  async function boot() {
+    const user = await VB.authReady;
+    renderWho(user);
+    if (!user) return gate('Sign in to use the graphics studio', 'Previews use a real match’s saved data, and taking a graphic to air is for the account that runs the tournament.', true);
+    S.user = user;
+    const r = await api('GET', '/api/volleyball/mine');
+    if (r.status === 403) return gate('This account cannot run broadcasts', `${user.email} is not one of the authorised AllSportsLive creator accounts.`);
+    if (!r.ok) return gate('Could not load your volleyball data', (r.json && r.json.error) || 'Try again in a moment.');
+    S.mine = r.json;
+    if (S.matchId) {
+      const m = await api('GET', `/api/volleyball/matches/${encodeURIComponent(S.matchId)}`);
+      if (m.ok && m.json.match && m.json.match.canManage) S.tid = m.json.match.tournamentId; else S.matchId = null;
+    }
+    if (!S.tid && S.mine.tournaments.length) S.tid = (S.mine.tournaments.find((t) => t.status === 'ongoing') || S.mine.tournaments[0]).tournamentId;
+    layout();
+    if (S.tid) await loadTournament(S.tid);
+    else renderEmpty();
+  }
+  function gate(title, text, signIn) {
+    $('#app').innerHTML = `<div class="gate card"><div class="ball">🏐</div><h2 style="margin:8px 0">${esc(title)}</h2><p class="muted">${esc(text)}</p>
+      ${signIn ? '<div class="row" style="justify-content:center;margin-top:16px"><button class="btn primary" id="gsi">Sign in with Google</button></div>' : '<a class="btn" style="margin-top:16px" href="/volleyball">Volleyball dashboard</a>'}</div>
+      <div class="section-title">The templates</div><div class="gallery">${ITEMS.map((it) => `<div class="tpl"><div class="th" style="--ta:#c81e3c;--tb:#1d4ed8">${thumb(it.k)}</div><div class="tb"><b>${esc(it.label)}</b><small>${esc(DESC[it.k])}</small></div></div>`).join('')}</div>`;
+    if ($('#gsi')) $('#gsi').onclick = () => VB.signIn();
+  }
+  function layout() {
+    $('#app').innerHTML = `<div class="pickrow">
+        <label class="field"><span class="small muted">Tournament</span><select class="input" id="tsel">${S.mine.tournaments.map((t) => `<option value="${esc(t.tournamentId)}" ${t.tournamentId === S.tid ? 'selected' : ''}>${esc(t.name)}</option>`).join('') || '<option>No tournaments yet</option>'}</select></label>
+        <label class="field"><span class="small muted">Match — previews use its saved data</span><select class="input" id="msel"><option>Loading…</option></select></label>
+        <div class="row"><span class="small muted">Behind preview</span><div class="seg" id="bgsel">${[['court', 'Court'], ['black', 'Black'], ['check', 'Clear']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${S.bg === v}">${l}</button>`).join('')}</div></div></div>
+      <div class="main"><div class="ltop">
+          <div class="mon" id="pvMon"><span class="tag pv">PREVIEW · NOT ON AIR</span><div class="scr ${S.bg}" id="pvScr"></div><div class="note hide" id="pvNote"></div></div>
+          <div class="monbar"><b id="selName" class="grow">Live score bar</b><button class="btn sm" id="replay">▶ Play again</button><button class="btn sm hide" id="pvNext">Next team</button></div></div>
+        <div class="lbot">
+          <div id="galleryHost"></div>
+          <div class="section-title">The look — saved on the tournament, every overlay follows it <span class="dirty hide" id="dirty">· not saved</span></div>
+          <div class="card"><div class="look" id="look"></div><div class="row wrapr" style="margin-top:14px"><span class="grow small muted">Changes show in the preview straight away; the overlays on air change when you save.</span><button class="btn" id="revert">Revert</button><button class="btn primary" id="saveLook">Save the look</button></div></div>
+          <div class="section-title">Times on screen <span class="muted" style="text-transform:none;letter-spacing:0">— when a graphic is taken without a time (blank = the default shown)</span></div>
+          <div class="card"><div class="durs" id="durs"></div></div>
+          <div class="section-title">Teams — name, colours and crest as the graphics show them</div>
+          <div class="grid2" id="teams"></div>
+        </div>
+        <aside class="side">
+          <div class="mon" id="pgMon"><span class="tag pg">ON AIR</span><div class="scr ${S.bg}" id="pgScr"></div></div>
+          <div id="airBox"></div>
+          <div class="card" id="selBox"></div>
+          <div class="card"><b class="small">Overlay links</b><p class="tiny muted" style="margin:2px 0 10px">A Browser source in vMix / OBS at 1920 × 1080 (transparent).</p><div class="stack" id="links"></div></div>
+        </aside></div>`;
+    $('#tsel').onchange = (e) => { S.matchId = null; loadTournament(e.target.value); };
+    $('#msel').onchange = (e) => selectMatch(e.target.value);
+    $$('#bgsel button').forEach((b) => b.onclick = () => { S.bg = b.dataset.v; VB.store.set('vb_studio_bg', S.bg); $$('#bgsel button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); ['#pvScr', '#pgScr'].forEach((id) => { $(id).className = 'scr ' + S.bg; }); });
+    $('#replay').onclick = () => preview(true);
+    $('#pvNext').onclick = () => toPreview({ cmd: 'next' });
+    $('#revert').onclick = () => { S.draft = JSON.parse(JSON.stringify(S.saved)); renderLook(); pushStyle(); };
+    $('#saveLook').onclick = saveLook;
+  }
+  function renderEmpty() {
+    $('#msel').innerHTML = '<option>No matches</option>';
+    $('#pvNote').textContent = 'Create a tournament with a match in the dashboard first.';
+    $('#pvNote').classList.remove('hide');
+  }
+  async function loadTournament(tid) {
+    S.tid = tid;
+    const r = await api('GET', `/api/volleyball/tournaments/${encodeURIComponent(tid)}`);
+    if (!r.ok) return toast('Could not load that tournament', 'err');
+    S.tournament = r.json.tournament; S.teams = r.json.teams || []; S.matches = r.json.matches || [];
+    S.saved = GX.normalizeStyle(S.tournament.broadcast);
+    S.draft = JSON.parse(JSON.stringify(S.saved));
+    const order = (m) => (m.status === 'live' ? 0 : m.status === 'scheduled' ? 1 : 2);
+    const list = S.matches.filter((m) => m.teamA && m.teamB).sort((a, b) => order(a) - order(b) || (a.matchNo || 0) - (b.matchNo || 0));
+    $('#msel').innerHTML = list.map((m) => `<option value="${esc(m.matchId)}">${m.status === 'live' ? '● LIVE · ' : m.status === 'completed' ? 'Final · ' : ''}#${m.matchNo} ${esc(m.teamA.name)} v ${esc(m.teamB.name)}</option>`).join('') || '<option value="">No matches with both teams yet</option>';
+    renderLook(); renderDurs();
+    const pick = S.matchId && list.find((m) => m.matchId === S.matchId) ? S.matchId : (list[0] && list[0].matchId);
+    if (pick) { $('#msel').value = pick; selectMatch(pick); } else renderEmpty();
+  }
+
+  /* ---------- the match: data, the two monitors, the on-air state ---------- */
+  async function selectMatch(mid) {
+    if (!mid) return;
+    S.matchId = mid;
+    S.match = S.matches.find((m) => m.matchId === mid) || null;
+    history.replaceState(null, '', '/volleyball-studio?match=' + encodeURIComponent(mid));
+    $('#panelLink').href = '/volleyball-panel?match=' + encodeURIComponent(mid); $('#panelLink').classList.remove('hide');
+    $('#sub').textContent = S.match ? `${S.match.teamA.name} v ${S.match.teamB.name} · ${S.tournament.name}` : '';
+    const key = S.tournament && S.tournament.visibility === 'private' && S.match ? '&key=' + encodeURIComponent(S.match.overlayKey) : '';
+    $('#pvScr').innerHTML = `<iframe id="pvFrame" title="Preview" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}&preview=1"></iframe>`;
+    // the real overlay — a monitor: the ON AIR states wait for a programme output (vMix / OBS), not for this
+    $('#pgScr').innerHTML = `<iframe id="pgFrame" title="On air" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}&monitor=1"></iframe>`;
+    $('#pvFrame').onload = () => { pushStyle(); preview(true); };
+    const base = `${location.origin}/volleyball-overlay?match=${mid}${key}`;
+    $('#links').innerHTML = [['Score bar + graphics', base], ['Corner bug + graphics', base + '&layout=compact'], ['Graphics only', base + '&layout=graphics']].map(([l, u], i) => `<div><div class="tiny" style="font-weight:700;margin:0 2px 4px">${esc(l)}</div><div class="linkrow"><input class="input" readonly value="${esc(u)}"><button class="btn sm" data-cp="${esc(u)}">Copy</button></div></div>`).join('');
+    $$('[data-cp]').forEach((b) => b.onclick = () => VB.copy(b.dataset.cp).then((ok) => toast(ok ? 'Copied' : b.dataset.cp)));
+    $$('#links input').forEach((inp) => inp.onfocus = () => inp.select());
+    renderTeams();
+    await connect();
+  }
+  async function connect() {
+    if (!S.socket) {
+      S.socket = await VB.connect();
+      S.socket.on('connect', join);
+      S.socket.on('vb:graphic', (d) => { if (d.matchId === S.matchId) setAir(d.graphic); });
+      // what the outputs (vMix, OBS, monitors) really show — ON AIR is read from these
+      S.socket.on('vb:outputs', (d) => { if (d.matchId === S.matchId) { S.outputs = d.outputs || []; renderStates(); } });
+      S.socket.on('vb:update', (d) => { if (d.matchId === S.matchId && d.summary) { S.summary = d.summary; if (d.entry) S.timeline.push(d.entry); else rejoinSoon(); renderGallery(); renderSel(); } });
+      S.socket.on('vb:match', (d) => { if (d.matchId === S.matchId && d.match) { S.match = Object.assign(S.match || {}, d.match); renderGallery(); } });
+      S.socket.on('vb:style', (d) => { if (d.tournamentId === S.tid) { const was = JSON.stringify(S.saved) === JSON.stringify(S.draft); S.saved = GX.normalizeStyle(d.style); if (was) { S.draft = JSON.parse(JSON.stringify(S.saved)); renderLook(); } markDirty(); } });
+      setInterval(() => { if (S.air && S.air.scene) renderAir(); }, 1000);
+    }
+    if (S.socket.connected) join();
+  }
+  let rejoinTimer = null;
+  function rejoinSoon() { clearTimeout(rejoinTimer); rejoinTimer = setTimeout(join, 300); }
+  async function join() {
+    if (!S.matchId) return;
+    const mid = S.matchId;
+    const r = await VB.ack(S.socket, 'vb:join', { matchId: mid, timeline: true }, 15000);
+    if (mid !== S.matchId) return;
+    if (!r.ok) return toast('Could not open the match live', 'err');
+    S.match = Object.assign(S.match || {}, r.match); S.summary = r.summary; S.timeline = r.timeline || [];
+    S.outputs = r.outputs || [];
+    S.air = null; setAir(r.graphic);
+    renderGallery(); renderSel();
+  }
+  function setAir(g) {
+    if (!g || typeof g.seq !== 'number') return;
+    if (S.air && g.seq < S.air.seq) return;
+    S.air = g; if (g.serverNow) S.airOffset = g.serverNow - Date.now();
+    renderAir(); renderGallery(); renderSel();
+  }
+  function airLabel(g) {
+    if (!g || !g.scene) return '';
+    let x = GX.SCENES[g.scene] ? GX.SCENES[g.scene].label : g.scene;
+    const d = g.data || {};
+    if (g.scene === 'lineup') x += d.team ? ' · ' + teamOf(d.team).name : ' · both teams';
+    if (g.scene === 'setSummary' && d.set) x += ' · set ' + d.set;
+    if (g.scene === 'playerStat' && d.playerId) { const p = playerOf(d.playerId); if (p) x += ' · #' + p.number + ' ' + p.name; }
+    return x;
+  }
+  // the on-air state — the server's word for what is taken, the outputs' word for what shows
+  function renderAir() {
+    const g = S.air || {}, on = !!g.scene, now = airNow();
+    const left = on && g.expiresAt != null ? Math.max(0, Math.ceil((g.expiresAt - now) / 1000)) : null;
+    const both = on && g.scene === 'lineup' && !(g.data && g.data.team), swapped = both && g.swapAt != null && now >= g.swapAt;
+    const line = GX.airSummary(g, S.saved, S.outputs, now, airLabel(g)), n = GX.readOutputs(S.outputs, g, now);
+    const monitors = (S.outputs || []).filter((o) => o.monitor).length;
+    const what = (o) => (o.state === 'GRAPHIC_VISIBLE' ? (GX.SCENES[o.scene] ? GX.SCENES[o.scene].label : 'a graphic') : o.state === 'OVERLAY_VISIBLE' ? GX.LIVE_NAMES[o.layout] || 'the live overlay' : o.state === 'IDLE' ? 'nothing' : o.state.toLowerCase().replace(/_/g, ' '));
+    const outs = n.o.length ? n.o.map((o) => `<span><i class="dot ${/_VISIBLE$/.test(o.state) ? 'ok' : o.state === 'IDLE' ? '' : 'wait'}"></i>Output${o.layoutParam ? ' (' + (o.layoutParam === 'compact' ? 'corner bug' : o.layoutParam === 'graphics' ? 'graphics only' : 'score bar') + ')' : ''} · ${esc(what(o))}</span>`).join('')
+      : `<span class="warn">The overlay links for vMix / OBS are below</span>`;
+    const html = `<div class="airbox k-${line.k}"><div class="row"><span class="dot ${line.k === 'on' ? 'bad' : line.k === 'live' ? 'ok' : line.k === 'idle' ? '' : 'wait'}"></span><b class="grow" id="airLine">${esc(line.t)}</b>${on ? `<span class="badge" data-badge>${left != null ? left + ' s' : 'Hold'}</span>` : ''}</div>
+      <div class="tiny muted" style="margin:6px 0 10px">${esc(line.d).replace(/\d+ s left/, (x) => `<span data-left>${x}</span>`)}</div>
+      <div class="row wrapr">${both && !swapped ? '<button class="btn sm" data-a="next">Next team</button>' : ''}${on && left != null ? '<button class="btn sm" data-a="hold">Hold</button>' : ''}${on ? '<button class="btn sm primary" data-a="stop">Dismiss · back to live</button>' : ''}${g.clean ? '<button class="btn sm primary" data-a="live">Restore live overlay</button>' : '<button class="btn sm" data-a="clean">Hide everything</button>'}</div>
+      <div class="outs tiny">${outs}${monitors ? `<span class="muted">+ ${monitors} monitor${monitors > 1 ? 's' : ''} (not counted)</span>` : ''}</div></div>`;
+    // rebuilt only when something besides the count-down changed: a button is never replaced under a press
+    const box = $('#airBox'), k = html.replace(/\d+ s left/g, '').replace(/data-badge>\d+ s</, 'data-badge><');
+    if (box.dataset.k === k) {
+      if (left != null) { $$('[data-left]', box).forEach((x) => { x.textContent = left + ' s left'; }); $$('[data-badge]', box).forEach((x) => { x.textContent = left + ' s'; }); }
+      return;
+    }
+    box.dataset.k = k; box.innerHTML = html;
+    $$('[data-a]', $('#airBox')).forEach((b) => b.onclick = () => {
+      const a = b.dataset.a;
+      if (a === 'next') airCmd({ action: 'next', id: g.id }, 'master');
+      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' }, 'master');
+      else if (a === 'stop') airCmd({ action: 'stop', id: g.id }, 'master');
+      else airCmd({ action: a }, 'master');
+    });
+  }
+  // what changes when an output reports — the states only (the open choices are left as they are)
+  function renderStates() { renderAir(); renderGallery(); renderSelState(); }
+  async function airCmd(cmd, key) {
+    if (key) { if (S.busy[key]) return { ok: false, busy: true }; S.busy[key] = true; renderSelState(); }
+    const r = await VB.ack(S.socket, 'vb:graphic', Object.assign({ matchId: S.matchId }, cmd));
+    if (key) delete S.busy[key];
+    if (r && r.graphic) setAir(r.graphic); else renderSelState();
+    if (!r || !r.ok) toast(r && r.stale ? 'That graphic is no longer on air' : r && r.error && !/^[a-z-]+$/.test(r.error) ? r.error : 'Could not change the graphic — check the connection', 'err');
+    return r || { ok: false };
+  }
+
+  /* ---------- the templates ---------- */
+  function playerOf(id) { for (const t of ['A', 'B']) { const p = ((S.match && S.match.squads && S.match.squads[t]) || []).find((x) => x.playerId === id); if (p) return Object.assign({ team: t }, p); } return null; }
+  function avail(k) {
+    const s = S.summary;
+    if (!s || !S.match) return { ok: false, hint: 'Choose a match' };
+    if (k === 'bar' || k === 'compact') {
+      const c = GX.liveCard(k, S.air, S.saved, S.outputs, airNow(), airLabel(S.air)), mode = GX.liveOf(S.air).mode === 'auto' ? 'Automatic' : 'Manual';
+      return { ok: true, hint: c.word + (c.chosen || c.k === 'on' ? ' · ' + mode : ''), live: c };
+    }
+    const lineupSets = () => { const sets = new Set(); S.timeline.forEach((e) => { if (e && !e.voided && e.type === 'LINEUP') sets.add(e.set); }); return sets; };
+    switch (k) {
+      case 'intro': return { ok: true, hint: 'Ready' };
+      case 'toss': return s.toss ? { ok: true, hint: 'Toss recorded' } : { ok: false, hint: 'No toss recorded yet' };
+      case 'lineup': return lineupSets().size ? { ok: true, hint: 'Line-ups saved' } : { ok: false, hint: 'No line-up saved yet' };
+      case 'setStart': return s.status === 'completed' || s.status === 'abandoned' ? { ok: false, hint: 'Match over' } : { ok: true, hint: 'Set ' + (s.status === 'in_set' ? s.set : (s.nextSet || 1)) };
+      case 'rotation': return s.status === 'in_set' ? { ok: true, hint: 'Set in play' } : { ok: false, hint: 'Shows during a set' };
+      case 'timeout': return s.status === 'in_set' && GX.runningTimeout(S.timeline, S.match.rules, airNow()) ? { ok: true, hint: 'Time-out running' } : { ok: false, hint: 'Shows during a time-out' };
+      case 'playerStat': return { ok: true, hint: 'Choose a player' };
+      case 'setSummary': return s.sets.some((x) => x.status === 'completed') ? { ok: true, hint: 'A set has finished' } : { ok: false, hint: 'After the first set' };
+      case 'final': case 'scorecard': return s.sets.length ? { ok: true, hint: s.status === 'completed' ? 'Final' : 'So far' } : { ok: false, hint: 'Once play starts' };
+      case 'standings': return S.tournament && S.tournament.format && S.tournament.format.type === 'knockout' ? { ok: false, hint: 'A knockout has no table' } : { ok: true, hint: 'From the results' };
+      default: return { ok: true, hint: '' };
+    }
+  }
+  function thumb(k) {
+    const logo = (side) => { const t = teamOf(side); return t && t.logo ? `<img src="${esc(t.logo)}" alt="" style="${side === 'A' ? 'left:19%' : 'right:19%'};top:36%">` : ''; };
+    switch (k) {
+      case 'bar': return '<i class="sb"></i>';
+      case 'compact': return '<i class="cb"></i>';
+      case 'intro': return `<i class="fa"></i><i class="fb"></i><i class="vs"></i>${logo('A')}${logo('B')}`;
+      case 'toss': return '<i class="pn"></i><i class="coin"></i><i class="ln" style="top:66%"></i><i class="ln" style="top:76%;left:38%;right:38%;background:#ffd60a"></i>';
+      case 'lineup': return '<i class="ln" style="top:14%;left:8%;right:52%;height:8px"></i><span class="g6"><i></i><i></i><i></i><i></i><i></i><i></i></span>';
+      case 'setStart': return '<i class="pn"></i><b class="bigt">SET 3</b>';
+      case 'rotation': return '<i class="court"></i>' + [[22, 32], [22, 50], [22, 68], [38, 32], [38, 50], [38, 68]].map(([x, y]) => `<i class="dt" style="left:${x}%;top:${y}%;background:var(--ta)"></i><i class="dt" style="left:${100 - x}%;top:${y}%;background:var(--tb)"></i>`).join('');
+      case 'timeout': return '<i class="pn"></i><i class="ring"></i><i class="ln" style="top:34%;left:28%;right:50%;height:10px;background:var(--tb)"></i><i class="row6" style="top:62%"></i><i class="row6" style="top:72%"></i>';
+      case 'playerStat': return '<i class="pn"></i><i style="left:22%;top:16%;bottom:14%;width:18%;background:var(--ta)"></i><i class="ln" style="top:34%;left:46%;right:30%;height:10px"></i>';
+      case 'setSummary': case 'final': return '<i class="pn"></i><b class="bigt" style="top:28%">25–23</b><i class="row6" style="top:66%;left:30%;right:30%;background:#ffd60a"></i>';
+      case 'scorecard': return '<i class="pn"></i>' + [34, 46, 58, 70].map((y) => `<i class="row6" style="top:${y}%;left:30%;right:52%;background:var(--ta)"></i><i class="row6" style="top:${y}%;left:52%;right:30%;background:var(--tb)"></i>`).join('');
+      case 'standings': return '<i class="pn"></i>' + [30, 42, 54, 66, 78].map((y, i) => `<i class="row6" style="top:${y}%;${i < 2 ? 'box-shadow:inset 4px 0 0 #ffd60a' : ''}"></i>`).join('');
+      default: return '';
+    }
+  }
+  function renderGallery() {
+    if (!$('#galleryHost')) return;
+    const g = S.air || {};
+    const vars = `--ta:${color('A')};--tb:${color('B')}`;
+    $('#galleryHost').innerHTML = Object.keys(GROUPS).map((grp) => `<div class="section-title">${esc(GROUPS[grp])}</div><div class="gallery">${ITEMS.filter((it) => it.group === grp).map((it) => {
+      const a = avail(it.k), c = a.live || GX.sceneCard(it.k, g, S.outputs, airNow());
+      const cls = !c ? (a.ok ? 'ok' : 'na') : c.k === 'on' || c.k === 'failed' ? 'live' : c.k === 'off' ? 'na' : 'move';
+      return `<button class="tpl ${S.sel === it.k ? 'sel' : ''} ${c && c.k === 'on' ? 'onair' : ''}" data-k="${it.k}"><div class="th" style="${vars}">${thumb(it.k)}</div><div class="tb"><b>${esc(it.label)}</b><span class="st ${cls}">${esc(a.live ? a.hint : c ? c.word : a.hint)}</span><small>${esc(DESC[it.k])}</small></div></button>`;
+    }).join('')}</div>`).join('');
+    $$('[data-k]', $('#galleryHost')).forEach((b) => b.onclick = () => { S.sel = b.dataset.k; S.opt = {}; renderGallery(); renderSel(); preview(true); });
+  }
+  // the selected template: its choices, preview, take / dismiss
+  function renderSel() {
+    if (!$('#selBox')) return;
+    const k = S.sel, it = ITEMS.find((x) => x.k === k);
+    $('#selName').textContent = it.label;
+    $('#pvNext').classList.toggle('hide', !(k === 'lineup' && !S.opt.team));
+    const s = S.summary;
+    let opts = '';
+    if (k === 'lineup') {
+      const sets = []; S.timeline.forEach((e) => { if (e && !e.voided && e.type === 'LINEUP' && sets.indexOf(e.set) < 0) sets.push(e.set); });
+      sets.sort((x, y) => x - y);
+      opts = `<div class="field"><span class="small muted">Team</span><div class="seg" id="oTeam">${[['', 'Both, in turn'], ['A', teamOf('A').shortName || 'A'], ['B', teamOf('B').shortName || 'B']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${(S.opt.team || '') === v}">${esc(l)}</button>`).join('')}</div></div>
+        ${sets.length > 1 ? `<label class="field"><span class="small muted">Set</span><select class="input" id="oSet"><option value="">The current / next set</option>${sets.map((n) => `<option value="${n}" ${Number(S.opt.set) === n ? 'selected' : ''}>Set ${n}</option>`).join('')}</select></label>` : ''}`;
+    } else if (k === 'setSummary' && s) {
+      const done = s.sets.filter((x) => x.status === 'completed');
+      if (done.length > 1) opts = `<label class="field"><span class="small muted">Set</span><select class="input" id="oSet"><option value="">The last finished set</option>${done.map((x) => `<option value="${x.set}" ${Number(S.opt.set) === x.set ? 'selected' : ''}>Set ${x.set} · ${x.A}–${x.B}</option>`).join('')}</select></label>`;
+    } else if (k === 'toss' && s && s.decidingToss && s.toss) {
+      opts = `<div class="field"><span class="small muted">Which toss</span><div class="seg" id="oToss"><button data-v="1" aria-pressed="${Number(S.opt.set || 1) === 1}">Set 1</button><button data-v="${s.bestOf}" aria-pressed="${Number(S.opt.set) === s.bestOf}">Deciding set</button></div></div>`;
+    } else if (k === 'playerStat') {
+      const pl = ['A', 'B'].map((t) => ((S.match && S.match.squads && S.match.squads[t]) || []).map((p) => `<option value="${esc(p.playerId)}" ${S.opt.playerId === p.playerId ? 'selected' : ''}>${esc(teamOf(t).shortName || t)} · #${esc(p.number)} ${esc(p.name)}</option>`).join('')).join('');
+      opts = `<label class="field"><span class="small muted">Player</span><select class="input" id="oPlayer"><option value="">Choose…</option>${pl}</select></label>`;
+    } else if (k === 'standings' && S.tournament && S.tournament.format && (S.tournament.format.groups || []).length > 1) {
+      opts = `<label class="field"><span class="small muted">Group</span><select class="input" id="oGroup"><option value="">This match’s group</option>${S.tournament.format.groups.map((x) => `<option value="${esc(x.name)}" ${S.opt.group === x.name ? 'selected' : ''}>Group ${esc(x.name)}</option>`).join('')}</select></label>`;
+    }
+    const scene = GX.SCENES[k];
+    const def = scene ? GX.defaultDuration(k, S.saved) : null;
+    $('#selBox').innerHTML = `<div class="opts"><div><b>${esc(it.label)}</b> <span class="small" id="selHint"></span><p class="tiny muted" style="margin-top:4px">${esc(DESC[k])}</p></div>${opts}
+      ${scene ? `<div class="field"><span class="small muted">Time on screen</span><div class="seg" id="oDur">${[['default', def == null ? 'Default (hold)' : `Default (${def} s)`], ['hold', 'Hold'], ['custom', 'Seconds…']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${(typeof S.dur === 'number' ? 'custom' : S.dur) === v}">${esc(l)}</button>`).join('')}</div>
+        <input class="input ${typeof S.dur === 'number' ? '' : 'hide'}" id="oSecs" type="number" min="1" max="${GX.MAX_SEC}" value="${typeof S.dur === 'number' ? S.dur : 15}" style="margin-top:6px"></div>`
+        : `<div class="field"><span class="small muted">The live overlay runs</span><div class="seg" id="oMode"><button data-m="auto">Automatic</button><button data-m="manual">Manual</button></div></div>`}
+      <div class="row wrapr" id="selAct"></div>
+      <p class="tiny muted" id="selNote"></p></div>`;
+    const re = () => { renderSel(); preview(true); };
+    $$('#oTeam button').forEach((b) => b.onclick = () => { S.opt.team = b.dataset.v; re(); });
+    $$('#oToss button').forEach((b) => b.onclick = () => { S.opt.set = Number(b.dataset.v); re(); });
+    if ($('#oSet')) $('#oSet').onchange = (e) => { S.opt.set = e.target.value ? Number(e.target.value) : undefined; re(); };
+    if ($('#oPlayer')) $('#oPlayer').onchange = (e) => { S.opt.playerId = e.target.value; re(); };
+    if ($('#oGroup')) $('#oGroup').onchange = (e) => { S.opt.group = e.target.value; re(); };
+    $$('#oDur button').forEach((b) => b.onclick = () => { S.dur = b.dataset.v === 'custom' ? Number($('#oSecs').value) || 15 : b.dataset.v; renderSel(); });
+    if ($('#oSecs')) $('#oSecs').oninput = (e) => { const n = Math.round(Number(e.target.value)); if (n >= 1 && n <= GX.MAX_SEC) S.dur = n; };
+    $$('#oMode button').forEach((b) => b.onclick = () => { if (b.getAttribute('aria-pressed') !== 'true') airCmd({ action: 'live-mode', mode: b.dataset.m }, 'mode'); });
+    renderSelState();
+  }
+  // the selected template's state and its take / off-air buttons — from the
+  // server's state and the outputs, redrawn on every change of either
+  function renderSelState() {
+    if (!$('#selAct')) return;
+    const k = S.sel, a = avail(k), g = S.air || {}, scene = GX.SCENES[k];
+    let hint, act, note;
+    if (scene) {
+      const c = GX.sceneCard(k, g, S.outputs, airNow()), busy = S.busy['g:' + k], isOn = g.scene === k;
+      hint = busy ? 'Taking to air…' : c ? c.word + (c.why ? ' — ' + c.why : '') : a.hint;
+      act = `<button class="btn primary" id="take" ${S.matchId && !busy ? '' : 'disabled'} style="background:#dc2626">● Take to air</button>${isOn ? `<button class="btn" id="dismiss" ${S.busy.master ? 'disabled' : ''}>Take off air</button>` : ''}`;
+      note = GX.liveLayout(g, S.saved, null) ? 'The live overlay steps off while it is on air and comes back with the latest score when it ends.' : 'The live overlay is off air (Manual), so nothing comes back when it ends.';
+    } else {
+      const lv = GX.liveOf(g), busy = S.busy['live:' + k] || S.busy.mode;
+      hint = busy ? 'Working…' : a.hint;
+      $$('#oMode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === lv.mode)));
+      act = a.live && a.live.chosen && !g.clean ? `<button class="btn" id="lvOff" ${busy ? 'disabled' : ''}>Take off air</button>`
+        : `<button class="btn primary" id="lvOn" ${busy || !S.matchId ? 'disabled' : ''} style="background:#dc2626">● Take on air</button>`;
+      note = (lv.mode === 'auto' ? 'Automatic: the tournament’s layout shows by itself and comes back after every graphic.' : 'Manual: only what is taken on air shows — a point, a timer or the end of a graphic never brings it back.')
+        + ' The score bar and the corner bug are alternatives: taking one on air replaces the other.';
+    }
+    $('#selHint').className = 'small' + (a.ok ? '' : ' muted');
+    $('#selHint').textContent = '· ' + hint;
+    $('#selAct').innerHTML = act;
+    $('#selNote').textContent = note;
+    if ($('#take')) $('#take').onclick = take;
+    if ($('#dismiss')) $('#dismiss').onclick = () => airCmd({ action: 'stop', id: g.id }, 'master');
+    if ($('#lvOn')) $('#lvOn').onclick = () => airCmd({ action: 'live-on', layout: k }, 'live:' + k);
+    if ($('#lvOff')) $('#lvOff').onclick = () => airCmd({ action: 'live-off', layout: k }, 'live:' + k);
+  }
+  function dataOf() {
+    const d = {};
+    if (S.opt.team) d.team = S.opt.team;
+    if (S.opt.set) d.set = S.opt.set;
+    if (S.opt.playerId) d.playerId = S.opt.playerId;
+    if (S.opt.group) d.group = S.opt.group;
+    return d;
+  }
+  async function take() {
+    if (S.sel === 'playerStat' && !S.opt.playerId) return toast('Choose a player first', 'err');
+    const cmd = { action: 'take', scene: S.sel, data: dataOf(), reqId: VB.uid() };
+    if (S.dur !== 'default') cmd.durationSec = S.dur;
+    const r = await airCmd(cmd, 'g:' + S.sel);
+    if (r.ok) toast(r.same ? 'Already on air' : 'Taken to air');
+  }
+
+  /* ---------- the preview: a private overlay, the look as edited ---------- */
+  function toPreview(msg) {
+    const f = $('#pvFrame');
+    if (f && f.contentWindow) f.contentWindow.postMessage(Object.assign({ type: 'vb-preview' }, msg), location.origin);
+  }
+  function previewStyle() { const st = JSON.parse(JSON.stringify(S.draft || S.saved)); if (S.sel === 'compact') st.layout = 'compact'; else if (S.sel === 'bar') st.layout = 'bar'; return st; }
+  function pushStyle() { toPreview({ style: previewStyle(), cmd: 'restyle' }); }
+  function preview() {
+    if (S.sel === 'bar' || S.sel === 'compact') return toPreview({ style: previewStyle(), cmd: 'live' });
+    if (S.sel === 'playerStat' && !S.opt.playerId) { const p = ((S.match && S.match.squads && S.match.squads.A) || [])[0]; if (p) S.opt.playerId = p.playerId; }
+    toPreview({ style: previewStyle(), cmd: 'show', scene: S.sel, data: dataOf() });
+  }
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.type !== 'vb-preview-state') return;
+    const f = $('#pvFrame');
+    if (!f || e.source !== f.contentWindow) return;
+    S.pv = e.data;
+    const n = $('#pvNote');
+    if (e.data.failed) { n.textContent = 'Nothing true to show yet: ' + e.data.failed; n.classList.remove('hide'); }
+    else n.classList.add('hide');
+  });
+
+  /* ---------- the look ---------- */
+  function renderLook() {
+    const d = S.draft || S.saved;
+    const seg = (id, val, opts) => `<div class="seg" id="${id}">${opts.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(val) === String(v)}">${esc(l)}</button>`).join('')}</div>`;
+    $('#look').innerHTML = `
+      <label class="field"><span>Accent</span><input type="color" id="lAcc" value="${esc(d.accent)}"></label>
+      <label class="field"><span>Base</span><input type="color" id="lBase" value="${esc(d.base)}"></label>
+      <div class="field full"><span class="small muted">Behind a graphic — ${esc(GX.BACKDROPS[d.backdrop])}</span>${seg('lBd', d.backdrop, [['scrim', 'Darken the picture'], ['solid', 'Opaque design'], ['clear', 'None']])}</div>
+      <label class="field full"><span>How dark the picture goes behind a graphic · ${Math.round(d.dim * 100)}%</span><input type="range" id="lDim" min="30" max="95" value="${Math.round(d.dim * 100)}" ${d.backdrop === 'scrim' ? '' : 'disabled'}></label>
+      <label class="field"><span>Typeface</span><select class="input" id="lFont">${Object.keys(GX.FONTS).map((k) => `<option value="${k}" ${d.font === k ? 'selected' : ''}>${esc(GX.FONTS[k].label)}</option>`).join('')}</select></label>
+      <label class="field"><span>Motion</span><select class="input" id="lSpeed">${Object.keys(GX.SPEEDS).map((k) => `<option value="${k}" ${Number(k) === d.speed ? 'selected' : ''}>${esc(GX.SPEEDS[k])}</option>`).join('')}</select></label>
+      <div class="field"><span class="small muted">Crest plates</span>${seg('lPlates', d.plates, [['auto', 'Auto'], ['light', 'White'], ['dark', 'Dark']])}</div>
+      <div class="field"><span class="small muted">Team names</span>${seg('lNames', d.names, [['auto', 'Fit'], ['full', 'Full'], ['short', 'Short']])}</div>
+      <div class="field"><span class="small muted">Score overlay</span>${seg('lLayout', d.layout, [['bar', 'Bottom bar'], ['compact', 'Corner bug']])}</div>
+      <div class="field"><span class="small muted">On the bar</span><div class="row wrapr"><label class="row small"><input type="checkbox" id="lTags" ${d.pointTags ? 'checked' : ''}> Point tags</label><label class="row small"><input type="checkbox" id="lHist" ${d.setHistory ? 'checked' : ''}> Set history</label></div></div>`;
+    const ch = (fn) => () => { fn(); renderLook(); markDirty(); pushStyle(); };
+    $('#lAcc').oninput = (e) => { S.draft.accent = e.target.value; markDirty(); pushStyle(); };
+    $('#lBase').oninput = (e) => { S.draft.base = e.target.value; markDirty(); pushStyle(); };
+    $('#lDim').oninput = (e) => { S.draft.dim = Number(e.target.value) / 100; markDirty(); pushStyle(); e.target.previousElementSibling.textContent = `How dark the picture goes behind a graphic · ${e.target.value}%`; };
+    $('#lFont').onchange = ch(() => { S.draft.font = $('#lFont').value; });
+    $('#lSpeed').onchange = ch(() => { S.draft.speed = Number($('#lSpeed').value); });
+    $('#lTags').onchange = ch(() => { S.draft.pointTags = $('#lTags').checked; });
+    $('#lHist').onchange = ch(() => { S.draft.setHistory = $('#lHist').checked; });
+    [['lBd', 'backdrop'], ['lPlates', 'plates'], ['lNames', 'names'], ['lLayout', 'layout']].forEach(([id, key]) => $$('#' + id + ' button').forEach((b) => b.onclick = ch(() => { S.draft[key] = b.dataset.v; })));
+    markDirty();
+  }
+  function renderDurs() {
+    const d = S.draft || S.saved;
+    $('#durs').innerHTML = GX.ORDER.map((k) => { const has = Object.prototype.hasOwnProperty.call(d.durations, k); const v = has ? d.durations[k] : GX.SCENES[k].def;
+      return `<label title="${esc(GX.SCENES[k].label)}"><span class="ellipsis">${esc(GX.SCENES[k].label)}</span><input data-d="${k}" inputmode="numeric" placeholder="${GX.SCENES[k].def == null ? 'hold' : GX.SCENES[k].def}" value="${has ? (v == null ? 'hold' : v) : ''}"></label>`; }).join('')
+      + '<p class="tiny muted" style="grid-column:1/-1">Seconds, or “hold” to stay until dismissed. The time-out graphic ends with the time-out unless a time is set.</p>';
+    $$('[data-d]', $('#durs')).forEach((inp) => inp.onchange = () => {
+      const k = inp.dataset.d, v = inp.value.trim().toLowerCase();
+      if (!v) delete S.draft.durations[k];
+      else { const p = GX.parseDuration(v === 'hold' ? 'hold' : v); if (p === undefined) { toast(GX.BAD_TIME, 'err'); inp.value = ''; delete S.draft.durations[k]; } else S.draft.durations[k] = p; }
+      markDirty(); renderSel();
+    });
+  }
+  function markDirty() { if ($('#dirty')) $('#dirty').classList.toggle('hide', JSON.stringify(GX.normalizeStyle(S.draft)) === JSON.stringify(GX.normalizeStyle(S.saved))); }
+  async function saveLook() {
+    if (!S.tid) return;
+    const r = await api('PUT', `/api/volleyball/tournaments/${encodeURIComponent(S.tid)}/broadcast`, { style: GX.normalizeStyle(S.draft) });
+    if (!r.ok) return toast((r.json && r.json.error) || 'Could not save the look', 'err');
+    S.saved = GX.normalizeStyle(r.json.style); S.draft = JSON.parse(JSON.stringify(S.saved));
+    renderLook(); renderDurs(); renderSel(); markDirty();
+    toast('Saved — every overlay of the tournament now uses it');
+  }
+
+  /* ---------- the teams as the graphics show them ---------- */
+  function renderTeams() {
+    if (!S.match) return;
+    $('#teams').innerHTML = ['A', 'B'].map((side) => {
+      const t = S.teams.find((x) => x.teamId === S.match['team' + side].teamId) || S.match['team' + side];
+      const c = t.colors || {};
+      const photos = (t.players || []).filter((p) => p.photo).length, n = (t.players || []).length;
+      return `<div class="card" data-team="${esc(t.teamId)}"><div class="teamed"><label class="lp" title="Change the crest" style="${t.logo ? `background-image:url('${esc(t.logo)}')` : ''}">${t.logo ? '' : esc(t.shortName || '?')}<input type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <div class="stack" style="gap:8px"><div class="grid2"><label class="field"><span class="small muted">Name</span><input class="input" data-f="name" maxlength="60" value="${esc(t.name)}"></label><label class="field"><span class="small muted">Short (≤4)</span><input class="input" data-f="shortName" maxlength="4" value="${esc(t.shortName || '')}" style="text-transform:uppercase"></label></div>
+          <div class="row wrapr"><label class="row small">Colour <input type="color" data-c="primary" value="${esc(c.primary || '#1f3a8a')}"></label><label class="row small">Text <input type="color" data-c="text" value="${esc(c.text || '#ffffff')}"></label><span class="grow"></span><button class="btn sm primary" data-save>Save team</button></div>
+          <div class="tiny muted">${photos} of ${n} players have a portrait for the starting six · <a href="/volleyball#/teams">add portraits in the team editor</a></div></div></div></div>`;
+    }).join('');
+    $$('#teams [data-team]').forEach((card) => {
+      let logo;
+      $('.lp input', card).onchange = async (e) => { try { logo = await VB.readLogo(e.target.files[0], 512); const lp = $('.lp', card); lp.style.backgroundImage = `url('${logo}')`; lp.firstChild && lp.firstChild.nodeType === 3 && (lp.firstChild.textContent = ''); } catch (err) { toast(err.message, 'err'); } };
+      $('[data-save]', card).onclick = async () => {
+        const tid = card.dataset.team, t = S.teams.find((x) => x.teamId === tid) || {};
+        const body = { name: $('[data-f="name"]', card).value.trim(), shortName: $('[data-f="shortName"]', card).value.trim().toUpperCase(), colors: { primary: $('[data-c="primary"]', card).value, secondary: (t.colors && t.colors.secondary) || '#0a1136', text: $('[data-c="text"]', card).value } };
+        if (logo) body.logo = logo;
+        const r = await api('PUT', `/api/volleyball/teams/${encodeURIComponent(tid)}`, body);
+        if (!r.ok) return toast((r.json && r.json.error) || 'Could not save the team', 'err');
+        toast('Team saved — the overlays show it now');
+        const i = S.teams.findIndex((x) => x.teamId === tid); if (i >= 0) S.teams[i] = r.json.team;
+        logo = null;
+      };
+    });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

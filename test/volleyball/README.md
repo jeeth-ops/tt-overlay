@@ -57,7 +57,7 @@ NODE_PATH=$(npm root -g) node test/volleyball/overlay-lifecycle.test.js # Chromi
                                               # overlay by hand: off air plays its exit and stays off through points / timers /
                                               # graphics / a reload, corner bug ⇄ score bar never both and never a cut, hide
                                               # everything mid-transition, Automatic ⇄ Manual without a flash
-NODE_PATH=$(npm root -g) node test/volleyball/studio.test.js         # Chromium: the graphics studio (/volleyball-templates) —
+NODE_PATH=$(npm root -g) node test/volleyball/studio.test.js         # Chromium: the graphics studio (/volleyball-studio) —
                                               # preview is not on air, take / dismiss, the look saved and followed by the output,
                                               # team colours; the panel's on-air control centre: ON AIR only once a real output
                                               # has it, 10 s / Hold, unavailable cards say why, the player card, the live overlay

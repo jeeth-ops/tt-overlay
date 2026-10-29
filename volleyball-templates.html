@@ -1,581 +1,868 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Volleyball Graphics Studio · AllSportsLive</title>
-<link rel="icon" href="/favicon-32x32.png">
-<link rel="stylesheet" href="/volleyball-ui.css">
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-<!--
-  🏐 The volleyball broadcast graphics — every template, previewed with the
-  chosen match's real data, taken to air and dismissed from here.
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scorvix - Select Overlay for Volleyball</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* ---- Token system ---- */
+            --bg-void: #04060c;
+            --bg-dark: #070b16;
+            --bg-card: rgba(19, 25, 44, 0.55);
+            --bg-card-hover: rgba(23, 30, 54, 0.72);
+            --bg-glass: rgba(14, 19, 34, 0.55);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hi: rgba(255, 255, 255, 0.16);
+            --text-main: #f8fafc;
+            --text-muted: #93a0b8;
+            --text-faint: #556078;
 
-  PREVIEW is a private copy of the overlay (?preview=1): it shows what this
-  page asks, with the look being edited, and is never on air. ON AIR is the
-  real overlay, exactly what vMix / OBS shows. Taking a graphic asks the
-  server (the same command the scoring panel sends); the look is saved on
-  the tournament and every overlay of it follows at once.
--->
-<style>
-  body { background: radial-gradient(70vmax 50vmax at 0% 0%, rgba(30, 64, 175, .22), transparent 60%), radial-gradient(70vmax 50vmax at 100% 100%, rgba(225, 29, 72, .14), transparent 60%), #05060c; }
-  .topbar .title { font-weight: 800; font-size: 16px; letter-spacing: -.01em; }
-  .topbar .title small { display: block; font-weight: 500; font-size: 12px; color: var(--mute); }
-  .studio { max-width: 1680px; margin: 0 auto; padding: 14px clamp(10px, 1.6vw, 24px) 60px; }
-  .pickrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 10px; align-items: end; margin-bottom: 14px; }
-  @media (max-width: 860px) { .pickrow { grid-template-columns: minmax(0, 1fr); } }
-  .main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 440px); grid-template-areas: "top side" "bottom side"; gap: 16px; align-items: start; }
-  .ltop { grid-area: top; min-width: 0; } .lbot { grid-area: bottom; min-width: 0; } .main > .side { grid-area: side; }
-  /* narrow: the on-air state and the controls right under the preview */
-  @media (max-width: 1100px) { .main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "side" "bottom"; } }
-  .mon { position: relative; border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--line2), 0 30px 70px -30px rgba(0, 0, 0, .9); }
-  .mon .scr { position: relative; width: 100%; padding-top: 56.25%; background: #111 center / cover no-repeat; }
-  .mon .scr.court { background-image: linear-gradient(180deg, #27324a 0%, #4b5b78 33%, #b98450 34%, #d39b5f 60%, #9b6a38 100%); }
-  .mon .scr.black { background: #000; }
-  .mon .scr.check { background: repeating-conic-gradient(#2a2a2e 0% 25%, #1c1c1f 0% 50%) 50% / 28px 28px; }
-  /* the overlay page has the normal colour scheme: the frame must too, or Chromium paints it an opaque white */
-  .mon iframe { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
-  /* top right: the corner bug lives top left */
-  .mon .tag { position: absolute; right: 12px; top: 12px; z-index: 2; padding: 4px 10px; border-radius: 8px; font: 800 11px/1.2 system-ui, sans-serif; letter-spacing: .12em; color: #fff; background: rgba(0, 0, 0, .55); }
-  .mon .tag.pv { background: #15803d; }
-  .mon .tag.pg { background: #dc2626; }
-  .mon .note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; max-width: 80%; text-align: center; padding: 12px 18px; border-radius: 14px; background: rgba(0, 0, 0, .7); font-weight: 600; }
-  .monbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 2px 0; }
-  .side { display: grid; gap: 14px; position: sticky; top: 70px; }
-  @media (max-width: 1100px) { .side { position: static; } }
-  .airbox { padding: 14px; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line); }
-  .airbox.k-on { box-shadow: 0 0 0 2px #dc2626; background: color-mix(in srgb, #dc2626 10%, var(--card)); }
-  .airbox.k-live { box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 55%, transparent); }
-  .airbox.k-move { box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 60%, transparent); }
-  .airbox.k-warn, .airbox.k-bad { box-shadow: 0 0 0 2px var(--orange); background: color-mix(in srgb, var(--orange) 10%, var(--card)); }
-  .airbox.k-bad { box-shadow: 0 0 0 2px #dc2626; }
-  .airbox .outs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: var(--mute); }
-  .airbox .outs span { display: inline-flex; align-items: center; gap: 6px; } .airbox .outs .warn { color: var(--orange); font-weight: 700; }
-  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
-  .tpl { text-align: left; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line); overflow: hidden; transition: transform .25s var(--bounce), box-shadow .2s; display: flex; flex-direction: column; min-width: 0; }
-  .tpl:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--line2), 0 18px 40px -20px rgba(0, 0, 0, .8); }
-  .tpl.sel { box-shadow: 0 0 0 2px var(--blue), 0 18px 40px -20px rgba(10, 132, 255, .5); }
-  .tpl.onair { box-shadow: 0 0 0 2px #dc2626; }
-  .tpl .th { position: relative; height: 128px; background: linear-gradient(160deg, #1a2250, #070b24); overflow: hidden; }
-  .tpl .tb { padding: 10px 12px 12px; display: grid; gap: 3px; }
-  .tpl .tb b { font-size: 14.5px; }
-  .tpl .tb small { color: var(--mute); font-size: 12px; line-height: 1.35; }
-  .tpl .tb .st { font-size: 11px; font-weight: 700; letter-spacing: .04em; }
-  .tpl .tb .st.ok { color: var(--green); } .tpl .tb .st.na { color: var(--mute); } .tpl .tb .st.live { color: #ff453a; } .tpl .tb .st.move { color: var(--orange); }
-  /* the thumbnails: schematic, drawn in the match's own colours — never data */
-  .th i, .th b, .th span { position: absolute; display: block; }
-  .th .sb { left: 18%; right: 18%; bottom: 14px; height: 18px; background: #0a1136; box-shadow: 0 0 0 1px rgba(255, 255, 255, .1); }
-  .th .sb::before, .th .sb::after { content: ''; position: absolute; top: 0; bottom: 0; width: 34%; }
-  .th .sb::before { left: 0; background: var(--ta); } .th .sb::after { right: 0; background: var(--tb); }
-  .th .cb { left: 12px; top: 12px; width: 44%; height: 12px; background: var(--ta); box-shadow: 0 15px 0 var(--tb); }
-  .th .fa { left: 8%; top: 22%; width: 40%; height: 56%; background: var(--ta); clip-path: polygon(0 0, 100% 0, 88% 100%, 0 100%); }
-  .th .fb { right: 8%; top: 22%; width: 40%; height: 56%; background: var(--tb); clip-path: polygon(12% 0, 100% 0, 100% 100%, 0 100%); }
-  .th .vs { left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: #0a1136; box-shadow: 0 0 0 3px #ffd60a; }
-  .th .pn { left: 22%; right: 22%; top: 16%; bottom: 14%; background: rgba(255, 255, 255, .07); box-shadow: inset 0 3px 0 #ffd60a; }
-  .th .coin { left: 50%; top: 30%; width: 34px; height: 34px; margin-left: -17px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff7d1, #ffd60a 50%, #a37a00); }
-  .th .ln { left: 30%; right: 30%; height: 6px; background: rgba(255, 255, 255, .5); }
-  .th .g6 { left: 8%; right: 8%; top: 28%; bottom: 14%; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 6px; }
-  .th .g6 i { position: static; background: linear-gradient(90deg, var(--ta) 0 34%, rgba(255, 255, 255, .09) 34%); }
-  .th .court { left: 14%; right: 14%; top: 22%; bottom: 16%; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .6); }
-  .th .court::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; margin-left: -1px; background: #fff; }
-  .th .dt { width: 10px; height: 10px; border-radius: 50%; }
-  .th .row6 { left: 18%; right: 18%; height: 7px; background: rgba(255, 255, 255, .12); }
-  .th .bigt { left: 0; right: 0; top: 34%; text-align: center; font: 800 30px/1 system-ui, sans-serif; color: #fff; letter-spacing: .04em; }
-  .th .ring { right: 26%; top: 24%; width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 4px #ffd60a; }
-  .th img { position: absolute; width: 34px; height: 34px; object-fit: contain; background: #fff; border-radius: 7px; padding: 3px; }
-  .opts { display: grid; gap: 10px; }
-  .opts .seg { width: 100%; }
-  .dirty { color: var(--orange); font-weight: 700; font-size: 12px; }
-  .look { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 12px; }
-  .look .full { grid-column: 1 / -1; }
-  .look label.field > span { font-size: 12px; color: var(--mute); font-weight: 600; }
-  .look input[type=color] { width: 100%; height: 38px; border: 0; border-radius: 10px; background: var(--fill); padding: 3px; }
-  .durs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-  .durs label { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 6px; align-items: center; font-size: 12.5px; padding: 6px 8px; border-radius: 10px; background: var(--fill); }
-  .durs input { height: 30px; padding: 0 6px; border-radius: 8px; border: 0; background: var(--card); text-align: center; }
-  .teamed { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: start; }
-  .teamed .lp { width: 64px; height: 64px; border-radius: 14px; background: #fff center / 80% no-repeat; display: grid; place-items: center; font-weight: 800; color: #0a1136; cursor: pointer; box-shadow: 0 0 0 1px var(--line2); }
-  .linkrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-  .linkrow input { min-width: 0; font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .gate { max-width: 560px; margin: 40px auto; text-align: center; }
-  .seg button { white-space: nowrap; }
-  @media (max-width: 680px) {
-    .topbar { flex-wrap: wrap; }
-    .topbar .title small, #who .muted { display: none; }
-    .look { grid-template-columns: minmax(0, 1fr); }
-    .seg { display: flex; flex-wrap: wrap; }
-    .seg button { flex: 1 1 auto; }
-  }
-  .gate .ball { font-size: 42px; }
-</style>
+            --accent: #3b82f6;       /* Live score bar */
+            --accent-hover: #2563eb;
+            --accent-soft: rgba(59, 130, 246, 0.35);
+            --accent-amber: #f59e0b; /* Corner bug */
+            --accent-amber-soft: rgba(245, 158, 11, 0.35);
+            --accent-red: #ef4444;   /* Match intro */
+            --accent-red-soft: rgba(239, 68, 68, 0.35);
+            --accent-cyan: #22d3ee;  /* Starting six */
+            --accent-cyan-soft: rgba(34, 211, 238, 0.35);
+            --accent-pink: #ec4899;  /* Results */
+            --accent-pink-soft: rgba(236, 72, 153, 0.35);
+            --accent-green: #22c55e; /* Points table */
+            --accent-green-soft: rgba(34, 197, 94, 0.35);
+
+            --cursor-color: var(--accent);
+            --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { color-scheme: dark; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-void);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 40px 90px;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Hide native cursor only where our custom one takes over */
+        @media (pointer: fine) {
+            body.cursor-ready, body.cursor-ready * { cursor: none !important; }
+        }
+
+        ::selection { background: var(--accent-soft); color: #fff; }
+
+        /* ================= BACKDROP ================= */
+        .bg-animations {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: -999;
+            overflow: hidden;
+            background-color: var(--bg-void);
+            pointer-events: none;
+        }
+        .bg-video {
+            position: absolute;
+            top: 50%; left: 50%;
+            min-width: 100%; min-height: 100%;
+            transform: translate(-50%, -50%);
+            object-fit: cover;
+            filter: blur(14px) brightness(0.32) saturate(1.1);
+            opacity: 0.35;
+        }
+        .bg-scrim {
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(ellipse 60% 45% at 50% -10%, rgba(59,130,246,0.16), transparent 60%),
+                linear-gradient(180deg, rgba(4,6,12,0.55) 0%, rgba(4,6,12,0.88) 70%, var(--bg-void) 100%);
+        }
+        .ambient-blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: 0.32;
+            will-change: transform;
+        }
+        .blob-a {
+            width: 520px; height: 520px;
+            background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+            top: -160px; left: -120px;
+            animation: driftA 26s ease-in-out infinite alternate;
+        }
+        .blob-b {
+            width: 460px; height: 460px;
+            background: radial-gradient(circle, var(--accent-cyan) 0%, transparent 70%);
+            bottom: -180px; right: -100px;
+            animation: driftB 22s ease-in-out infinite alternate;
+        }
+        @keyframes driftA {
+            from { transform: translate(0, 0) scale(1); }
+            to   { transform: translate(60px, 80px) scale(1.15); }
+        }
+        @keyframes driftB {
+            from { transform: translate(0, 0) scale(1); }
+            to   { transform: translate(-70px, -50px) scale(1.1); }
+        }
+        .noise-overlay {
+            position: fixed; inset: 0;
+            z-index: -998;
+            opacity: 0.035;
+            mix-blend-mode: overlay;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        }
+
+        /* ================= CUSTOM CURSOR (tally-light reticle) ================= */
+        .cursor-dot, .cursor-ring {
+            position: fixed;
+            top: 0; left: 0;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            will-change: transform;
+        }
+        .cursor-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--cursor-color);
+            transition: background-color 0.25s var(--ease-out);
+        }
+        .cursor-ring {
+            width: 34px; height: 34px;
+            border-radius: 50%;
+            border: 1.5px solid var(--cursor-color);
+            box-shadow: 0 0 16px 1px color-mix(in srgb, var(--cursor-color) 55%, transparent);
+            transition: width 0.28s var(--ease-spring), height 0.28s var(--ease-spring),
+                        border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out),
+                        opacity 0.2s;
+        }
+        .cursor-ring::before, .cursor-ring::after {
+            content: '';
+            position: absolute;
+            background: var(--cursor-color);
+            opacity: 0.85;
+        }
+        .cursor-ring::before { top: -6px; left: 50%; width: 1px; height: 5px; transform: translateX(-50%); }
+        .cursor-ring::after { left: -6px; top: 50%; width: 5px; height: 1px; transform: translateY(-50%); }
+        .cursor-ring.hovering { width: 54px; height: 54px; }
+        @media (pointer: coarse), (prefers-reduced-motion: reduce) {
+            .cursor-dot, .cursor-ring { display: none; }
+        }
+
+        /* ================= TOP NAV ================= */
+        .top-nav {
+            width: 100%; max-width: 1200px;
+            display: flex; align-items: center; gap: 20px;
+            margin-bottom: 25px;
+            z-index: 10;
+            opacity: 0;
+        }
+
+        .back-btn {
+            background: var(--bg-glass);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            width: 38px; height: 38px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: transform 0.35s var(--ease-spring), background 0.2s, border-color 0.2s;
+            backdrop-filter: blur(14px) saturate(1.4);
+            -webkit-backdrop-filter: blur(14px) saturate(1.4);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+        .back-btn:hover { background: rgba(255,255,255,0.1); border-color: var(--border-hi); transform: translateX(-3px); }
+        .back-btn:active { transform: translateX(-3px) scale(0.9); }
+
+        .header-title-group h1 {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: var(--text-main);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .header-title-group .emoji-pop {
+            display: inline-block;
+            transition: transform 0.5s var(--ease-spring);
+        }
+        .header-title-group h1:hover .emoji-pop { transform: rotate(-18deg) scale(1.15); }
+        .header-title-group p { font-size: 0.85rem; color: var(--text-muted); margin-top: 3px; }
+
+        .step-indicator {
+            font-size: 0.72rem; font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase; letter-spacing: 0.8px;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .live-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--accent-red);
+            box-shadow: 0 0 0 0 rgba(239,68,68,0.6);
+            animation: pulseDot 1.8s ease-in-out infinite;
+        }
+        @keyframes pulseDot {
+            0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.55); }
+            70%  { box-shadow: 0 0 0 7px rgba(239,68,68,0); }
+            100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+        }
+
+        /* ================= SEARCH / FILTER BAR ================= */
+        .search-filter-bar {
+            width: 100%; max-width: 1200px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 14px 18px;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 14px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(18px) saturate(1.5);
+            -webkit-backdrop-filter: blur(18px) saturate(1.5);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 30px rgba(0,0,0,0.25);
+            z-index: 10;
+            opacity: 0;
+        }
+
+        .search-box-wrap {
+            width: 60%;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .search-box {
+            width: 100%;
+            background: rgba(4, 8, 18, 0.55);
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            padding: 10px 42px 10px 15px;
+            color: var(--text-main);
+            font-size: 0.9rem;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out), background 0.25s;
+        }
+        .search-box::placeholder { color: var(--text-faint); }
+        .search-box:focus {
+            border-color: var(--accent);
+            background: rgba(4, 8, 18, 0.8);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+        .search-kbd {
+            position: absolute; right: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem; color: var(--text-faint);
+            border: 1px solid var(--border-color);
+            border-radius: 5px; padding: 2px 6px;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        .search-box:focus ~ .search-kbd,
+        .search-box:not(:placeholder-shown) ~ .search-kbd { opacity: 0; }
+
+        .filter-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            padding: 10px 16px;
+            border-radius: 9px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            color: var(--text-main);
+            display: flex; align-items: center; gap: 8px;
+            transition: background 0.2s, border-color 0.2s, transform 0.3s var(--ease-spring);
+            white-space: nowrap;
+            text-decoration: none;
+        }
+        .filter-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--border-hi); }
+        .filter-btn:active { transform: scale(0.95); }
+
+        /* ================= GRID ================= */
+        .templates-grid {
+            width: 100%; max-width: 1200px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 25px;
+            z-index: 10;
+            perspective: 1400px;
+        }
+
+        .no-results {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+            border: 1px dashed var(--border-color);
+            border-radius: 16px;
+            display: none;
+        }
+        .no-results.show { display: block; animation: fadeInSlideUp 0.4s var(--ease-out) forwards; }
+        .no-results strong { color: var(--text-main); display: block; margin-bottom: 6px; font-size: 1.05rem; }
+
+        @keyframes fadeInSlideUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes cardIntro {
+            from { opacity: 0; transform: translateY(36px) rotateX(8deg) scale(0.96); }
+            to   { opacity: 1; transform: translateY(0) rotateX(0) scale(1); }
+        }
+
+        .template-card {
+            --tilt-x: 0deg;
+            --tilt-y: 0deg;
+            --card-accent: var(--accent);
+            --card-accent-soft: var(--accent-soft);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+            backdrop-filter: blur(16px) saturate(1.3);
+            -webkit-backdrop-filter: blur(16px) saturate(1.3);
+            position: relative;
+            transform-style: preserve-3d;
+            transition: transform 0.35s var(--ease-spring), box-shadow 0.35s var(--ease-out),
+                        border-color 0.3s var(--ease-out), background 0.3s;
+            opacity: 0;
+            will-change: transform;
+        }
+        .template-card.hiding {
+            opacity: 0 !important;
+            transform: scale(0.92) !important;
+            pointer-events: none;
+            position: absolute;
+        }
+
+        .template-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--card-accent);
+            box-shadow: 0 20px 45px -10px var(--card-accent-soft), 0 4px 18px rgba(0,0,0,0.35);
+        }
+        .template-card::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--card-accent), transparent);
+            opacity: 0.7;
+        }
+
+        .card-preview {
+            width: 100%; height: 200px;
+            background: rgba(6, 9, 18, 0.55);
+            position: relative;
+            display: flex; justify-content: center; align-items: center;
+            overflow: hidden;
+        }
+        .card-preview::after {
+            content: '';
+            position: absolute; inset: 0;
+            background: radial-gradient(circle at 50% 30%, var(--card-accent-soft), transparent 65%);
+            opacity: 0;
+            transition: opacity 0.4s var(--ease-out);
+        }
+        .template-card:hover .card-preview::after { opacity: 0.5; }
+
+        /* --- Live score bar (the volleyball overlay) --- */
+        .vb-bar {
+            width: 85%;
+            background: #0b1329;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            border: 1px solid rgba(255,255,255,0.08);
+            transition: transform 0.5s var(--ease-spring);
+            position: relative; z-index: 1;
+        }
+        .template-card:hover .vb-bar { transform: scale(1.045) translateY(-2px); }
+        .vb-row {
+            display: grid;
+            grid-template-columns: 4px 1fr 40px 50px;
+            align-items: center;
+            background: #0f172a;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .vb-col { height: 100%; }
+        .vb-team { padding: 8px 10px; font-size: 0.75rem; font-weight: 700; color: #f8fafc; letter-spacing: 0.5px; display: flex; align-items: center; gap: 7px; }
+        .vb-serve { width: 7px; height: 7px; border-radius: 50%; background: #facc15; box-shadow: 0 0 8px rgba(250,204,21,.7); }
+        .vb-set { text-align: center; font-size: 0.85rem; font-weight: 600; color: #94a3b8; background: rgba(255,255,255,0.02); padding: 8px 0; font-family: 'JetBrains Mono', monospace; }
+        .vb-pts { text-align: center; font-size: 0.85rem; font-weight: 700; color: #fff; background: #2563eb; padding: 8px 0; font-family: 'JetBrains Mono', monospace; }
+        .vb-foot { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; background: #0a0f1f; font-size: 0.58rem; font-weight: 700; letter-spacing: 1.2px; color: #93a0b8; }
+        .vb-tag { color: #0b1329; background: #facc15; border-radius: 3px; padding: 2px 6px; }
+
+        /* --- Corner score bug --- */
+        .vb-bug {
+            background: #0f172a; border-radius: 6px; overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            transition: transform 0.5s var(--ease-spring);
+            z-index: 1;
+        }
+        .template-card:hover .vb-bug { transform: scale(1.06) translate(4px, 2px); }
+        .vb-bug-row { display: grid; grid-template-columns: 4px 46px 26px 34px; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .vb-bug-row:last-child { border-bottom: none; }
+        .vb-bug-row i { height: 100%; }
+        .vb-bug-row b { padding: 6px 8px; font-size: 0.72rem; color: #f8fafc; letter-spacing: 0.6px; }
+        .vb-bug-row .s { text-align: center; color: #94a3b8; font: 600 0.78rem 'JetBrains Mono', monospace; }
+        .vb-bug-row .p { text-align: center; color: #fff; background: #d97706; padding: 6px 0; font: 700 0.78rem 'JetBrains Mono', monospace; }
+
+        /* --- Match intro --- */
+        .mi-mockup {
+            width: 85%;
+            background: #0b1329;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            border: 1px solid rgba(255,255,255,0.08);
+            transition: transform 0.5s var(--ease-spring);
+            z-index: 1;
+        }
+        .template-card:hover .mi-mockup { transform: scale(1.045) translateY(-2px); }
+        .mi-header { background: #0a0a0f; text-align: center; padding: 8px 10px 6px; }
+        .mi-league { color: #f87171; font-size: 0.62rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; }
+        .mi-round { color: #93a0b8; font-size: 0.55rem; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600; margin-top: 3px; }
+        .mi-body { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 14px 10px; }
+        .mi-team { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+        .mi-logo {
+            width: 34px; height: 34px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-weight: 800; font-size: 0.68rem;
+            box-shadow: 0 0 0 2px rgba(255,255,255,0.15);
+        }
+        .mi-name { color: #fff; font-size: 0.55rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+        .mi-vs { color: #f8fafc; font-size: 0.7rem; font-weight: 800; letter-spacing: 1px; opacity: 0.8; }
+        .mi-footer { background: linear-gradient(90deg, #c81e3c, #1d4ed8); text-align: center; padding: 6px 10px; }
+        .mi-footer span { color: #fff; font-size: 0.55rem; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+
+        /* --- Starting six --- */
+        .six-mockup {
+            width: 62%; min-width: 250px;
+            background: #0b1329; border-radius: 8px; overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            transition: transform 0.5s var(--ease-spring);
+            z-index: 1;
+        }
+        .template-card:hover .six-mockup { transform: scale(1.045) translateY(-2px); }
+        .six-head { white-space: nowrap; gap: 10px; display: flex; justify-content: space-between; align-items: baseline; padding: 7px 10px; background: #c81e3c; color: #fff; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.8px; }
+        .six-head small { font-size: 0.5rem; font-weight: 700; opacity: 0.85; letter-spacing: 1.2px; }
+        .six-court {
+            position: relative;
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px;
+            padding: 14px 16px 12px;
+            background: linear-gradient(180deg, #c2410c 0%, #9a3412 100%);
+        }
+        .six-net { position: absolute; left: 0; right: 0; top: 0; height: 3px; background: #f8fafc; opacity: 0.9; }
+        .six-court b {
+            justify-self: center;
+            width: 26px; height: 26px; border-radius: 50%;
+            background: #0f172a; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font: 700 0.7rem 'JetBrains Mono', monospace;
+            box-shadow: 0 0 0 2px rgba(255,255,255,0.85);
+        }
+        .six-court b.lib { background: #facc15; color: #0b1329; }
+        .six-court b.srv { box-shadow: 0 0 0 2px #22d3ee, 0 0 10px rgba(34,211,238,.7); }
+
+        /* --- Set & match result --- */
+        .res-mockup {
+            width: 88%;
+            background: #0b1329; border-radius: 8px; overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            transition: transform 0.5s var(--ease-spring);
+            z-index: 1;
+        }
+        .template-card:hover .res-mockup { transform: scale(1.04) translateY(-2px); }
+        .res-head { padding: 6px 10px; background: #0a0a0f; color: #f472b6; font-size: 0.6rem; font-weight: 800; letter-spacing: 2px; text-align: center; }
+        .res-row { display: grid; grid-template-columns: 4px 1fr 30px repeat(4, 24px); align-items: center; background: #0f172a; border-top: 1px solid rgba(255,255,255,0.06); color: #94a3b8; }
+        .res-row i { height: 100%; }
+        .res-row span { padding: 8px 10px; font-size: 0.66rem; font-weight: 700; color: #f8fafc; letter-spacing: 0.4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .res-row b { text-align: center; padding: 8px 0; color: #fff; background: rgba(255,255,255,0.06); font: 700 0.8rem 'JetBrains Mono', monospace; }
+        .res-row.win b { background: #db2777; }
+        .res-row em { font: 600 0.66rem 'JetBrains Mono', monospace; font-style: normal; text-align: center; }
+
+        /* --- Points table --- */
+        .pt-mockup {
+            width: 80%;
+            background: #0b1329; border-radius: 8px; overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            transition: transform 0.5s var(--ease-spring);
+            z-index: 1;
+        }
+        .template-card:hover .pt-mockup { transform: scale(1.04) translateY(-2px); }
+        .pt-row { display: grid; grid-template-columns: 24px 1fr 26px 26px 34px; align-items: center; padding: 6px 10px; border-top: 1px solid rgba(255,255,255,0.06); font-size: 0.64rem; color: #cbd5e1; }
+        .pt-row span:not(:nth-child(2)) { text-align: center; font-family: 'JetBrains Mono', monospace; }
+        .pt-row span:nth-child(2) { font-weight: 600; color: #f8fafc; }
+        .pt-row span:last-child { font-weight: 700; color: #fff; }
+        .pt-h { border-top: none; background: #0a0a0f; color: #4ade80; font-weight: 800; letter-spacing: 1px; font-size: 0.56rem; }
+        .pt-h span:nth-child(2) { color: #4ade80; }
+        .pt-row.q { box-shadow: inset 3px 0 0 #22c55e; }
+
+        /* --- Add Overlay Button (magnetic, all cards) --- */
+        .add-overlay-btn {
+            position: absolute;
+            background: var(--card-accent);
+            color: white;
+            border: none;
+            padding: 10px 22px;
+            border-radius: 30px;
+            font-size: 0.85rem; font-weight: 600;
+            font-family: inherit;
+            box-shadow: 0 4px 20px var(--card-accent-soft);
+            text-decoration: none;
+            opacity: 0;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -30%);
+            transition: opacity 0.3s var(--ease-spring), background 0.2s, transform 0.05s linear;
+            z-index: 10;
+            pointer-events: none;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .template-card:hover .add-overlay-btn {
+            opacity: 1;
+            transform: translate(-50%, -50%);
+            pointer-events: auto;
+            transition: opacity 0.3s var(--ease-spring), transform 0.4s var(--ease-spring), background 0.2s;
+        }
+        .add-overlay-btn:active { filter: brightness(0.9); }
+
+        .card-footer {
+            padding: 16px 20px;
+            text-align: center;
+            font-size: 1.05rem; font-weight: 700;
+            color: var(--text-main);
+            letter-spacing: 0.2px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        /* Page-exit veil for cinematic navigation */
+        .page-veil {
+            position: fixed; inset: 0;
+            background: var(--bg-void);
+            z-index: 99999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.32s var(--ease-out);
+        }
+        .page-veil.active { opacity: 1; pointer-events: auto; }
+
+        @media (max-width: 900px) {
+            .templates-grid { grid-template-columns: 1fr; }
+            .search-box-wrap { width: 100%; }
+            .search-filter-bar { flex-direction: column; align-items: stretch; }
+            .filter-btn { justify-content: center; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+            .ambient-blob { animation: none; }
+            .template-card { transform: none !important; }
+        }
+    </style>
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="/" style="color:inherit" title="AllSportsLive"><span class="ball">🏐</span></a>
-  <div class="title grow ellipsis">Volleyball Graphics Studio<small id="sub">Broadcast templates · preview with real data · take to air</small></div>
-  <a class="btn sm" href="/volleyball" title="Tournaments, teams, fixtures">Dashboard</a>
-  <a class="btn sm hide" id="panelLink" target="_blank" rel="noopener">Scoring panel</a>
-  <span id="who" class="row small"></span>
-</header>
-<main class="studio" id="app"><div class="skel" style="height:420px"></div></main>
-<script src="/socket.io/socket.io.js"></script>
-<script src="/volleyball-common.js"></script>
-<script src="/volleyball-graphics.js"></script>
-<script>
-(function () {
-  'use strict';
-  const { $, $$, esc, api, toast } = VB;
-  const GX = window.VolleyballGraphics;
-  document.documentElement.dataset.theme = 'dark';     // a broadcast room: always dark
-  const qs = new URLSearchParams(location.search);
-  const S = { user: null, mine: null, tid: null, tournament: null, teams: [], matches: [], matchId: qs.get('match'), match: null, summary: null, timeline: [],
-    air: null, airOffset: 0, outputs: [], busy: {}, saved: GX.normalizeStyle(null), draft: null, sel: 'bar', opt: {}, dur: 'default', socket: null, pv: null, bg: VB.store.get('vb_studio_bg', 'court') };
-  const DESC = {
-    bar: 'Score, sets, serve, set history, set / match point, time-outs, substitutions and point tags — every point from the scoring, by itself.',
-    compact: 'The same live score as a two-row bug in the top-left corner — the alternative to the score bar.',
-    intro: 'Both teams with their crests and colours, the competition, venue, date and format — full screen.',
-    toss: 'The toss as recorded: who won, what they chose, the first serve and the starting sides.',
-    lineup: 'A team’s six as they stand on court — front row at the net — with portraits when uploaded, libero, captain and first server. Both teams in turn, or one.',
-    setStart: 'The set number, the sets so far, who serves and which side.',
-    rotation: 'Both teams’ positions right now on a court, the server highlighted.',
-    timeout: 'During a time-out: the team, a live count-down, the score and this set’s figures. Goes when the time-out ends or the next rally is scored.',
-    playerStat: 'One player: portrait (or number), role and this match’s points, kills, blocks and aces.',
-    setSummary: 'End of a set: the set score, the sets, how each team won its points.',
-    final: 'The result — or the score so far: sets, every set score, top scorers, match duration.',
-    scorecard: 'Team comparison and the top scorers of the whole match.',
-    standings: 'The competition’s own table: its points rule, its tie-breaks and, where the format has one, the qualification line.'
-  };
-  const ITEMS = [{ k: 'bar', label: 'Live score bar', group: 'live' }, { k: 'compact', label: 'Corner score bug', group: 'live' }].concat(GX.ORDER.map((k) => ({ k, label: GX.SCENES[k].label, group: GX.SCENES[k].group })));
-  const GROUPS = Object.assign({ live: 'The live overlay' }, GX.GROUPS);
-  const airNow = () => Date.now() + S.airOffset;
-  const teamOf = (side) => { const t = S.match && S.match['team' + side]; return t || { name: 'Team ' + side, shortName: side, colors: {} }; };
-  const color = (side) => { const c = teamOf(side).colors || {}; return /^#[0-9a-f]{6}$/i.test(c.primary || '') ? c.primary : side === 'A' ? '#c81e3c' : '#e08a00'; };
 
-  /* ---------- sign-in, the matches this account runs ---------- */
-  function renderWho(user) {
-    $('#who').innerHTML = user ? `<span class="muted ellipsis" style="max-width:220px">${esc(user.email)}</span>` : '<button class="btn sm primary" id="si">Sign in</button>';
-    if ($('#si')) $('#si').onclick = () => VB.signIn();
-  }
-  VB.on('auth', (u) => { renderWho(u); if (u && !S.user) boot(); });
-  async function boot() {
-    const user = await VB.authReady;
-    renderWho(user);
-    if (!user) return gate('Sign in to use the graphics studio', 'Previews use a real match’s saved data, and taking a graphic to air is for the account that runs the tournament.', true);
-    S.user = user;
-    const r = await api('GET', '/api/volleyball/mine');
-    if (r.status === 403) return gate('This account cannot run broadcasts', `${user.email} is not one of the authorised AllSportsLive creator accounts.`);
-    if (!r.ok) return gate('Could not load your volleyball data', (r.json && r.json.error) || 'Try again in a moment.');
-    S.mine = r.json;
-    if (S.matchId) {
-      const m = await api('GET', `/api/volleyball/matches/${encodeURIComponent(S.matchId)}`);
-      if (m.ok && m.json.match && m.json.match.canManage) S.tid = m.json.match.tournamentId; else S.matchId = null;
-    }
-    if (!S.tid && S.mine.tournaments.length) S.tid = (S.mine.tournaments.find((t) => t.status === 'ongoing') || S.mine.tournaments[0]).tournamentId;
-    layout();
-    if (S.tid) await loadTournament(S.tid);
-    else renderEmpty();
-  }
-  function gate(title, text, signIn) {
-    $('#app').innerHTML = `<div class="gate card"><div class="ball">🏐</div><h2 style="margin:8px 0">${esc(title)}</h2><p class="muted">${esc(text)}</p>
-      ${signIn ? '<div class="row" style="justify-content:center;margin-top:16px"><button class="btn primary" id="gsi">Sign in with Google</button></div>' : '<a class="btn" style="margin-top:16px" href="/volleyball">Volleyball dashboard</a>'}</div>
-      <div class="section-title">The templates</div><div class="gallery">${ITEMS.map((it) => `<div class="tpl"><div class="th" style="--ta:#c81e3c;--tb:#1d4ed8">${thumb(it.k)}</div><div class="tb"><b>${esc(it.label)}</b><small>${esc(DESC[it.k])}</small></div></div>`).join('')}</div>`;
-    if ($('#gsi')) $('#gsi').onclick = () => VB.signIn();
-  }
-  function layout() {
-    $('#app').innerHTML = `<div class="pickrow">
-        <label class="field"><span class="small muted">Tournament</span><select class="input" id="tsel">${S.mine.tournaments.map((t) => `<option value="${esc(t.tournamentId)}" ${t.tournamentId === S.tid ? 'selected' : ''}>${esc(t.name)}</option>`).join('') || '<option>No tournaments yet</option>'}</select></label>
-        <label class="field"><span class="small muted">Match — previews use its saved data</span><select class="input" id="msel"><option>Loading…</option></select></label>
-        <div class="row"><span class="small muted">Behind preview</span><div class="seg" id="bgsel">${[['court', 'Court'], ['black', 'Black'], ['check', 'Clear']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${S.bg === v}">${l}</button>`).join('')}</div></div></div>
-      <div class="main"><div class="ltop">
-          <div class="mon" id="pvMon"><span class="tag pv">PREVIEW · NOT ON AIR</span><div class="scr ${S.bg}" id="pvScr"></div><div class="note hide" id="pvNote"></div></div>
-          <div class="monbar"><b id="selName" class="grow">Live score bar</b><button class="btn sm" id="replay">▶ Play again</button><button class="btn sm hide" id="pvNext">Next team</button></div></div>
-        <div class="lbot">
-          <div id="galleryHost"></div>
-          <div class="section-title">The look — saved on the tournament, every overlay follows it <span class="dirty hide" id="dirty">· not saved</span></div>
-          <div class="card"><div class="look" id="look"></div><div class="row wrapr" style="margin-top:14px"><span class="grow small muted">Changes show in the preview straight away; the overlays on air change when you save.</span><button class="btn" id="revert">Revert</button><button class="btn primary" id="saveLook">Save the look</button></div></div>
-          <div class="section-title">Times on screen <span class="muted" style="text-transform:none;letter-spacing:0">— when a graphic is taken without a time (blank = the default shown)</span></div>
-          <div class="card"><div class="durs" id="durs"></div></div>
-          <div class="section-title">Teams — name, colours and crest as the graphics show them</div>
-          <div class="grid2" id="teams"></div>
+    <div class="page-veil" id="pageVeil"></div>
+
+    <div class="cursor-ring" id="cursorRing"></div>
+    <div class="cursor-dot" id="cursorDot"></div>
+
+    <div class="bg-animations">
+        <img class="bg-video" src="/assets/home/sport-volleyball-720.webp" alt="" decoding="async">
+        <div class="ambient-blob blob-a"></div>
+        <div class="ambient-blob blob-b"></div>
+        <div class="bg-scrim"></div>
+    </div>
+    <div class="noise-overlay"></div>
+
+    <div class="top-nav" id="topNav">
+        <button class="back-btn" onclick="scorvixNavigate(null, () => history.length > 1 ? history.back() : (location.href = '/'))" aria-label="Go back">←</button>
+        <div class="header-title-group">
+            <span class="step-indicator"><span class="live-dot"></span>Step 2 of 5</span>
+            <h1><span class="emoji-pop">🏐</span> Select an Overlay for Volleyball</h1>
+            <p>Choose the overlay design you want to use for your stream</p>
         </div>
-        <aside class="side">
-          <div class="mon" id="pgMon"><span class="tag pg">ON AIR</span><div class="scr ${S.bg}" id="pgScr"></div></div>
-          <div id="airBox"></div>
-          <div class="card" id="selBox"></div>
-          <div class="card"><b class="small">Overlay links</b><p class="tiny muted" style="margin:2px 0 10px">A Browser source in vMix / OBS at 1920 × 1080 (transparent).</p><div class="stack" id="links"></div></div>
-        </aside></div>`;
-    $('#tsel').onchange = (e) => { S.matchId = null; loadTournament(e.target.value); };
-    $('#msel').onchange = (e) => selectMatch(e.target.value);
-    $$('#bgsel button').forEach((b) => b.onclick = () => { S.bg = b.dataset.v; VB.store.set('vb_studio_bg', S.bg); $$('#bgsel button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); ['#pvScr', '#pgScr'].forEach((id) => { $(id).className = 'scr ' + S.bg; }); });
-    $('#replay').onclick = () => preview(true);
-    $('#pvNext').onclick = () => toPreview({ cmd: 'next' });
-    $('#revert').onclick = () => { S.draft = JSON.parse(JSON.stringify(S.saved)); renderLook(); pushStyle(); };
-    $('#saveLook').onclick = saveLook;
-  }
-  function renderEmpty() {
-    $('#msel').innerHTML = '<option>No matches</option>';
-    $('#pvNote').textContent = 'Create a tournament with a match in the dashboard first.';
-    $('#pvNote').classList.remove('hide');
-  }
-  async function loadTournament(tid) {
-    S.tid = tid;
-    const r = await api('GET', `/api/volleyball/tournaments/${encodeURIComponent(tid)}`);
-    if (!r.ok) return toast('Could not load that tournament', 'err');
-    S.tournament = r.json.tournament; S.teams = r.json.teams || []; S.matches = r.json.matches || [];
-    S.saved = GX.normalizeStyle(S.tournament.broadcast);
-    S.draft = JSON.parse(JSON.stringify(S.saved));
-    const order = (m) => (m.status === 'live' ? 0 : m.status === 'scheduled' ? 1 : 2);
-    const list = S.matches.filter((m) => m.teamA && m.teamB).sort((a, b) => order(a) - order(b) || (a.matchNo || 0) - (b.matchNo || 0));
-    $('#msel').innerHTML = list.map((m) => `<option value="${esc(m.matchId)}">${m.status === 'live' ? '● LIVE · ' : m.status === 'completed' ? 'Final · ' : ''}#${m.matchNo} ${esc(m.teamA.name)} v ${esc(m.teamB.name)}</option>`).join('') || '<option value="">No matches with both teams yet</option>';
-    renderLook(); renderDurs();
-    const pick = S.matchId && list.find((m) => m.matchId === S.matchId) ? S.matchId : (list[0] && list[0].matchId);
-    if (pick) { $('#msel').value = pick; selectMatch(pick); } else renderEmpty();
-  }
+    </div>
 
-  /* ---------- the match: data, the two monitors, the on-air state ---------- */
-  async function selectMatch(mid) {
-    if (!mid) return;
-    S.matchId = mid;
-    S.match = S.matches.find((m) => m.matchId === mid) || null;
-    history.replaceState(null, '', '/volleyball-templates?match=' + encodeURIComponent(mid));
-    $('#panelLink').href = '/volleyball-panel?match=' + encodeURIComponent(mid); $('#panelLink').classList.remove('hide');
-    $('#sub').textContent = S.match ? `${S.match.teamA.name} v ${S.match.teamB.name} · ${S.tournament.name}` : '';
-    const key = S.tournament && S.tournament.visibility === 'private' && S.match ? '&key=' + encodeURIComponent(S.match.overlayKey) : '';
-    $('#pvScr').innerHTML = `<iframe id="pvFrame" title="Preview" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}&preview=1"></iframe>`;
-    // the real overlay — a monitor: the ON AIR states wait for a programme output (vMix / OBS), not for this
-    $('#pgScr').innerHTML = `<iframe id="pgFrame" title="On air" src="/volleyball-overlay?match=${encodeURIComponent(mid)}${key}&monitor=1"></iframe>`;
-    $('#pvFrame').onload = () => { pushStyle(); preview(true); };
-    const base = `${location.origin}/volleyball-overlay?match=${mid}${key}`;
-    $('#links').innerHTML = [['Score bar + graphics', base], ['Corner bug + graphics', base + '&layout=compact'], ['Graphics only', base + '&layout=graphics']].map(([l, u], i) => `<div><div class="tiny" style="font-weight:700;margin:0 2px 4px">${esc(l)}</div><div class="linkrow"><input class="input" readonly value="${esc(u)}"><button class="btn sm" data-cp="${esc(u)}">Copy</button></div></div>`).join('');
-    $$('[data-cp]').forEach((b) => b.onclick = () => VB.copy(b.dataset.cp).then((ok) => toast(ok ? 'Copied' : b.dataset.cp)));
-    $$('#links input').forEach((inp) => inp.onfocus = () => inp.select());
-    renderTeams();
-    await connect();
-  }
-  async function connect() {
-    if (!S.socket) {
-      S.socket = await VB.connect();
-      S.socket.on('connect', join);
-      S.socket.on('vb:graphic', (d) => { if (d.matchId === S.matchId) setAir(d.graphic); });
-      // what the outputs (vMix, OBS, monitors) really show — ON AIR is read from these
-      S.socket.on('vb:outputs', (d) => { if (d.matchId === S.matchId) { S.outputs = d.outputs || []; renderStates(); } });
-      S.socket.on('vb:update', (d) => { if (d.matchId === S.matchId && d.summary) { S.summary = d.summary; if (d.entry) S.timeline.push(d.entry); else rejoinSoon(); renderGallery(); renderSel(); } });
-      S.socket.on('vb:match', (d) => { if (d.matchId === S.matchId && d.match) { S.match = Object.assign(S.match || {}, d.match); renderGallery(); } });
-      S.socket.on('vb:style', (d) => { if (d.tournamentId === S.tid) { const was = JSON.stringify(S.saved) === JSON.stringify(S.draft); S.saved = GX.normalizeStyle(d.style); if (was) { S.draft = JSON.parse(JSON.stringify(S.saved)); renderLook(); } markDirty(); } });
-      setInterval(() => { if (S.air && S.air.scene) renderAir(); }, 1000);
-    }
-    if (S.socket.connected) join();
-  }
-  let rejoinTimer = null;
-  function rejoinSoon() { clearTimeout(rejoinTimer); rejoinTimer = setTimeout(join, 300); }
-  async function join() {
-    if (!S.matchId) return;
-    const mid = S.matchId;
-    const r = await VB.ack(S.socket, 'vb:join', { matchId: mid, timeline: true }, 15000);
-    if (mid !== S.matchId) return;
-    if (!r.ok) return toast('Could not open the match live', 'err');
-    S.match = Object.assign(S.match || {}, r.match); S.summary = r.summary; S.timeline = r.timeline || [];
-    S.outputs = r.outputs || [];
-    S.air = null; setAir(r.graphic);
-    renderGallery(); renderSel();
-  }
-  function setAir(g) {
-    if (!g || typeof g.seq !== 'number') return;
-    if (S.air && g.seq < S.air.seq) return;
-    S.air = g; if (g.serverNow) S.airOffset = g.serverNow - Date.now();
-    renderAir(); renderGallery(); renderSel();
-  }
-  function airLabel(g) {
-    if (!g || !g.scene) return '';
-    let x = GX.SCENES[g.scene] ? GX.SCENES[g.scene].label : g.scene;
-    const d = g.data || {};
-    if (g.scene === 'lineup') x += d.team ? ' · ' + teamOf(d.team).name : ' · both teams';
-    if (g.scene === 'setSummary' && d.set) x += ' · set ' + d.set;
-    if (g.scene === 'playerStat' && d.playerId) { const p = playerOf(d.playerId); if (p) x += ' · #' + p.number + ' ' + p.name; }
-    return x;
-  }
-  // the on-air state — the server's word for what is taken, the outputs' word for what shows
-  function renderAir() {
-    const g = S.air || {}, on = !!g.scene, now = airNow();
-    const left = on && g.expiresAt != null ? Math.max(0, Math.ceil((g.expiresAt - now) / 1000)) : null;
-    const both = on && g.scene === 'lineup' && !(g.data && g.data.team), swapped = both && g.swapAt != null && now >= g.swapAt;
-    const line = GX.airSummary(g, S.saved, S.outputs, now, airLabel(g)), n = GX.readOutputs(S.outputs, g, now);
-    const monitors = (S.outputs || []).filter((o) => o.monitor).length;
-    const what = (o) => (o.state === 'GRAPHIC_VISIBLE' ? (GX.SCENES[o.scene] ? GX.SCENES[o.scene].label : 'a graphic') : o.state === 'OVERLAY_VISIBLE' ? GX.LIVE_NAMES[o.layout] || 'the live overlay' : o.state === 'IDLE' ? 'nothing' : o.state.toLowerCase().replace(/_/g, ' '));
-    const outs = n.o.length ? n.o.map((o) => `<span><i class="dot ${/_VISIBLE$/.test(o.state) ? 'ok' : o.state === 'IDLE' ? '' : 'wait'}"></i>Output${o.layoutParam ? ' (' + (o.layoutParam === 'compact' ? 'corner bug' : o.layoutParam === 'graphics' ? 'graphics only' : 'score bar') + ')' : ''} · ${esc(what(o))}</span>`).join('')
-      : `<span class="warn">The overlay links for vMix / OBS are below</span>`;
-    const html = `<div class="airbox k-${line.k}"><div class="row"><span class="dot ${line.k === 'on' ? 'bad' : line.k === 'live' ? 'ok' : line.k === 'idle' ? '' : 'wait'}"></span><b class="grow" id="airLine">${esc(line.t)}</b>${on ? `<span class="badge" data-badge>${left != null ? left + ' s' : 'Hold'}</span>` : ''}</div>
-      <div class="tiny muted" style="margin:6px 0 10px">${esc(line.d).replace(/\d+ s left/, (x) => `<span data-left>${x}</span>`)}</div>
-      <div class="row wrapr">${both && !swapped ? '<button class="btn sm" data-a="next">Next team</button>' : ''}${on && left != null ? '<button class="btn sm" data-a="hold">Hold</button>' : ''}${on ? '<button class="btn sm primary" data-a="stop">Dismiss · back to live</button>' : ''}${g.clean ? '<button class="btn sm primary" data-a="live">Restore live overlay</button>' : '<button class="btn sm" data-a="clean">Hide everything</button>'}</div>
-      <div class="outs tiny">${outs}${monitors ? `<span class="muted">+ ${monitors} monitor${monitors > 1 ? 's' : ''} (not counted)</span>` : ''}</div></div>`;
-    // rebuilt only when something besides the count-down changed: a button is never replaced under a press
-    const box = $('#airBox'), k = html.replace(/\d+ s left/g, '').replace(/data-badge>\d+ s</, 'data-badge><');
-    if (box.dataset.k === k) {
-      if (left != null) { $$('[data-left]', box).forEach((x) => { x.textContent = left + ' s left'; }); $$('[data-badge]', box).forEach((x) => { x.textContent = left + ' s'; }); }
-      return;
-    }
-    box.dataset.k = k; box.innerHTML = html;
-    $$('[data-a]', $('#airBox')).forEach((b) => b.onclick = () => {
-      const a = b.dataset.a;
-      if (a === 'next') airCmd({ action: 'next', id: g.id }, 'master');
-      else if (a === 'hold') airCmd({ action: 'duration', id: g.id, durationSec: 'hold' }, 'master');
-      else if (a === 'stop') airCmd({ action: 'stop', id: g.id }, 'master');
-      else airCmd({ action: a }, 'master');
-    });
-  }
-  // what changes when an output reports — the states only (the open choices are left as they are)
-  function renderStates() { renderAir(); renderGallery(); renderSelState(); }
-  async function airCmd(cmd, key) {
-    if (key) { if (S.busy[key]) return { ok: false, busy: true }; S.busy[key] = true; renderSelState(); }
-    const r = await VB.ack(S.socket, 'vb:graphic', Object.assign({ matchId: S.matchId }, cmd));
-    if (key) delete S.busy[key];
-    if (r && r.graphic) setAir(r.graphic); else renderSelState();
-    if (!r || !r.ok) toast(r && r.stale ? 'That graphic is no longer on air' : r && r.error && !/^[a-z-]+$/.test(r.error) ? r.error : 'Could not change the graphic — check the connection', 'err');
-    return r || { ok: false };
-  }
+    <div class="search-filter-bar" id="searchBar">
+        <div class="search-box-wrap">
+            <input type="text" class="search-box" id="searchBox" placeholder="Search from 6 Overlays" autocomplete="off">
+            <span class="search-kbd">/</span>
+        </div>
+        <a class="filter-btn" href="/volleyball" data-nav>🏆 Tournaments &amp; matches</a>
+    </div>
 
-  /* ---------- the templates ---------- */
-  function playerOf(id) { for (const t of ['A', 'B']) { const p = ((S.match && S.match.squads && S.match.squads[t]) || []).find((x) => x.playerId === id); if (p) return Object.assign({ team: t }, p); } return null; }
-  function avail(k) {
-    const s = S.summary;
-    if (!s || !S.match) return { ok: false, hint: 'Choose a match' };
-    if (k === 'bar' || k === 'compact') {
-      const c = GX.liveCard(k, S.air, S.saved, S.outputs, airNow(), airLabel(S.air)), mode = GX.liveOf(S.air).mode === 'auto' ? 'Automatic' : 'Manual';
-      return { ok: true, hint: c.word + (c.chosen || c.k === 'on' ? ' · ' + mode : ''), live: c };
-    }
-    const lineupSets = () => { const sets = new Set(); S.timeline.forEach((e) => { if (e && !e.voided && e.type === 'LINEUP') sets.add(e.set); }); return sets; };
-    switch (k) {
-      case 'intro': return { ok: true, hint: 'Ready' };
-      case 'toss': return s.toss ? { ok: true, hint: 'Toss recorded' } : { ok: false, hint: 'No toss recorded yet' };
-      case 'lineup': return lineupSets().size ? { ok: true, hint: 'Line-ups saved' } : { ok: false, hint: 'No line-up saved yet' };
-      case 'setStart': return s.status === 'completed' || s.status === 'abandoned' ? { ok: false, hint: 'Match over' } : { ok: true, hint: 'Set ' + (s.status === 'in_set' ? s.set : (s.nextSet || 1)) };
-      case 'rotation': return s.status === 'in_set' ? { ok: true, hint: 'Set in play' } : { ok: false, hint: 'Shows during a set' };
-      case 'timeout': return s.status === 'in_set' && GX.runningTimeout(S.timeline, S.match.rules, airNow()) ? { ok: true, hint: 'Time-out running' } : { ok: false, hint: 'Shows during a time-out' };
-      case 'playerStat': return { ok: true, hint: 'Choose a player' };
-      case 'setSummary': return s.sets.some((x) => x.status === 'completed') ? { ok: true, hint: 'A set has finished' } : { ok: false, hint: 'After the first set' };
-      case 'final': case 'scorecard': return s.sets.length ? { ok: true, hint: s.status === 'completed' ? 'Final' : 'So far' } : { ok: false, hint: 'Once play starts' };
-      case 'standings': return S.tournament && S.tournament.format && S.tournament.format.type === 'knockout' ? { ok: false, hint: 'A knockout has no table' } : { ok: true, hint: 'From the results' };
-      default: return { ok: true, hint: '' };
-    }
-  }
-  function thumb(k) {
-    const logo = (side) => { const t = teamOf(side); return t && t.logo ? `<img src="${esc(t.logo)}" alt="" style="${side === 'A' ? 'left:19%' : 'right:19%'};top:36%">` : ''; };
-    switch (k) {
-      case 'bar': return '<i class="sb"></i>';
-      case 'compact': return '<i class="cb"></i>';
-      case 'intro': return `<i class="fa"></i><i class="fb"></i><i class="vs"></i>${logo('A')}${logo('B')}`;
-      case 'toss': return '<i class="pn"></i><i class="coin"></i><i class="ln" style="top:66%"></i><i class="ln" style="top:76%;left:38%;right:38%;background:#ffd60a"></i>';
-      case 'lineup': return '<i class="ln" style="top:14%;left:8%;right:52%;height:8px"></i><span class="g6"><i></i><i></i><i></i><i></i><i></i><i></i></span>';
-      case 'setStart': return '<i class="pn"></i><b class="bigt">SET 3</b>';
-      case 'rotation': return '<i class="court"></i>' + [[22, 32], [22, 50], [22, 68], [38, 32], [38, 50], [38, 68]].map(([x, y]) => `<i class="dt" style="left:${x}%;top:${y}%;background:var(--ta)"></i><i class="dt" style="left:${100 - x}%;top:${y}%;background:var(--tb)"></i>`).join('');
-      case 'timeout': return '<i class="pn"></i><i class="ring"></i><i class="ln" style="top:34%;left:28%;right:50%;height:10px;background:var(--tb)"></i><i class="row6" style="top:62%"></i><i class="row6" style="top:72%"></i>';
-      case 'playerStat': return '<i class="pn"></i><i style="left:22%;top:16%;bottom:14%;width:18%;background:var(--ta)"></i><i class="ln" style="top:34%;left:46%;right:30%;height:10px"></i>';
-      case 'setSummary': case 'final': return '<i class="pn"></i><b class="bigt" style="top:28%">25–23</b><i class="row6" style="top:66%;left:30%;right:30%;background:#ffd60a"></i>';
-      case 'scorecard': return '<i class="pn"></i>' + [34, 46, 58, 70].map((y) => `<i class="row6" style="top:${y}%;left:30%;right:52%;background:var(--ta)"></i><i class="row6" style="top:${y}%;left:52%;right:30%;background:var(--tb)"></i>`).join('');
-      case 'standings': return '<i class="pn"></i>' + [30, 42, 54, 66, 78].map((y, i) => `<i class="row6" style="top:${y}%;${i < 2 ? 'box-shadow:inset 4px 0 0 #ffd60a' : ''}"></i>`).join('');
-      default: return '';
-    }
-  }
-  function renderGallery() {
-    if (!$('#galleryHost')) return;
-    const g = S.air || {};
-    const vars = `--ta:${color('A')};--tb:${color('B')}`;
-    $('#galleryHost').innerHTML = Object.keys(GROUPS).map((grp) => `<div class="section-title">${esc(GROUPS[grp])}</div><div class="gallery">${ITEMS.filter((it) => it.group === grp).map((it) => {
-      const a = avail(it.k), c = a.live || GX.sceneCard(it.k, g, S.outputs, airNow());
-      const cls = !c ? (a.ok ? 'ok' : 'na') : c.k === 'on' || c.k === 'failed' ? 'live' : c.k === 'off' ? 'na' : 'move';
-      return `<button class="tpl ${S.sel === it.k ? 'sel' : ''} ${c && c.k === 'on' ? 'onair' : ''}" data-k="${it.k}"><div class="th" style="${vars}">${thumb(it.k)}</div><div class="tb"><b>${esc(it.label)}</b><span class="st ${cls}">${esc(a.live ? a.hint : c ? c.word : a.hint)}</span><small>${esc(DESC[it.k])}</small></div></button>`;
-    }).join('')}</div>`).join('');
-    $$('[data-k]', $('#galleryHost')).forEach((b) => b.onclick = () => { S.sel = b.dataset.k; S.opt = {}; renderGallery(); renderSel(); preview(true); });
-  }
-  // the selected template: its choices, preview, take / dismiss
-  function renderSel() {
-    if (!$('#selBox')) return;
-    const k = S.sel, it = ITEMS.find((x) => x.k === k);
-    $('#selName').textContent = it.label;
-    $('#pvNext').classList.toggle('hide', !(k === 'lineup' && !S.opt.team));
-    const s = S.summary;
-    let opts = '';
-    if (k === 'lineup') {
-      const sets = []; S.timeline.forEach((e) => { if (e && !e.voided && e.type === 'LINEUP' && sets.indexOf(e.set) < 0) sets.push(e.set); });
-      sets.sort((x, y) => x - y);
-      opts = `<div class="field"><span class="small muted">Team</span><div class="seg" id="oTeam">${[['', 'Both, in turn'], ['A', teamOf('A').shortName || 'A'], ['B', teamOf('B').shortName || 'B']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${(S.opt.team || '') === v}">${esc(l)}</button>`).join('')}</div></div>
-        ${sets.length > 1 ? `<label class="field"><span class="small muted">Set</span><select class="input" id="oSet"><option value="">The current / next set</option>${sets.map((n) => `<option value="${n}" ${Number(S.opt.set) === n ? 'selected' : ''}>Set ${n}</option>`).join('')}</select></label>` : ''}`;
-    } else if (k === 'setSummary' && s) {
-      const done = s.sets.filter((x) => x.status === 'completed');
-      if (done.length > 1) opts = `<label class="field"><span class="small muted">Set</span><select class="input" id="oSet"><option value="">The last finished set</option>${done.map((x) => `<option value="${x.set}" ${Number(S.opt.set) === x.set ? 'selected' : ''}>Set ${x.set} · ${x.A}–${x.B}</option>`).join('')}</select></label>`;
-    } else if (k === 'toss' && s && s.decidingToss && s.toss) {
-      opts = `<div class="field"><span class="small muted">Which toss</span><div class="seg" id="oToss"><button data-v="1" aria-pressed="${Number(S.opt.set || 1) === 1}">Set 1</button><button data-v="${s.bestOf}" aria-pressed="${Number(S.opt.set) === s.bestOf}">Deciding set</button></div></div>`;
-    } else if (k === 'playerStat') {
-      const pl = ['A', 'B'].map((t) => ((S.match && S.match.squads && S.match.squads[t]) || []).map((p) => `<option value="${esc(p.playerId)}" ${S.opt.playerId === p.playerId ? 'selected' : ''}>${esc(teamOf(t).shortName || t)} · #${esc(p.number)} ${esc(p.name)}</option>`).join('')).join('');
-      opts = `<label class="field"><span class="small muted">Player</span><select class="input" id="oPlayer"><option value="">Choose…</option>${pl}</select></label>`;
-    } else if (k === 'standings' && S.tournament && S.tournament.format && (S.tournament.format.groups || []).length > 1) {
-      opts = `<label class="field"><span class="small muted">Group</span><select class="input" id="oGroup"><option value="">This match’s group</option>${S.tournament.format.groups.map((x) => `<option value="${esc(x.name)}" ${S.opt.group === x.name ? 'selected' : ''}>Group ${esc(x.name)}</option>`).join('')}</select></label>`;
-    }
-    const scene = GX.SCENES[k];
-    const def = scene ? GX.defaultDuration(k, S.saved) : null;
-    $('#selBox').innerHTML = `<div class="opts"><div><b>${esc(it.label)}</b> <span class="small" id="selHint"></span><p class="tiny muted" style="margin-top:4px">${esc(DESC[k])}</p></div>${opts}
-      ${scene ? `<div class="field"><span class="small muted">Time on screen</span><div class="seg" id="oDur">${[['default', def == null ? 'Default (hold)' : `Default (${def} s)`], ['hold', 'Hold'], ['custom', 'Seconds…']].map(([v, l]) => `<button data-v="${v}" aria-pressed="${(typeof S.dur === 'number' ? 'custom' : S.dur) === v}">${esc(l)}</button>`).join('')}</div>
-        <input class="input ${typeof S.dur === 'number' ? '' : 'hide'}" id="oSecs" type="number" min="1" max="${GX.MAX_SEC}" value="${typeof S.dur === 'number' ? S.dur : 15}" style="margin-top:6px"></div>`
-        : `<div class="field"><span class="small muted">The live overlay runs</span><div class="seg" id="oMode"><button data-m="auto">Automatic</button><button data-m="manual">Manual</button></div></div>`}
-      <div class="row wrapr" id="selAct"></div>
-      <p class="tiny muted" id="selNote"></p></div>`;
-    const re = () => { renderSel(); preview(true); };
-    $$('#oTeam button').forEach((b) => b.onclick = () => { S.opt.team = b.dataset.v; re(); });
-    $$('#oToss button').forEach((b) => b.onclick = () => { S.opt.set = Number(b.dataset.v); re(); });
-    if ($('#oSet')) $('#oSet').onchange = (e) => { S.opt.set = e.target.value ? Number(e.target.value) : undefined; re(); };
-    if ($('#oPlayer')) $('#oPlayer').onchange = (e) => { S.opt.playerId = e.target.value; re(); };
-    if ($('#oGroup')) $('#oGroup').onchange = (e) => { S.opt.group = e.target.value; re(); };
-    $$('#oDur button').forEach((b) => b.onclick = () => { S.dur = b.dataset.v === 'custom' ? Number($('#oSecs').value) || 15 : b.dataset.v; renderSel(); });
-    if ($('#oSecs')) $('#oSecs').oninput = (e) => { const n = Math.round(Number(e.target.value)); if (n >= 1 && n <= GX.MAX_SEC) S.dur = n; };
-    $$('#oMode button').forEach((b) => b.onclick = () => { if (b.getAttribute('aria-pressed') !== 'true') airCmd({ action: 'live-mode', mode: b.dataset.m }, 'mode'); });
-    renderSelState();
-  }
-  // the selected template's state and its take / off-air buttons — from the
-  // server's state and the outputs, redrawn on every change of either
-  function renderSelState() {
-    if (!$('#selAct')) return;
-    const k = S.sel, a = avail(k), g = S.air || {}, scene = GX.SCENES[k];
-    let hint, act, note;
-    if (scene) {
-      const c = GX.sceneCard(k, g, S.outputs, airNow()), busy = S.busy['g:' + k], isOn = g.scene === k;
-      hint = busy ? 'Taking to air…' : c ? c.word + (c.why ? ' — ' + c.why : '') : a.hint;
-      act = `<button class="btn primary" id="take" ${S.matchId && !busy ? '' : 'disabled'} style="background:#dc2626">● Take to air</button>${isOn ? `<button class="btn" id="dismiss" ${S.busy.master ? 'disabled' : ''}>Take off air</button>` : ''}`;
-      note = GX.liveLayout(g, S.saved, null) ? 'The live overlay steps off while it is on air and comes back with the latest score when it ends.' : 'The live overlay is off air (Manual), so nothing comes back when it ends.';
-    } else {
-      const lv = GX.liveOf(g), busy = S.busy['live:' + k] || S.busy.mode;
-      hint = busy ? 'Working…' : a.hint;
-      $$('#oMode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.m === lv.mode)));
-      act = a.live && a.live.chosen && !g.clean ? `<button class="btn" id="lvOff" ${busy ? 'disabled' : ''}>Take off air</button>`
-        : `<button class="btn primary" id="lvOn" ${busy || !S.matchId ? 'disabled' : ''} style="background:#dc2626">● Take on air</button>`;
-      note = (lv.mode === 'auto' ? 'Automatic: the tournament’s layout shows by itself and comes back after every graphic.' : 'Manual: only what is taken on air shows — a point, a timer or the end of a graphic never brings it back.')
-        + ' The score bar and the corner bug are alternatives: taking one on air replaces the other.';
-    }
-    $('#selHint').className = 'small' + (a.ok ? '' : ' muted');
-    $('#selHint').textContent = '· ' + hint;
-    $('#selAct').innerHTML = act;
-    $('#selNote').textContent = note;
-    if ($('#take')) $('#take').onclick = take;
-    if ($('#dismiss')) $('#dismiss').onclick = () => airCmd({ action: 'stop', id: g.id }, 'master');
-    if ($('#lvOn')) $('#lvOn').onclick = () => airCmd({ action: 'live-on', layout: k }, 'live:' + k);
-    if ($('#lvOff')) $('#lvOff').onclick = () => airCmd({ action: 'live-off', layout: k }, 'live:' + k);
-  }
-  function dataOf() {
-    const d = {};
-    if (S.opt.team) d.team = S.opt.team;
-    if (S.opt.set) d.set = S.opt.set;
-    if (S.opt.playerId) d.playerId = S.opt.playerId;
-    if (S.opt.group) d.group = S.opt.group;
-    return d;
-  }
-  async function take() {
-    if (S.sel === 'playerStat' && !S.opt.playerId) return toast('Choose a player first', 'err');
-    const cmd = { action: 'take', scene: S.sel, data: dataOf(), reqId: VB.uid() };
-    if (S.dur !== 'default') cmd.durationSec = S.dur;
-    const r = await airCmd(cmd, 'g:' + S.sel);
-    if (r.ok) toast(r.same ? 'Already on air' : 'Taken to air');
-  }
+    <div class="templates-grid" id="templatesGrid">
 
-  /* ---------- the preview: a private overlay, the look as edited ---------- */
-  function toPreview(msg) {
-    const f = $('#pvFrame');
-    if (f && f.contentWindow) f.contentWindow.postMessage(Object.assign({ type: 'vb-preview' }, msg), location.origin);
-  }
-  function previewStyle() { const st = JSON.parse(JSON.stringify(S.draft || S.saved)); if (S.sel === 'compact') st.layout = 'compact'; else if (S.sel === 'bar') st.layout = 'bar'; return st; }
-  function pushStyle() { toPreview({ style: previewStyle(), cmd: 'restyle' }); }
-  function preview() {
-    if (S.sel === 'bar' || S.sel === 'compact') return toPreview({ style: previewStyle(), cmd: 'live' });
-    if (S.sel === 'playerStat' && !S.opt.playerId) { const p = ((S.match && S.match.squads && S.match.squads.A) || [])[0]; if (p) S.opt.playerId = p.playerId; }
-    toPreview({ style: previewStyle(), cmd: 'show', scene: S.sel, data: dataOf() });
-  }
-  window.addEventListener('message', (e) => {
-    if (e.origin !== location.origin || !e.data || e.data.type !== 'vb-preview-state') return;
-    const f = $('#pvFrame');
-    if (!f || e.source !== f.contentWindow) return;
-    S.pv = e.data;
-    const n = $('#pvNote');
-    if (e.data.failed) { n.textContent = 'Nothing true to show yet: ' + e.data.failed; n.classList.remove('hide'); }
-    else n.classList.add('hide');
-  });
+        <!-- 1. Live score bar: the volleyball overlay itself, driven by the scoring panel -->
+        <div class="template-card" data-title="Live Score Bar sets points serve" data-accent="blue" style="--card-accent:var(--accent); --card-accent-soft:var(--accent-soft);">
+            <div class="card-footer">Live Score Bar</div>
+            <div class="card-preview">
+                <div class="vb-bar">
+                    <div class="vb-row">
+                        <i class="vb-col" style="background:#c81e3c"></i>
+                        <span class="vb-team">MUMBAI SPIKERS <i class="vb-serve" title="Serving"></i></span>
+                        <span class="vb-set">2</span>
+                        <span class="vb-pts">21</span>
+                    </div>
+                    <div class="vb-row">
+                        <i class="vb-col" style="background:#1d4ed8"></i>
+                        <span class="vb-team">PUNE BLOCKERS</span>
+                        <span class="vb-set">1</span>
+                        <span class="vb-pts">18</span>
+                    </div>
+                    <div class="vb-foot"><span>SET 4</span><span class="vb-tag">SET POINT</span></div>
+                </div>
+                <a href="/volleyball" class="add-overlay-btn">➕ Add Overlay</a>
+            </div>
+        </div>
 
-  /* ---------- the look ---------- */
-  function renderLook() {
-    const d = S.draft || S.saved;
-    const seg = (id, val, opts) => `<div class="seg" id="${id}">${opts.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(val) === String(v)}">${esc(l)}</button>`).join('')}</div>`;
-    $('#look').innerHTML = `
-      <label class="field"><span>Accent</span><input type="color" id="lAcc" value="${esc(d.accent)}"></label>
-      <label class="field"><span>Base</span><input type="color" id="lBase" value="${esc(d.base)}"></label>
-      <div class="field full"><span class="small muted">Behind a graphic — ${esc(GX.BACKDROPS[d.backdrop])}</span>${seg('lBd', d.backdrop, [['scrim', 'Darken the picture'], ['solid', 'Opaque design'], ['clear', 'None']])}</div>
-      <label class="field full"><span>How dark the picture goes behind a graphic · ${Math.round(d.dim * 100)}%</span><input type="range" id="lDim" min="30" max="95" value="${Math.round(d.dim * 100)}" ${d.backdrop === 'scrim' ? '' : 'disabled'}></label>
-      <label class="field"><span>Typeface</span><select class="input" id="lFont">${Object.keys(GX.FONTS).map((k) => `<option value="${k}" ${d.font === k ? 'selected' : ''}>${esc(GX.FONTS[k].label)}</option>`).join('')}</select></label>
-      <label class="field"><span>Motion</span><select class="input" id="lSpeed">${Object.keys(GX.SPEEDS).map((k) => `<option value="${k}" ${Number(k) === d.speed ? 'selected' : ''}>${esc(GX.SPEEDS[k])}</option>`).join('')}</select></label>
-      <div class="field"><span class="small muted">Crest plates</span>${seg('lPlates', d.plates, [['auto', 'Auto'], ['light', 'White'], ['dark', 'Dark']])}</div>
-      <div class="field"><span class="small muted">Team names</span>${seg('lNames', d.names, [['auto', 'Fit'], ['full', 'Full'], ['short', 'Short']])}</div>
-      <div class="field"><span class="small muted">Score overlay</span>${seg('lLayout', d.layout, [['bar', 'Bottom bar'], ['compact', 'Corner bug']])}</div>
-      <div class="field"><span class="small muted">On the bar</span><div class="row wrapr"><label class="row small"><input type="checkbox" id="lTags" ${d.pointTags ? 'checked' : ''}> Point tags</label><label class="row small"><input type="checkbox" id="lHist" ${d.setHistory ? 'checked' : ''}> Set history</label></div></div>`;
-    const ch = (fn) => () => { fn(); renderLook(); markDirty(); pushStyle(); };
-    $('#lAcc').oninput = (e) => { S.draft.accent = e.target.value; markDirty(); pushStyle(); };
-    $('#lBase').oninput = (e) => { S.draft.base = e.target.value; markDirty(); pushStyle(); };
-    $('#lDim').oninput = (e) => { S.draft.dim = Number(e.target.value) / 100; markDirty(); pushStyle(); e.target.previousElementSibling.textContent = `How dark the picture goes behind a graphic · ${e.target.value}%`; };
-    $('#lFont').onchange = ch(() => { S.draft.font = $('#lFont').value; });
-    $('#lSpeed').onchange = ch(() => { S.draft.speed = Number($('#lSpeed').value); });
-    $('#lTags').onchange = ch(() => { S.draft.pointTags = $('#lTags').checked; });
-    $('#lHist').onchange = ch(() => { S.draft.setHistory = $('#lHist').checked; });
-    [['lBd', 'backdrop'], ['lPlates', 'plates'], ['lNames', 'names'], ['lLayout', 'layout']].forEach(([id, key]) => $$('#' + id + ' button').forEach((b) => b.onclick = ch(() => { S.draft[key] = b.dataset.v; })));
-    markDirty();
-  }
-  function renderDurs() {
-    const d = S.draft || S.saved;
-    $('#durs').innerHTML = GX.ORDER.map((k) => { const has = Object.prototype.hasOwnProperty.call(d.durations, k); const v = has ? d.durations[k] : GX.SCENES[k].def;
-      return `<label title="${esc(GX.SCENES[k].label)}"><span class="ellipsis">${esc(GX.SCENES[k].label)}</span><input data-d="${k}" inputmode="numeric" placeholder="${GX.SCENES[k].def == null ? 'hold' : GX.SCENES[k].def}" value="${has ? (v == null ? 'hold' : v) : ''}"></label>`; }).join('')
-      + '<p class="tiny muted" style="grid-column:1/-1">Seconds, or “hold” to stay until dismissed. The time-out graphic ends with the time-out unless a time is set.</p>';
-    $$('[data-d]', $('#durs')).forEach((inp) => inp.onchange = () => {
-      const k = inp.dataset.d, v = inp.value.trim().toLowerCase();
-      if (!v) delete S.draft.durations[k];
-      else { const p = GX.parseDuration(v === 'hold' ? 'hold' : v); if (p === undefined) { toast(GX.BAD_TIME, 'err'); inp.value = ''; delete S.draft.durations[k]; } else S.draft.durations[k] = p; }
-      markDirty(); renderSel();
-    });
-  }
-  function markDirty() { if ($('#dirty')) $('#dirty').classList.toggle('hide', JSON.stringify(GX.normalizeStyle(S.draft)) === JSON.stringify(GX.normalizeStyle(S.saved))); }
-  async function saveLook() {
-    if (!S.tid) return;
-    const r = await api('PUT', `/api/volleyball/tournaments/${encodeURIComponent(S.tid)}/broadcast`, { style: GX.normalizeStyle(S.draft) });
-    if (!r.ok) return toast((r.json && r.json.error) || 'Could not save the look', 'err');
-    S.saved = GX.normalizeStyle(r.json.style); S.draft = JSON.parse(JSON.stringify(S.saved));
-    renderLook(); renderDurs(); renderSel(); markDirty();
-    toast('Saved — every overlay of the tournament now uses it');
-  }
+        <!-- 2. Corner bug: the same live score, two rows top-left -->
+        <div class="template-card" data-title="Corner Score Bug compact" data-accent="amber" style="--card-accent:var(--accent-amber); --card-accent-soft:var(--accent-amber-soft);">
+            <div class="card-footer">Corner Score Bug</div>
+            <div class="card-preview" style="align-items:flex-start; justify-content:flex-start; padding:26px 30px;">
+                <div class="vb-bug">
+                    <div class="vb-bug-row"><i style="background:#c81e3c"></i><b>MUM</b><span class="s">2</span><span class="p">21</span></div>
+                    <div class="vb-bug-row"><i style="background:#1d4ed8"></i><b>PUN</b><span class="s">1</span><span class="p">18</span></div>
+                </div>
+                <a href="/volleyball-studio?tpl=compact" class="add-overlay-btn">➕ Add Overlay</a>
+            </div>
+        </div>
 
-  /* ---------- the teams as the graphics show them ---------- */
-  function renderTeams() {
-    if (!S.match) return;
-    $('#teams').innerHTML = ['A', 'B'].map((side) => {
-      const t = S.teams.find((x) => x.teamId === S.match['team' + side].teamId) || S.match['team' + side];
-      const c = t.colors || {};
-      const photos = (t.players || []).filter((p) => p.photo).length, n = (t.players || []).length;
-      return `<div class="card" data-team="${esc(t.teamId)}"><div class="teamed"><label class="lp" title="Change the crest" style="${t.logo ? `background-image:url('${esc(t.logo)}')` : ''}">${t.logo ? '' : esc(t.shortName || '?')}<input type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
-        <div class="stack" style="gap:8px"><div class="grid2"><label class="field"><span class="small muted">Name</span><input class="input" data-f="name" maxlength="60" value="${esc(t.name)}"></label><label class="field"><span class="small muted">Short (≤4)</span><input class="input" data-f="shortName" maxlength="4" value="${esc(t.shortName || '')}" style="text-transform:uppercase"></label></div>
-          <div class="row wrapr"><label class="row small">Colour <input type="color" data-c="primary" value="${esc(c.primary || '#1f3a8a')}"></label><label class="row small">Text <input type="color" data-c="text" value="${esc(c.text || '#ffffff')}"></label><span class="grow"></span><button class="btn sm primary" data-save>Save team</button></div>
-          <div class="tiny muted">${photos} of ${n} players have a portrait for the starting six · <a href="/volleyball#/teams">add portraits in the team editor</a></div></div></div></div>`;
-    }).join('');
-    $$('#teams [data-team]').forEach((card) => {
-      let logo;
-      $('.lp input', card).onchange = async (e) => { try { logo = await VB.readLogo(e.target.files[0], 512); const lp = $('.lp', card); lp.style.backgroundImage = `url('${logo}')`; lp.firstChild && lp.firstChild.nodeType === 3 && (lp.firstChild.textContent = ''); } catch (err) { toast(err.message, 'err'); } };
-      $('[data-save]', card).onclick = async () => {
-        const tid = card.dataset.team, t = S.teams.find((x) => x.teamId === tid) || {};
-        const body = { name: $('[data-f="name"]', card).value.trim(), shortName: $('[data-f="shortName"]', card).value.trim().toUpperCase(), colors: { primary: $('[data-c="primary"]', card).value, secondary: (t.colors && t.colors.secondary) || '#0a1136', text: $('[data-c="text"]', card).value } };
-        if (logo) body.logo = logo;
-        const r = await api('PUT', `/api/volleyball/teams/${encodeURIComponent(tid)}`, body);
-        if (!r.ok) return toast((r.json && r.json.error) || 'Could not save the team', 'err');
-        toast('Team saved — the overlays show it now');
-        const i = S.teams.findIndex((x) => x.teamId === tid); if (i >= 0) S.teams[i] = r.json.team;
-        logo = null;
-      };
-    });
-  }
+        <!-- 3. Match intro -->
+        <div class="template-card" data-title="Match Intro Fullscreen" data-accent="red" style="--card-accent:var(--accent-red); --card-accent-soft:var(--accent-red-soft);">
+            <div class="card-footer">Match Intro — Fullscreen</div>
+            <div class="card-preview">
+                <div class="mi-mockup">
+                    <div class="mi-header">
+                        <div class="mi-league">◆ VOLLEYBALL ◆</div>
+                        <div class="mi-round">League Match · Best of 5</div>
+                    </div>
+                    <div class="mi-body">
+                        <div class="mi-team">
+                            <div class="mi-logo" style="background:linear-gradient(160deg,#c81e3c,#7f1d1d)">MS</div>
+                            <div class="mi-name">Mumbai Spikers</div>
+                        </div>
+                        <div class="mi-vs">VS</div>
+                        <div class="mi-team">
+                            <div class="mi-logo" style="background:linear-gradient(160deg,#1d4ed8,#1e3a8a)">PB</div>
+                            <div class="mi-name">Pune Blockers</div>
+                        </div>
+                    </div>
+                    <div class="mi-footer"><span>Indoor Arena</span></div>
+                </div>
+                <a href="/volleyball-studio?tpl=intro" class="add-overlay-btn">➕ Add Overlay</a>
+            </div>
+        </div>
 
-  boot();
-})();
-</script>
+        <!-- 4. Starting six on a court -->
+        <div class="template-card" data-title="Starting Six lineup rotation court" data-accent="cyan" style="--card-accent:var(--accent-cyan); --card-accent-soft:var(--accent-cyan-soft);">
+            <div class="card-footer">Starting Six</div>
+            <div class="card-preview">
+                <div class="six-mockup">
+                    <div class="six-head"><span>MUMBAI SPIKERS</span><small>STARTING SIX</small></div>
+                    <div class="six-court">
+                        <span class="six-net"></span>
+                        <b>4</b><b>3</b><b>2</b>
+                        <b>5</b><b class="lib">6</b><b class="srv">1</b>
+                    </div>
+                </div>
+                <a href="/volleyball-studio?tpl=lineup" class="add-overlay-btn">➕ Add Overlay</a>
+            </div>
+        </div>
+
+        <!-- 5. Set / match result -->
+        <div class="template-card" data-title="Set Result Match Result final" data-accent="pink" style="--card-accent:var(--accent-pink); --card-accent-soft:var(--accent-pink-soft);">
+            <div class="card-footer">Set &amp; Match Result</div>
+            <div class="card-preview">
+                <div class="res-mockup">
+                    <div class="res-head">MATCH RESULT</div>
+                    <div class="res-row win"><i style="background:#c81e3c"></i><span>MUMBAI SPIKERS</span><b>3</b><em>25</em><em>22</em><em>25</em><em>25</em></div>
+                    <div class="res-row"><i style="background:#1d4ed8"></i><span>PUNE BLOCKERS</span><b>1</b><em>21</em><em>25</em><em>19</em><em>23</em></div>
+                </div>
+                <a href="/volleyball-studio?tpl=final" class="add-overlay-btn">➕ Add Overlay</a>
+            </div>
+        </div>
+
+        <!-- 6. Points table -->
+        <div class="template-card" data-title="Points Table standings" data-accent="green" style="--card-accent:var(--accent-green); --card-accent-soft:var(--accent-green-soft);">
+            <div class="card-footer">Points Table</div>
+            <div class="card-preview">
+                <div class="pt-mockup">
+                    <div class="pt-row pt-h"><span>#</span><span>TEAM</span><span>P</span><span>W</span><span>PTS</span></div>
+                    <div class="pt-row q"><span>1</span><span>Mumbai Spikers</span><span>4</span><span>4</span><span>11</span></div>
+                    <div class="pt-row q"><span>2</span><span>Pune Blockers</span><span>4</span><span>3</span><span>9</span></div>
+                    <div class="pt-row"><span>3</span><span>Delhi Diggers</span><span>4</span><span>1</span><span>4</span></div>
+                </div>
+                <a href="/volleyball-studio?tpl=standings" class="add-overlay-btn">➕ Add Overlay</a>
+            </div>
+        </div>
+
+        <div class="no-results" id="noResults">
+            <strong>No overlays match "<span id="noResultsQuery"></span>"</strong>
+            Try a different name, or clear the search to see all overlays.
+        </div>
+
+    </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var fine = window.matchMedia('(pointer: fine)').matches;
+
+        /* ---------------- Cinematic entrance ---------------- */
+        function animateIn(el, delay) {
+            if (reduceMotion) { el.style.opacity = 1; return; }
+            el.style.animation = 'fadeInSlideUp 0.6s ' + delay + 's var(--ease-out) forwards';
+        }
+        animateIn(document.getElementById('topNav'), 0);
+        animateIn(document.getElementById('searchBar'), 0.12);
+
+        var cards = Array.prototype.slice.call(document.querySelectorAll('.template-card'));
+        cards.forEach(function (card, i) {
+            if (reduceMotion) { card.style.opacity = 1; return; }
+            card.style.animation = 'cardIntro 0.7s ' + (0.24 + i * 0.09) + 's var(--ease-spring) forwards';
+        });
+
+        /* ---------------- Custom cursor (tally-light reticle) ---------------- */
+        if (fine && !reduceMotion) {
+            document.body.classList.add('cursor-ready');
+            var dot = document.getElementById('cursorDot');
+            var ring = document.getElementById('cursorRing');
+            var mx = -100, my = -100, rx = -100, ry = -100;
+
+            window.addEventListener('mousemove', function (e) {
+                mx = e.clientX; my = e.clientY;
+                dot.style.transform = 'translate(' + mx + 'px,' + my + 'px) translate(-50%,-50%)';
+            });
+
+            function raf() {
+                rx += (mx - rx) * 0.18;
+                ry += (my - ry) * 0.18;
+                ring.style.transform = 'translate(' + rx + 'px,' + ry + 'px) translate(-50%,-50%)';
+                requestAnimationFrame(raf);
+            }
+            requestAnimationFrame(raf);
+
+            var interactiveSel = 'a, button, input, .template-card';
+            document.addEventListener('mouseover', function (e) {
+                var t = e.target.closest(interactiveSel);
+                if (!t) return;
+                ring.classList.add('hovering');
+                var card = e.target.closest('.template-card');
+                var accent = card ? card.getAttribute('data-accent') : null;
+                if (accent) document.documentElement.style.setProperty('--cursor-color', accent === 'blue' ? 'var(--accent)' : 'var(--accent-' + accent + ')');
+            });
+            document.addEventListener('mouseout', function (e) {
+                var t = e.target.closest(interactiveSel);
+                if (!t) return;
+                ring.classList.remove('hovering');
+                document.documentElement.style.setProperty('--cursor-color', 'var(--accent)');
+            });
+        }
+
+        /* ---------------- 3D tilt + magnetic button per card ---------------- */
+        if (fine && !reduceMotion) {
+            cards.forEach(function (card) {
+                var btn = card.querySelector('.add-overlay-btn');
+
+                card.addEventListener('mousemove', function (e) {
+                    var r = card.getBoundingClientRect();
+                    var px = (e.clientX - r.left) / r.width;   // 0..1
+                    var py = (e.clientY - r.top) / r.height;   // 0..1
+                    var rotY = (px - 0.5) * 10;   // deg
+                    var rotX = (0.5 - py) * 10;   // deg
+                    card.style.transform = 'perspective(1400px) rotateX(' + rotX + 'deg) rotateY(' + rotY + 'deg) translateY(-4px)';
+
+                    if (btn) {
+                        var br = btn.getBoundingClientRect();
+                        var bcx = br.left + br.width / 2, bcy = br.top + br.height / 2;
+                        var dx = (e.clientX - bcx) * 0.18;
+                        var dy = (e.clientY - bcy) * 0.18;
+                        var dist = Math.hypot(e.clientX - bcx, e.clientY - bcy);
+                        if (dist < 140) {
+                            btn.style.transform = 'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
+                        }
+                    }
+                });
+
+                card.addEventListener('mouseleave', function () {
+                    card.style.transform = '';
+                    if (btn) btn.style.transform = 'translate(-50%, -50%)';
+                });
+            });
+        }
+
+        /* ---------------- Live search filter ---------------- */
+        var searchBox = document.getElementById('searchBox');
+        var noResults = document.getElementById('noResults');
+        var noResultsQuery = document.getElementById('noResultsQuery');
+
+        function applyFilter() {
+            var q = searchBox.value.trim().toLowerCase();
+            var visible = 0;
+            cards.forEach(function (card) {
+                var title = (card.getAttribute('data-title') || '').toLowerCase();
+                var match = !q || title.indexOf(q) !== -1;
+                card.classList.toggle('hiding', !match);
+                if (match) visible++;
+            });
+            if (visible === 0 && q) {
+                noResultsQuery.textContent = searchBox.value.trim();
+                noResults.classList.add('show');
+            } else {
+                noResults.classList.remove('show');
+            }
+        }
+        searchBox.addEventListener('input', applyFilter);
+
+        document.addEventListener('keydown', function (e) {
+            var tag = document.activeElement && document.activeElement.tagName;
+            if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                e.preventDefault();
+                searchBox.focus();
+            } else if (e.key === 'Escape' && document.activeElement === searchBox) {
+                searchBox.value = '';
+                applyFilter();
+                searchBox.blur();
+            }
+        });
+
+        /* ---------------- Cinematic navigation veil ---------------- */
+        window.scorvixNavigate = function (href, fallback) {
+            var veil = document.getElementById('pageVeil');
+            if (reduceMotion) { href ? (window.location.href = href) : fallback(); return; }
+            veil.classList.add('active');
+            setTimeout(function () {
+                if (href) window.location.href = href; else fallback();
+            }, 260);
+        };
+
+        document.querySelectorAll('a.add-overlay-btn, a[data-nav]').forEach(function (a) {
+            a.addEventListener('click', function (e) {
+                e.preventDefault();
+                window.scorvixNavigate(a.getAttribute('href'));
+            });
+        });
+    })();
+    </script>
+
 </body>
 </html>

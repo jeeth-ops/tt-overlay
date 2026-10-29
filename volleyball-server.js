@@ -1801,7 +1801,13 @@ module.exports = function setupVolleyball(deps) {
   /* ------------------------------------------------------------ pages */
   const page = (file) => (req, res) => deps.sendHtmlNoCache(res, path.join(deps.rootDir, file));
   app.get('/volleyball', page('volleyball.html'));
-  app.get('/volleyball-templates', page('volleyball-templates.html'));
+  // the overlay picker, as for every sport; the graphics studio is its own page
+  // (a studio link from before it moved — ?match= — still lands in it)
+  app.get('/volleyball-templates', (req, res, next) => {
+    if (req.query.match) return res.redirect(302, '/volleyball-studio' + req.originalUrl.slice(req.path.length));
+    return page('volleyball-templates.html')(req, res, next);
+  });
+  app.get('/volleyball-studio', page('volleyball-studio.html'));
   app.get('/volleyball-panel', page('volleyball-panel.html'));
   app.get('/volleyball-overlay', page('volleyball-overlay.html'));
   app.get('/volleyball-clipper', page('volleyball-clipper.html'));

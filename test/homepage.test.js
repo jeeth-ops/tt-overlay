@@ -89,6 +89,9 @@ const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 }
 
 /* ---------------- the page ---------------- */
+// 🏐 the volleyball module's own public list (GET /api/volleyball/public/tournaments)
+const VB_TOURNAMENTS = [{ tournamentId: 'vbt1', sport: 'volleyball', name: 'Mumbai Volley League 2026', venue: 'NSCI Dome', city: 'Mumbai', startDate: '2026-10-10', endDate: '2026-10-30',
+  logo: null, status: 'live', teams: 6, matchCount: 9, liveCount: 1, updatedAt: 0, url: '/volleyball/tournament/vbt1' }];
 const TT = (o) => Object.assign({ sport: 'cricket', matchCount: 12, upcomingCount: 0, updatedAt: 0, streams: [] }, o);
 const S = (videoId, title, label, at, live) => ({ videoId, title, label, at, live });
 // the server's order: live first, then the most recently updated
@@ -116,7 +119,7 @@ const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 't
 let gsapJs = null;
 try { gsapJs = fs.readFileSync(require.resolve('gsap/dist/gsap.min.js')); } catch (e) { /* the page falls back to CSS */ }
 
-async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null, listDown = false, listDelay = 0, url = '/' } = {}) {
+async function openHome(browser, { width = 1440, height = 900, reduced = false, list = TOURNAMENTS, owner = false, picks = { added: [], hidden: [] }, admin = null, listDown = false, listDelay = 0, url = '/', vb = VB_TOURNAMENTS, vbDown = false } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, timezoneId: 'Asia/Kolkata', reducedMotion: reduced ? 'reduce' : 'no-preference', isMobile: width < 800, hasTouch: width < 800 });
   const page = await ctx.newPage();
   await page.clock.install({ time: new Date('2026-10-22T12:00:00+05:30') });
@@ -127,6 +130,11 @@ async function openHome(browser, { width = 1440, height = 900, reduced = false, 
   await page.route('**/*', async (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === 'site.test') {
+      if (u.pathname === '/api/volleyball/public/tournaments') {
+        state.vbCalls = (state.vbCalls || 0) + 1;
+        if (vbDown) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"success":false}' });
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, tournaments: vb, ownerView: false }) });
+      }
       if (u.pathname === '/api/public/tournaments') {
         state.listCalls++;
         if (listDelay) await sleep(listDelay);
@@ -204,11 +212,11 @@ async function search(page, text) {
     eq('the report row: the new heading, no paragraph under it', await page.$eval('#feat-report .feat-copy', (c) => [c.querySelector('h3').textContent, c.querySelectorAll(':scope > p').length]),
       ['A stunning, professional match report for every match', 0]);
     eq('the broadcast row: no paragraph under the heading', await page.$eval('#feat-broadcast .feat-copy', (c) => c.querySelectorAll(':scope > p').length), 0);
-    eq('three sports', await page.$$eval('.sport-tile h3', (h) => h.map((x) => x.textContent.replace(/^\W+/, ''))), ['Cricket', 'Table Tennis', 'Football']);
+    eq('four sports', await page.$$eval('.sport-tile h3', (h) => h.map((x) => x.textContent.replace(/^\W+/, ''))), ['Cricket', 'Table Tennis', 'Football', 'Volleyball']);
     const imgs = await page.$$eval('main img, section img', (list) => list.filter((i) => !i.closest('#hero-section') && !i.closest('#tournaments-grid') && !i.closest('#streamsGrid') && !i.closest('#walk'))
       .map((i) => ({ src: i.getAttribute('src'), srcset: i.getAttribute('srcset') || '', lazy: i.getAttribute('loading'), dec: i.getAttribute('decoding'), w: i.getAttribute('width'), h: i.getAttribute('height'), alt: i.getAttribute('alt') })));
     eq('every product picture: a local WebP, lazy, async, sized, described', imgs.filter((i) => !(/^\/assets\/home\/[\w-]+\.webp$/.test(i.src) && i.lazy === 'lazy' && i.dec === 'async' && +i.w > 0 && +i.h > 0 && i.alt && i.alt.length > 10)).map((i) => i.src), []);
-    eq('… all 11 of them (8 in the feature rows, 3 sport tiles)', imgs.length, 11);
+    eq('… all 12 of them (8 in the feature rows, 4 sport tiles)', imgs.length, 12);
     const refs = [...new Set((HTML.match(/\/assets\/home\/[\w.-]+/g) || []))];
     eq('every /assets/home file the page names exists', refs.filter((r) => !fs.existsSync(path.join(ROOT, r))), []);
     eq('nothing comes from Wikimedia any more', /wikimedia/i.test(HTML), false);
@@ -640,7 +648,7 @@ async function search(page, text) {
       cards: [...document.querySelectorAll('#tournaments-grid .tournament-card h3')].map((h) => h.textContent) }));
     const { ctx, page, errors, state } = await openHome(browser, { list });
     let r = await row(page);
-    eq('three sport tabs with their counts; Cricket chosen, nothing in the URL', [r.tabs, r.search, r.title], [[['cricket', 'true', '8'], ['football', 'false', '1'], ['tabletennis', 'false', '2']], '', 'Cricket tournaments 8']);
+    eq('four sport tabs with their counts; Cricket chosen, nothing in the URL', [r.tabs, r.search, r.title], [[['cricket', 'true', '8'], ['football', 'false', '1'], ['tabletennis', 'false', '2'], ['volleyball', 'false', '1']], '', 'Cricket tournaments 8']);
     eq('… the cricket row: cricket only, live first', r.cards, ['Western Suburbs Premier League', 'Weekend Box Cricket Smash', 'Thane Corporate Cup', 'MCA President Cup 2026 - 27', 'Navi Mumbai Diwali Trophy', 'Western Suburbs Premier League — Women', 'Pune Monsoon Bash', 'Kanga League 2026']);
     const card = (token) => page.$eval(`#tournaments-grid a[data-token="${token}"]`, (a) => {
       const m = a.querySelector('.tc-media'), b = m.getBoundingClientRect(), img = m.querySelector(':scope > img'), art = m.querySelector('.tc-art');
@@ -666,7 +674,7 @@ async function search(page, text) {
     const calls = state.listCalls;
     await page.click('#sportTab-tabletennis');
     r = await row(page);
-    eq('Table Tennis: its own tournaments, the URL says so', [r.tabs.map((t) => t[1]), r.cards, r.title, r.search], [['false', 'false', 'true'], ['City Open', 'Thane TT Masters'], 'Table Tennis tournaments 2', '?sport=table-tennis']);
+    eq('Table Tennis: its own tournaments, the URL says so', [r.tabs.map((t) => t[1]), r.cards, r.title, r.search], [['false', 'false', 'true', 'false'], ['City Open', 'Thane TT Masters'], 'Table Tennis tournaments 2', '?sport=table-tennis']);
     eq('… the table tennis picture', (await card('tt2')).art, ['TTM', 'Table Tennis']);
     await page.click('#sportTab-football');
     r = await row(page);
@@ -679,6 +687,13 @@ async function search(page, text) {
     await page.goForward();
     eq('Forward: Table Tennis', (await row(page)).tabs[2][1], 'true');
     await page.focus('#sportTab-tabletennis');
+    await page.keyboard.press('ArrowRight');
+    r = await row(page);
+    eq('Volleyball: its own tournaments, from its own module', [await page.evaluate(() => document.activeElement.id), r.cards, r.title, r.search], ['sportTab-volleyball', ['Mumbai Volley League 2026'], 'Volleyball tournaments 1', '?sport=volleyball']);
+    c = await card('vb-vbt1');
+    eq('… the card opens the volleyball tournament page; its lines; the volleyball picture', [c.href, c.meta, c.sub, c.art, c.ratio], ['/volleyball/tournament/vbt1', 'Volleyball · Mumbai', '9 matches · 10 Oct – 30 Oct', ['MVL', 'Volleyball'], 1.778]);
+    if (SHOTS) { await page.evaluate(() => document.getElementById('tournaments').scrollIntoView()); await page.waitForTimeout(600); await page.screenshot({ path: path.join(SHOTS, 'home-volleyball-tab.png') }); }
+    eq('… and it is live', await page.$eval('#tournaments-grid a[data-token="vb-vbt1"]', (a) => a.classList.contains('status-live') && !!a.querySelector('.tournament-status-badge.live')), true);
     await page.keyboard.press('ArrowRight');
     eq('the arrow keys move between the tabs (and wrap)', [await page.evaluate(() => document.activeElement.id), (await row(page)).tabs[0][1]], ['sportTab-cricket', 'true']);
     // the row scrolls on its own, never the page
@@ -707,7 +722,7 @@ async function search(page, text) {
     await tt.ctx.close();
     const none = await openHome(browser, { list: list.filter((t) => t.sport !== 'football'), url: '/?sport=football' });
     eq('a sport with no tournaments: says so, the tabs stay', await none.page.evaluate(() => [document.getElementById('tournaments-empty').style.display, document.getElementById('tournamentsEmptyText').textContent,
-      document.getElementById('tournaments-grid').hidden, document.querySelectorAll('.sport-tab').length]), ['block', 'No football tournaments right now.', true, 3]);
+      document.getElementById('tournaments-grid').hidden, document.querySelectorAll('.sport-tab').length]), ['block', 'No football tournaments right now.', true, 4]);
     await none.ctx.close();
 
     // loading, and a list that will not load
@@ -730,6 +745,23 @@ async function search(page, text) {
     await down.page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
     eq('… Try again asks again and brings the cards', [down.state.listCalls > tries, (await cards(down.page)).length, await down.page.evaluate(() => document.getElementById('tournamentsRetry').hidden)], [true, 8, true]);
     await down.ctx.close();
+    // the volleyball module's list fails: the other sports are untouched
+    const vbDown = await openHome(browser, { list, vbDown: true });
+    await vbDown.page.waitForFunction(() => document.querySelectorAll('.tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
+    eq('the volleyball list fails to load: the other sports\' cards come all the same, Volleyball counts 0', [(await cards(vbDown.page)).length,
+      await vbDown.page.$eval('#sportTab-volleyball [data-count]', (e) => e.textContent), vbDown.errors], [8, '0', []]);
+    await vbDown.ctx.close();
+    // a phone, opened on ?sport=volleyball: four tabs fit, the page never scrolls sideways
+    const ph = await openHome(browser, { list, width: 390, height: 844, url: '/?sport=volleyball' });
+    await ph.page.waitForFunction(() => document.querySelectorAll('#tournaments-grid .tournament-card:not(.is-skeleton)').length > 0, null, { timeout: 8000 });
+    await ph.page.evaluate(() => document.getElementById('tournaments').scrollIntoView());
+    await ph.page.waitForTimeout(600);
+    eq('390px, ?sport=volleyball: Volleyball chosen, each tab\'s name fits, no sideways scroll', await ph.page.evaluate(() => [
+      document.getElementById('sportTab-volleyball').getAttribute('aria-selected'),
+      [...document.querySelectorAll('.sport-tab')].every((t) => t.scrollWidth <= t.clientWidth + 1 && t.querySelector('span').scrollWidth <= t.querySelector('span').clientWidth + 1),
+      document.documentElement.scrollWidth <= innerWidth + 1]), ['true', true, true]);
+    if (SHOTS) await ph.page.screenshot({ path: path.join(SHOTS, 'home-volleyball-tab-390.png') });
+    await ph.ctx.close();
   }
 
   console.log('\n=== the owner\'s thumbnails ===');
