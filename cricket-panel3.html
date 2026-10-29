@@ -6321,6 +6321,42 @@
     return true;
   }
 
+  // 🆔 A clip that names NO delivery (one from before deliveryId existed):
+  // does it fit this ball row? The same innings / over / ball, the same
+  // striker when both name one, and an event this delivery can have been —
+  // a WICKET clip needs a dismissal (of the same batter, when both name
+  // one), a FOUR / SIX that boundary, a plain CLIP a delivery that was
+  // neither. An over.ball alone never decides it: a Wide and the wicket
+  // before it can both be 19.5.
+  function clipFitsBall(clip, ball) {
+    if (!clip || !ball) return false;
+    if (clip.innings != null && ball.innings != null && Number(clip.innings) !== Number(ball.innings)) return false;
+    if (Number(clip.over) !== Number(ball.over) || Number(clip.ballInOver) !== Number(ball.ballInOver)) return false;
+    var cpid = idOf(clip.strikerPlayerId), bpid = idOf(ball.strikerPlayerId);
+    var crid = idOf(clip.strikerId), brid = idOf(ball.strikerId);
+    var cn = nameKey(clip.strikerName || clip.striker), bn = nameKey(ball.striker);
+    if (cpid && bpid) { if (cpid !== bpid) return false; }
+    else if (crid && brid) { if (crid !== brid) return false; }
+    else if (cn && bn && cn !== bn) return false;
+    var et = String(clip.eventType || '').toUpperCase();
+    var d = ball.dismissal && !/retired/i.test(String(ball.dismissal.type || '')) ? ball.dismissal : null;
+    if (et === 'WICKET') {
+      if (!d) return false;
+      var who = nameKey(clip.dismissedPlayerName || clip.dismissedPlayer), out = nameKey(d.batter || ball.striker);
+      return !(who && out && who !== out);
+    }
+    var ev = clipEventForBall(ball).eventType;
+    if (et === 'FOUR' || et === 'SIX') return ev === et;
+    if (et === 'CLIP') return ev === 'CLIP' && !d;
+    return true;
+  }
+  // The one ball row such a clip belongs to, out of the rows given — or
+  // null when none fits, or more than one does: never a guess.
+  function legacyDeliveryForClip(clip, balls) {
+    var fit = (balls || []).filter(function (b) { return clipFitsBall(clip, b); });
+    return fit.length === 1 ? fit[0] : null;
+  }
+
   // 🎬 What a clip of this delivery IS, from the stored ball row
   // ({ kind, runs, dismissal }) — the same buckets the live panel uses when
   // it cuts or classifies a clip (describeBallOutcome). Used when an owner
@@ -6511,7 +6547,9 @@
     resolveClipParticipants: resolveClipParticipants,
     clipBallMeta: clipBallMeta,
     clipOwner: clipOwner,
-    sameDelivery: sameDelivery
+    sameDelivery: sameDelivery,
+    clipFitsBall: clipFitsBall,
+    legacyDeliveryForClip: legacyDeliveryForClip
   };
 });
 /* CLIP-ATTRIBUTION:END */

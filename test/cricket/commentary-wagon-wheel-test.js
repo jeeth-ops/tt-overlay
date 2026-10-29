@@ -162,7 +162,7 @@ function state(o){
 
   console.log('\n=== WATCH REPLAY ===');
   P.E(`window.__opened = []; openVideoModal = (id) => window.__opened.push(id);
-       commentaryClipMap = { '1.0.3': { clipId: 'c-four', ready: true, playbackUrl: '/v.mp4', posterUrl: '' } };
+       commentaryClipIndex = buildClipIndex([{ clipId: 'c-four', innings: 1, over: 0, ballInOver: 3, ready: true, playbackUrl: '/v.mp4', posterUrl: '' }]);
        renderCommentaryPage(latestState);`);
   P.$('.cm-replay-btn[data-clip-id="c-four"]').click();
   P.E(`renderCommentaryPage(latestState); renderCommentaryPage(latestState);`);
