@@ -6576,11 +6576,15 @@ adminRouter.put('/clips/:clipId', async (req, res) => {
                 set.deliveryId = (fit && fit.ballUid) || null; set.deliveryNamed = false;
             }
         }
-        const result = await clipsCollection.findOneAndUpdate({ _id }, { $set: set }, { returnDocument: 'after' });
-        if (!result || !result.value) return res.status(404).json({ success: false, error: 'Clip not found' });
-        invalidateClipsCache(result.value.matchId);
+        // (updateOne + findOne: findOneAndUpdate answers { value } on one
+        // driver version and the document itself on the next — this route
+        // read .value and so answered "Clip not found" for every clip)
+        const upd = await clipsCollection.updateOne({ _id }, { $set: set });
+        if (!upd || !upd.matchedCount) return res.status(404).json({ success: false, error: 'Clip not found' });
+        const saved = await clipsCollection.findOne({ _id });
+        invalidateClipsCache(saved.matchId);
         await logAuditAction(req.ownerEmail, 'Owner clip correction', req.params.clipId, null, set);
-        res.json({ success: true, clip: serializeClip(result.value) });
+        res.json({ success: true, clip: serializeClip(saved) });
     } catch (err) {
         console.log('Owner clip correction error:', err);
         res.status(500).json({ success: false, error: 'Could not save clip correction' });
