@@ -390,9 +390,10 @@ async function pixelDiff(page, a, b) {
     await tab(page, 'mvp');
     const top = await txt(page, '.sct-mvp-name b'), pts = await txt(page, '.sct-mvp-pts b');
     ok(top === mvp[0] && Number(pts) === mvp[1], `MVP: ${mvp[0]} (${mvp[1]} points) — worked out independently from the record`, [top, pts]);
-    const chips = await txt(page, '.sct-calc'), whyT = await txt(page, '.sct-why'), mvpAll = await txt(page, '#sct-p-mvp');
-    ok(/2\/22 \(2\.0 ov\)/.test(chips) && /11\.00 economy/i.test(chips) && /Took 2 wickets for 22 runs in 2\.0 overs/.test(whyT), 'MVP: the real figures — 2/22 (2.0 ov), economy 11.00 — and why', [chips, whyT]);
-    ok(!/×|= \d+ points|per wicket|per catch|per run/i.test(mvpAll), 'MVP: points shown straight — no formula, no multipliers anywhere on the tab', mvpAll.slice(0, 300));
+    const stats = await txt(page, '.sct-mvp-stats'), facts = await txt(page, '.sct-mvp-facts'), mvpAll = await txt(page, '#sct-p-mvp');
+    ok(/Bowling 2\/22 2\.0 overs · econ 11\.00/i.test(stats) && !/Batting/i.test(stats), 'MVP: the real figures in one block per discipline — bowling 2/22, 2.0 overs, econ 11.00 (he did not bat)', stats);
+    ok(/Best bowling of the match/i.test(facts) && /18 ahead of Ishan Kishan/i.test(await txt(page, '.sct-mvp-pts')), 'MVP: what sets him apart (best bowling of the match) and the lead (18 ahead of Ishan Kishan)', [facts, await txt(page, '.sct-mvp-pts')]);
+    ok(!/×|= \d+ points|per wicket|per catch|per run/i.test(mvpAll) && !/[\u{1F300}-\u{1FAFF}]/u.test(mvpAll), 'MVP: points shown straight — no formula, no multipliers, no emoji', mvpAll.slice(0, 300));
     ok(/40 MVP points/i.test(await txt(page, '.sct-mvp-pts')), 'MVP: "40 MVP points"');
     ok((await page.$$('.sct-rank')).length >= 5, 'MVP: the standings list');
     await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-mvp.png`), fullPage: true });
