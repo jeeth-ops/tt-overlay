@@ -1,4 +1,4 @@
-/* 🎬 The volleyball graphics studio (/volleyball-templates) and the scoring
+/* 🎬 The volleyball graphics studio (/volleyball-studio) and the scoring
    panel's graphics controls, in Chromium against the REAL server:
 
      • signed out: the templates, explained — no match data, no controls
@@ -99,15 +99,35 @@ const FAKE_FIREBASE = `(function(){
     await ev({ type: 'SET_START', set: 1 });
     for (let i = 0; i < 4; i++) await ev({ type: 'RALLY', winner: i % 2 ? 'B' : 'A', outcome: 'GENERAL' });
 
+    head('THE OVERLAY PICKER (/volleyball-templates, as for every sport)');
+    {
+      const raw = (u) => new Promise((res) => http.get(base + u, (r) => { let b = ''; r.on('data', (c) => { b += c; }); r.on('end', () => res({ status: r.statusCode, loc: r.headers.location, body: b })); }));
+      const pick = await raw('/volleyball-templates');
+      ok('/volleyball-templates is the "Select an Overlay" page', pick.status === 200 && /Select an Overlay for Volleyball/.test(pick.body) && (pick.body.match(/class="template-card"/g) || []).length === 6);
+      const old = await raw(`/volleyball-templates?match=${M.matchId}`);
+      ok('…and a studio link from before (?match=) still lands in the studio', old.status === 302 && old.loc === `/volleyball-studio?match=${M.matchId}`, old);
+      let { ctx, page } = await open('/volleyball-templates', { signedIn: false });
+      await page.waitForSelector('.template-card');
+      const hrefs = await page.$$eval('.add-overlay-btn', (a) => a.map((x) => x.getAttribute('href')));
+      ok('every card leads somewhere real: the dashboard, or the studio on that template', hrefs[0] === '/volleyball' && hrefs.slice(1).every((h) => /^\/volleyball-studio\?tpl=(compact|intro|lineup|final|standings)$/.test(h)), hrefs);
+      ok('no sideways scrolling', await noSideways(page));
+      await ctx.close();
+      ({ ctx, page } = await open(`/volleyball-studio?match=${M.matchId}&tpl=standings`));
+      await page.waitForSelector('#pvFrame', { timeout: 15000 });
+      await page.waitForSelector('.tpl.sel');
+      ok('the studio opens on the card picked there (?tpl=)', (await page.$eval('.tpl.sel', (b) => b.dataset.k)) === 'standings');
+      await ctx.close();
+    }
+
     head('SIGNED OUT');
-    let { ctx, page } = await open('/volleyball-templates', { signedIn: false });
+    let { ctx, page } = await open('/volleyball-studio', { signedIn: false });
     await page.waitForSelector('.gate', { timeout: 10000 });
     ok('the templates are explained, all of them', (await page.$$('.tpl')).length === 13);
     ok('…with no match data and no controls', !(await page.$('#take')) && !(await page.$('iframe')));
     await ctx.close();
 
     head('PREVIEW IS NOT ON AIR');
-    ({ ctx, page } = await open(`/volleyball-templates?match=${M.matchId}`));
+    ({ ctx, page } = await open(`/volleyball-studio?match=${M.matchId}`));
     await page.waitForSelector('#pvFrame', { timeout: 15000 });
     const pv = () => page.frame({ url: /preview=1/ });
     const pg = () => page.frames().find((f) => /volleyball-overlay/.test(f.url()) && !/preview=1/.test(f.url()));
