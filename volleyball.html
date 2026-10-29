@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -10,20 +10,33 @@
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <style>
+  /* 🏟️ the Tournament Manager — the cricket portal's look: a cover per tournament, tiles, match cards */
   .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 22px 0 14px; flex-wrap: wrap; }
-  .hero h1 { font-size: clamp(26px, 4vw, 34px); letter-spacing: -.03em; }
-  .tcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-  .tcard { text-align: left; display: grid; gap: 10px; padding: 16px; border-radius: var(--r); background: var(--card); box-shadow: var(--shadow), 0 0 0 1px var(--line); transition: transform .3s var(--spring), box-shadow .3s; }
-  .tcard:hover { transform: translateY(-2px); box-shadow: 0 18px 40px -22px rgba(0,0,0,.4), 0 0 0 1px var(--line2); }
-  .tcard h3 { font-size: 17px; letter-spacing: -.01em; }
-  .mrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 14px; }
-  .mteams { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; }
-  .mteams .side { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .mteams .side.b { flex-direction: row-reverse; text-align: right; }
-  .mscore { font-weight: 800; font-size: 18px; min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
-  .mmeta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
-  .mact { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-  @media (max-width: 760px) { .mrow { grid-template-columns: minmax(0, 1fr); } .mact { justify-content: flex-start; } }
+  .hero h1 { font-size: clamp(26px, 4vw, 38px); letter-spacing: -.035em; font-weight: 900; }
+  .hero .kick { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--green); }
+  .mgr-cover { min-height: clamp(240px, 30vw, 340px); }
+  .mgr-cover .row-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .mgr-cover .row-acts .btn { background: rgba(9, 14, 26, .62); color: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, .14) inset; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .mgr-cover .row-acts .btn.primary { background: linear-gradient(135deg, #16a34a, #22c55e); box-shadow: 0 10px 24px -12px rgba(34, 197, 94, .9); }
+  .mgr-cover .back { align-self: flex-start; color: rgba(255, 255, 255, .8); font-weight: 700; font-size: 13px; margin-bottom: auto; padding: 4px 10px; border-radius: 99px; background: rgba(9, 14, 26, .5); }
+  .tiles.mgr { max-width: none; margin: 0 0 18px; }
+  .tcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+  .tcard { position: relative; overflow: hidden; text-align: left; display: flex; flex-direction: column; border-radius: 20px; background: var(--card); box-shadow: var(--shadow), 0 0 0 1px var(--line); transition: transform .3s var(--spring), box-shadow .3s; color: var(--ink); min-width: 0; isolation: isolate; }
+  .tcard:hover { transform: translateY(-3px); box-shadow: 0 24px 50px -26px rgba(0, 0, 0, .8), 0 0 0 1px var(--line2); }
+  .tcard .art-box { position: relative; height: 128px; overflow: hidden; }
+  .tcard .art-box svg.art { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tcard .art-box::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 30%, color-mix(in srgb, var(--card) 92%, transparent)); }
+  .tcard .art-box .st { position: absolute; top: 10px; right: 10px; z-index: 1; }
+  .tcard .tbody { display: grid; gap: 10px; padding: 0 16px 16px; margin-top: -30px; position: relative; z-index: 1; }
+  .tcard .tbody .logo { width: 52px; height: 52px; border-radius: 15px; background: #fff; font-size: 22px; box-shadow: 0 10px 24px -10px rgba(0, 0, 0, .7), 0 0 0 3px var(--card); }
+  .tcard h3 { font-size: 18px; letter-spacing: -.02em; font-weight: 800; }
+  .tcard .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .tcard.team { padding: 16px; display: grid; gap: 12px; }
+  .tcard.team::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 70px; z-index: -1; background: linear-gradient(120deg, color-mix(in srgb, var(--tc) 55%, transparent), transparent 80%); }
+  .tcard.team .logo { box-shadow: 0 0 0 3px var(--card); }
+  .ctrl { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .mcards .mrow .mc-acts .btn { height: 30px; padding: 0 11px; border-radius: 9px; font-size: 13px; }
+  .stand td.pos { width: 44px; }
   .roster { display: grid; gap: 6px; }
   .rrow { display: grid; grid-template-columns: 40px 54px minmax(0, 1fr) 150px auto auto auto 32px; gap: 6px; align-items: center; }
   .rrow .ph { width: 40px; height: 40px; border-radius: 50%; background: var(--fill) center 18% / cover no-repeat; display: grid; place-items: center; cursor: pointer; font-size: 15px; color: var(--mute); position: relative; }
@@ -39,18 +52,23 @@
   .gate .ball { font-size: 46px; }
   .ruleschip { display: inline-flex; gap: 6px; flex-wrap: wrap; }
   .group-box { padding: 10px; border-radius: 14px; background: var(--card2); box-shadow: 0 0 0 1px var(--line); }
+  @media (max-width: 640px) {
+    .topbar { gap: 8px; padding: 8px 12px; } .topbar .brand .bt { display: none; } .home-link { display: none; }
+    #who .who-mail { display: none; } #nav .chip { padding: 0 10px; }
+  }
 </style>
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/volleyball" style="color:inherit"><span class="ball">🏐</span>Volleyball</a>
-  <nav class="row" id="nav" style="margin-left:8px">
+  <a class="brand" href="/volleyball"><span class="asl" aria-hidden="true"></span><span class="bt"><b>Volleyball <em>Manager</em></b><small>by All Sports Live</small></span></a>
+  <nav class="row" id="nav" style="margin-left:4px">
     <a class="chip" href="#/" data-nav="t">Tournaments</a>
     <a class="chip" href="#/teams" data-nav="teams">Teams</a>
   </nav>
   <div class="grow"></div>
-  <a class="btn sm ghost" href="/">Home</a>
+  <a class="btn sm ghost home-link" href="/">Home</a>
   <span id="who" class="row small"></span>
+  <button class="theme-btn" data-theme-btn aria-label="Light or dark theme"></button>
 </header>
 <main class="wrap" id="app" style="padding-bottom:60px"><div class="skel" style="height:120px;margin-top:24px"></div></main>
 
@@ -80,7 +98,7 @@
   }
   function renderWho(user) {
     $('#who').innerHTML = user
-      ? `<span class="muted ellipsis" style="max-width:220px">${esc(user.email)}</span><button class="btn sm" id="so">Sign out</button>`
+      ? `<span class="muted ellipsis who-mail" style="max-width:220px">${esc(user.email)}</span><button class="btn sm" id="so">Sign out</button>`
       : `<button class="btn sm primary" id="si">Sign in</button>`;
     const si = $('#si'), so = $('#so');
     if (si) si.onclick = () => VB.signIn();
@@ -94,7 +112,7 @@
       <div class="section-title">Public volleyball tournaments</div><div id="publist" class="tcards"><div class="skel" style="height:110px"></div></div>`;
     if ($('#gsi')) $('#gsi').onclick = () => VB.signIn();
     const p = await fetch('/api/volleyball/public/tournaments').then((r) => r.json()).catch(() => ({ tournaments: [] }));
-    $('#publist').innerHTML = (p.tournaments || []).map((t) => `<a class="tcard" href="${esc(t.url)}"><div class="row">${t.logo ? `<span class="logo"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo">🏐</span>'}<div class="grow"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small ellipsis">${esc([t.venue, t.city].filter(Boolean).join(' · '))}</div></div>${statusBadge(t.status)}</div></a>`).join('')
+    $('#publist').innerHTML = (p.tournaments || []).map((t) => tcard(t, t.url)).join('')
       || '<div class="empty"><b>No public tournaments yet</b></div>';
   }
   function statusBadge(s) {
@@ -117,19 +135,25 @@
   /* ------------------------------------------------ tournaments list */
   function viewTournaments() {
     const list = mine.tournaments.filter((t) => !t.archived);
-    app.innerHTML = `<div class="hero"><div><div class="muted small">Sports → Volleyball</div><h1>Tournaments</h1></div>
-      <div class="row"><button class="btn" id="newteam">New team</button><button class="btn primary" id="newt">New tournament</button></div></div>
+    const players = mine.teams.reduce((a, t) => a + (t.players || []).filter((p) => p.active !== false).length, 0);
+    const tile = (v, l) => `<div class="tile"><b>${v}</b><small>${esc(l)}</small></div>`;
+    app.innerHTML = `<div class="hero"><div><div class="kick">🏐 Volleyball · Tournament Manager</div><h1>Your tournaments</h1></div>
+      <div class="row"><button class="btn" id="newteam">${VB.icon('teams')}New team</button><button class="btn primary" id="newt">＋ New tournament</button></div></div>
+      <div class="tiles on-card mgr">${tile(list.length, 'Tournaments')}${tile(list.filter((t) => t.status === 'live' || t.status === 'ongoing').length, 'In progress')}${tile(list.filter((t) => t.status === 'completed').length, 'Completed')}${tile(mine.teams.length, 'Teams')}${tile(players, 'Players')}</div>
       ${mine.teams.length ? '' : '<div class="banner info" style="margin-bottom:14px">Start by creating the teams (logo, colours, players) — then a tournament that uses them.</div>'}
       <div class="tcards">${list.map(tcard).join('') || '<div class="empty card"><b>No tournaments yet</b>Create your first volleyball tournament.</div>'}</div>
       ${mine.tournaments.some((t) => t.archived) ? `<div class="section-title">Archived</div><div class="tcards">${mine.tournaments.filter((t) => t.archived).map(tcard).join('')}</div>` : ''}`;
     $('#newt').onclick = () => editTournament(null);
     $('#newteam').onclick = () => editTeam(null);
   }
-  function tcard(t) {
-    const dates = [t.startDate, t.endDate].filter(Boolean).join(' → ');
-    return `<a class="tcard" href="#/t/${esc(t.tournamentId)}"><div class="row">${t.logo ? `<span class="logo"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo">🏐</span>'}
-      <div class="grow"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small ellipsis">${esc([t.venue, t.city].filter(Boolean).join(' · ') || 'Venue not set')}</div></div></div>
-      <div class="row wrapr small"><span class="badge">${(t.teamIds || []).length} teams</span>${statusBadge(t.status)}<span class="badge ${t.visibility === 'private' ? 'lock' : ''}">${t.visibility === 'private' ? 'Private' : 'Public'}</span>${dates ? `<span class="muted tiny">${esc(dates)}</span>` : ''}</div></a>`;
+  // a tournament as a cover card: the arena in the tournament's accent, its logo, status and facts
+  function tcard(t, href) {
+    const dates = [t.startDate, t.endDate].filter(Boolean).map((d) => VB.fmtDate(Date.parse(d + 'T12:00:00'), { weekday: undefined, hour: undefined, minute: undefined })).join(' – ');
+    const n = (t.teamIds || []).length || t.teams || 0;
+    return `<a class="tcard" href="${esc(href || '#/t/' + t.tournamentId)}"><div class="art-box">${VB.coverArt((t.broadcast && t.broadcast.accent) || '#2563eb', '#22c55e')}<span class="st">${statusBadge(t.status)}</span></div>
+      <div class="tbody">${t.logo ? `<span class="logo"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo" style="background:linear-gradient(140deg,#ffd60a,#ff9f0a)">🏐</span>'}
+      <div style="min-width:0"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small ellipsis">${esc([t.venue, t.city].filter(Boolean).join(' · ') || 'Venue not set')}</div></div>
+      <div class="meta small">${n ? `<span class="badge">${n} teams</span>` : ''}${t.visibility ? `<span class="badge ${t.visibility === 'private' ? 'lock' : ''}">${t.visibility === 'private' ? 'Private' : 'Public'}</span>` : ''}${t.archived ? '<span class="badge">Archived</span>' : ''}${dates ? `<span class="muted tiny">${esc(dates)}</span>` : ''}</div></div></a>`;
   }
 
   /* ------------------------------------------------ tournament editor */
@@ -360,9 +384,9 @@
 
   /* ------------------------------------------------ teams list */
   function viewTeams() {
-    app.innerHTML = `<div class="hero"><div><div class="muted small">Sports → Volleyball</div><h1>Teams</h1></div><button class="btn primary" id="nt">New team</button></div>
-      <div class="tcards">${mine.teams.map((t) => `<button class="tcard" data-team="${esc(t.teamId)}"><div class="row">${VB.logoHtml(t)}<div class="grow"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small">${t.players.filter((p) => p.active !== false).length} players · ${t.players.filter((p) => p.libero && p.active !== false).length} libero(s)</div></div>
-        <span style="width:22px;height:22px;border-radius:7px;background:${esc(VB.teamColor(t))};box-shadow:inset 0 0 0 1px var(--line2)"></span></div></button>`).join('') || '<div class="empty card"><b>No teams yet</b>Create a team with its logo, colours and players.</div>'}</div>`;
+    app.innerHTML = `<div class="hero"><div><div class="kick">🏐 Volleyball · Tournament Manager</div><h1>Teams</h1></div><button class="btn primary" id="nt">＋ New team</button></div>
+      <div class="tcards">${mine.teams.map((t) => { const act = t.players.filter((p) => p.active !== false); return `<button class="tcard team" data-team="${esc(t.teamId)}" style="--tc:${esc(VB.teamColor(t))}"><div class="row">${VB.logoHtml(t, 'lg')}<div class="grow" style="min-width:0"><h3 class="ellipsis">${esc(t.name)}</h3><div class="muted small ellipsis">${esc([t.shortName, t.city].filter(Boolean).join(' · '))}</div></div></div>
+        <div class="meta small"><span class="badge">${act.length} players</span><span class="badge">${act.filter((p) => p.libero).length} libero${act.filter((p) => p.libero).length === 1 ? '' : 's'}</span>${act.some((p) => p.captain) ? `<span class="badge">C · ${esc(act.find((p) => p.captain).name)}</span>` : ''}</div></button>`; }).join('') || '<div class="empty card"><b>No teams yet</b>Create a team with its logo, colours and players.</div>'}</div>`;
     $('#nt').onclick = () => editTeam(null);
     $$('[data-team]').forEach((b) => b.onclick = () => editTeam(mine.teams.find((t) => t.teamId === b.dataset.team)));
   }
@@ -377,12 +401,21 @@
     const t = tState.tournament, teams = tState.teams;
     const byTeam = new Map(teams.map((x) => [x.teamId, x]));
     const ms = tState.matches;
-    const live = ms.filter((m) => m.status === 'live'), up = ms.filter((m) => m.status === 'scheduled'), done = ms.filter((m) => m.status === 'completed' || m.status === 'abandoned');
-    app.innerHTML = `<div class="hero"><div class="row" style="gap:14px">${t.logo ? `<span class="logo lg"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo lg">🏆</span>'}
-        <div><a href="#/" class="small">← Tournaments</a><h1>${esc(t.name)}</h1><div class="muted small">${esc([t.venue, t.city, [t.startDate, t.endDate].filter(Boolean).join(' → ')].filter(Boolean).join(' · '))}</div>
-        <div class="row wrapr" style="margin-top:6px">${statusBadge(t.status)}<span class="badge ${t.visibility === 'private' ? 'lock' : ''}">${t.visibility === 'private' ? 'Private' : 'Public'}</span>${t.rules.official ? '<span class="badge done">FIVB rules</span>' : `<span class="badge warn">Competition rules</span>`}<span class="badge">${esc(fmtFormat(t.format))}</span></div></div></div>
-      <div class="row wrapr"><a class="btn" href="/volleyball/tournament/${esc(t.tournamentId)}" target="_blank" rel="noopener">Public page ↗</a><button class="btn" id="edt">Edit</button></div></div>
-      <div class="card" style="margin-bottom:14px"><div class="row wrapr"><h3 class="grow">Fixtures</h3>
+    const live = ms.filter((m) => m.status === 'live'), up = ms.filter((m) => m.status === 'scheduled').sort((a, b) => (a.scheduledAt || 9e15) - (b.scheduledAt || 9e15)), done = ms.filter((m) => m.status === 'completed' || m.status === 'abandoned').sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+    const pill = (icon, text) => (text ? `<span>${VB.icon(icon)}${esc(text)}</span>` : '');
+    const dates = [t.startDate, t.endDate].filter(Boolean).map((d) => VB.fmtDate(Date.parse(d + 'T12:00:00'), { weekday: undefined, hour: undefined, minute: undefined })).join(' – ');
+    const sets = done.reduce((a, m) => a + ((m.result && m.result.setScores) || []).length, 0);
+    const tile = (v, l) => `<div class="tile"><b>${v}</b><small>${esc(l)}</small></div>`;
+    app.innerHTML = `<section class="cover mgr-cover" style="margin-top:18px">${VB.coverArt((t.broadcast && t.broadcast.accent) || '#2563eb', '#22c55e')}
+        <a href="#/" class="back">← Tournaments</a>
+        ${t.logo ? `<span class="clogo"><img src="${esc(t.logo)}" alt=""></span>` : ''}
+        <span class="kick">🏐 Tournament Manager</span>
+        <h1>${esc(t.name)}</h1>
+        <div class="pills">${pill('cal', dates)}${pill('pin', [t.venue, t.city].filter(Boolean).join(', '))}${pill('trophy', fmtFormat(t.format) + ' · ' + (t.rules.official ? 'FIVB rules' : 'Competition rules'))}${pill('teams', teams.length + ' teams')}<span>${t.visibility === 'private' ? '🔒 Private' : '🌐 Public'}</span>${live.length ? `<span style="background:rgba(239,68,68,.35)">● ${live.length} live</span>` : ''}</div>
+        <div class="tiles">${tile(ms.length, 'Matches')}${tile(done.length, 'Played')}${tile(live.length, 'Live now')}${tile(up.length, 'Upcoming')}${tile(sets, 'Sets played')}</div>
+        <div class="row-acts"><a class="btn primary" href="/volleyball/tournament/${esc(t.tournamentId)}" target="_blank" rel="noopener">Public page ↗</a><button class="btn" id="edt">✎ Edit tournament</button></div>
+      </section>
+      <div class="card" style="margin:16px 0 4px"><div class="ctrl"><h3 class="grow h-bar">Fixtures</h3>
         ${t.format.type === 'knockout' ? '<button class="btn sm" data-gen="knockout">Generate knockout bracket</button>' : t.format.type === 'groups_knockout' ? '<button class="btn sm" data-gen="groups">Generate group matches</button><button class="btn sm" data-gen="ko-standings">Knockout from standings</button>' : `<button class="btn sm" data-gen="${t.format.type === 'groups' ? 'groups' : 'league'}">Generate ${t.format.double ? 'double ' : ''}round robin</button>`}
         <button class="btn sm primary" id="addm">＋ Match</button></div>
         <p class="tiny muted" style="margin-top:6px">Generating again never duplicates a fixture. Teams: ${teams.map((x) => esc(x.name)).join(', ') || '— add teams in Edit'}</p></div>
@@ -396,20 +429,16 @@
   function fmtFormat(f) { return { league: 'League', groups: 'Groups', knockout: 'Knockout', groups_knockout: 'Groups → Knockout', custom: 'Custom' }[f && f.type] || 'League'; }
   function section(title, list, byTeam) {
     if (!list.length) return '';
-    return `<div class="section-title">${esc(title)} · ${list.length}</div><div class="list" style="margin-bottom:6px">${list.map((m) => matchRow(m, byTeam)).join('')}</div>`;
+    return `<div class="section-title"><span class="h-bar">${esc(title)}</span><span class="n">${list.length}</span></div><div class="mcards" style="margin-bottom:6px">${list.map((m) => matchRow(m, byTeam)).join('')}</div>`;
   }
+  // a fixture as the portal's match card, with the manager's controls under it
   function matchRow(m) {
-    const s = m.summary, res = m.result;
-    const score = m.status === 'completed' && res ? `${res.sets.A} – ${res.sets.B}` : m.status === 'live' && s ? `${s.setsWon.A} – ${s.setsWon.B}` : 'vs';
-    const side = (t, cls) => t ? `<div class="side ${cls}">${VB.logoHtml(t, 'sm')}<b class="ellipsis">${esc(t.name)}</b></div>` : `<div class="side ${cls}"><span class="logo sm">?</span><span class="muted ellipsis">${esc(sourceLabel(m, cls === 'b' ? 'B' : 'A'))}</span></div>`;
-    const stage = [m.stage && m.stage.group ? 'Group ' + m.stage.group : '', m.stage && m.stage.round].filter(Boolean).join(' · ');
     const ready = m.teamA && m.teamB;
-    return `<div class="mrow" data-m="${esc(m.matchId)}"><div><div class="mteams">${side(m.teamA, 'a')}<div class="mscore">${score}</div>${side(m.teamB, 'b')}</div>
-      <div class="mmeta small muted"><span>#${m.matchNo || ''}</span>${stage ? `<span>${esc(stage)}</span>` : ''}${m.scheduledAt ? `<span>${esc(VB.fmtDate(m.scheduledAt))}</span>` : ''}${m.status === 'live' ? '<span class="badge live">LIVE</span>' : ''}${m.locked ? '<span class="badge lock">🔒 Locked</span>' : ''}
-      ${m.status === 'live' && s ? `<span class="num">Set ${s.set}: ${s.points.A}-${s.points.B}</span>` : ''}${res && res.setScores ? `<span class="num">${res.setScores.map((x) => x.A + '-' + x.B).join(', ')}</span>` : ''}${m.report && m.report.status === 'ready' ? `<a href="${esc(m.report.url)}?key=${esc(m.overlayKey || '')}" target="_blank" rel="noopener">PDF v${m.report.version}</a>` : m.status === 'completed' ? '<span class="badge">PDF: preparing</span>' : ''}</div></div>
-      <div class="mact">${ready ? `<a class="btn sm primary" href="/volleyball-panel?match=${esc(m.matchId)}">${m.status === 'completed' ? 'Review' : m.status === 'live' ? 'Score' : 'Open panel'}</a>
-        <button class="btn sm" data-ov="${esc(m.matchId)}">Overlay</button><a class="btn sm" href="/volleyball-clipper?match=${esc(m.matchId)}">Clipper</a><a class="btn sm" href="/volleyball/match/${esc(m.matchId)}" target="_blank" rel="noopener">Scorecard</a>` : ''}
-        <button class="btn sm" data-edit="${esc(m.matchId)}">Edit</button><button class="btn sm" data-lock="${esc(m.matchId)}">${m.locked ? 'Unlock' : 'Lock'}</button></div></div>`;
+    const pdf = m.report && m.report.status === 'ready' ? `<a class="btn sm" href="${esc(m.report.url)}?key=${esc(m.overlayKey || '')}" target="_blank" rel="noopener">PDF v${m.report.version}</a>` : m.status === 'completed' ? '<span class="badge">PDF: preparing</span>' : '';
+    const actions = (ready ? `<a class="btn sm primary" href="/volleyball-panel?match=${esc(m.matchId)}">${m.status === 'completed' ? 'Review' : m.status === 'live' ? '● Score' : 'Open panel'}</a>
+        <button class="btn sm" data-ov="${esc(m.matchId)}">Overlay</button><a class="btn sm" href="/volleyball-clipper?match=${esc(m.matchId)}">Clipper</a><a class="btn sm" href="/volleyball/match/${esc(m.matchId)}" target="_blank" rel="noopener">Scorecard</a>` : '')
+      + `<button class="btn sm" data-edit="${esc(m.matchId)}">Edit</button><button class="btn sm" data-lock="${esc(m.matchId)}">${m.locked ? 'Unlock' : '🔒 Lock'}</button>${pdf}`;
+    return VB.matchCard(m, { href: null, cls: 'mrow', slotLabel: sourceLabel, actions });
   }
   function sourceLabel(m, side) {
     const src = m.source && m.source[side];
@@ -537,9 +566,9 @@
   /* ------------------------------------------------ standings */
   function standingsHtml(st) {
     if (!st || !st.groups || !st.groups.length) return '';
-    return st.groups.map((g) => `<div class="section-title">${g.name ? 'Group ' + esc(g.name) : 'Standings'}</div>
-      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>Team</th><th class="c">P</th><th class="c">W</th><th class="c">L</th><th class="c">Pts</th><th class="c">Sets</th><th class="c">Set ratio</th><th class="c">Points</th><th class="c">Point ratio</th></tr></thead><tbody>
-      ${g.rows.map((r) => `<tr><td>${r.position}</td><td><div class="row">${VB.logoHtml(r, 'sm')}<b>${esc(r.name)}</b>${r.decidedBy ? `<span class="tiny muted" title="Tie broken by ${esc(S.CRITERIA[r.decidedBy] || r.decidedBy)}">↕ ${esc(S.CRITERIA[r.decidedBy] || r.decidedBy)}</span>` : ''}</div></td><td class="c">${r.played}</td><td class="c">${r.won}</td><td class="c">${r.lost}</td><td class="c"><b>${r.matchPoints}</b></td><td class="c">${r.setsWon}-${r.setsLost}</td><td class="c">${S.fmtRatio(r.setRatio)}</td><td class="c">${r.pointsWon}-${r.pointsLost}</td><td class="c">${S.fmtRatio(r.pointRatio)}</td></tr>`).join('')}
+    return st.groups.map((g) => `<div class="section-title"><span class="h-bar">${g.name ? 'Group ' + esc(g.name) : 'Standings'}</span></div>
+      <div class="tbl-wrap"><table class="tbl stand"><thead><tr><th>#</th><th>Team</th><th class="c">P</th><th class="c">W</th><th class="c">L</th><th class="c">Pts</th><th class="c">Sets</th><th class="c">Set ratio</th><th class="c">Points</th><th class="c">Point ratio</th></tr></thead><tbody>
+      ${g.rows.map((r) => `<tr><td class="pos"><span class="rank-pill ${r.position <= 3 ? 'r' + r.position : ''}">${r.position}</span></td><td><div class="row">${VB.logoHtml(r, 'sm')}<b>${esc(r.name)}</b>${r.decidedBy ? `<span class="tiny muted" title="Tie broken by ${esc(S.CRITERIA[r.decidedBy] || r.decidedBy)}">↕ ${esc(S.CRITERIA[r.decidedBy] || r.decidedBy)}</span>` : ''}</div></td><td class="c">${r.played}</td><td class="c">${r.won}</td><td class="c">${r.lost}</td><td class="c"><b>${r.matchPoints}</b></td><td class="c">${r.setsWon}-${r.setsLost}</td><td class="c">${S.fmtRatio(r.setRatio)}</td><td class="c">${r.pointsWon}-${r.pointsLost}</td><td class="c">${S.fmtRatio(r.pointRatio)}</td></tr>`).join('')}
       </tbody></table></div>`).join('') + `<p class="tiny muted" style="margin-top:6px">${esc(st.policy.label)} · tie-breaks: ${st.tiebreakers.map((k) => esc(S.CRITERIA[k])).join(' → ')}. Only completed matches count.</p>`;
   }
 

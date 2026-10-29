@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -9,53 +9,81 @@
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <!--
-  🏐 A volleyball tournament's public page — /volleyball/tournament/:id.
-  Fixtures and results, the points table (the competition's own points
-  policy and tie-break order, from completed league / group matches
-  only), the knockout bracket, statistical leaders and the teams with
-  their history. All of it is computed on the server from the saved
-  matches; nothing here is entered by hand.
+  🏐 A volleyball tournament's public page — /volleyball/tournament/:id,
+  in the cricket tournament portal's look: the arena cover with the
+  tournament's numbers, the awards race, match cards, the points table
+  (the competition's own points policy and tie-break order, from completed
+  league / group matches only), the knockout bracket, statistical leaders
+  and the teams with their history. All of it is computed on the server
+  from the saved matches; nothing here is entered by hand.
 -->
 <style>
-  main { padding: 16px 0 60px; }
-  .hero { display: flex; align-items: center; gap: 16px; padding: 20px; }
-  .hero h1 { font-size: clamp(22px, 3.4vw, 32px); letter-spacing: -.03em; line-height: 1.1; }
-  .tabs { display: flex; justify-content: center; margin: 16px 0 10px; overflow-x: auto; }
-  .m { display: grid; grid-template-columns: 92px minmax(0, 1fr) 84px minmax(0, 1fr) 70px; gap: 10px; align-items: center; padding: 11px 14px; font-size: 14px; }
-  .m:hover { background: var(--card2); }
-  .m .t { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 700; }
-  .m .t.r { flex-direction: row-reverse; text-align: right; }
-  .m .sc { text-align: center; font-weight: 800; font-size: 18px; font-variant-numeric: tabular-nums; }
-  .m .when { font-size: 12px; color: var(--mute); line-height: 1.25; }
-  .m .st { text-align: right; }
-  .m .lost { color: var(--mute); font-weight: 600; }
-  @media (max-width: 640px) { .m { grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr); } .m .when, .m .st { display: none; } }
+  main { padding: 16px 0 30px; }
+  .desc { margin-top: 14px; color: var(--ink2); line-height: 1.55; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+  .filters select { width: auto; min-width: 180px; height: 38px; border-radius: 99px; padding: 0 14px; }
+  /* the points table */
+  .ptbl td, .ptbl th { padding: 12px 10px; }
+  .ptbl td.team { min-width: 190px; }
+  .ptbl tr td:first-child { box-shadow: inset 3px 0 0 var(--tc, transparent); }
+  .ptbl tr.qual td:first-child { box-shadow: inset 3px 0 0 var(--green); }
+  .ptbl .tn { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ptbl .tn b { font-size: 14.5px; }
+  .ptbl td.pts { font-size: 16px; font-weight: 900; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12.5px; color: var(--mute); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--green); margin-right: 6px; vertical-align: -1px; }
   .form { display: inline-flex; gap: 3px; }
-  .form i { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 800; color: #fff; }
+  .form i { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-style: normal; font-size: 10.5px; font-weight: 900; color: #fff; }
   .form i.W { background: var(--green); } .form i.L { background: var(--red); }
-  .bracket { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 16px; overflow-x: auto; padding-bottom: 6px; }
-  .round h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--mute); margin: 0 4px 8px; }
-  .round .stack { gap: 10px; }
-  .bm { display: block; background: var(--card); border-radius: 14px; box-shadow: 0 0 0 1px var(--line); overflow: hidden; color: inherit; }
-  .bm .bt { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13.5px; font-weight: 600; }
+  /* the bracket */
+  .bracket { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 1fr); gap: 18px; overflow-x: auto; padding-bottom: 6px; }
+  .round h4 { display: flex; align-items: center; gap: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--mute); margin: 0 4px 10px; }
+  .round .stack { gap: 12px; }
+  .bm { display: block; border-radius: 16px; overflow: hidden; color: inherit; background: var(--card); box-shadow: var(--shadow), 0 0 0 1px var(--line); transition: transform .3s var(--spring); }
+  .bm:hover { transform: translateY(-2px); }
+  .bm .bt { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 13.5px; font-weight: 600; box-shadow: inset 3px 0 0 var(--tc, transparent); }
   .bm .bt + .bt { border-top: 1px solid var(--line); }
-  .bm .bt b { margin-left: auto; font-variant-numeric: tabular-nums; }
-  .bm .bt.win { font-weight: 800; }
+  .bm .bt b { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 16px; }
+  .bm .bt.win { font-weight: 800; background: color-mix(in srgb, var(--tc) 12%, transparent); }
   .bm .bt.tbd { color: var(--mute); font-style: italic; font-weight: 500; }
-  .leaders { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-  .lb .li b { margin-left: auto; font-variant-numeric: tabular-nums; }
-  .teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-  .rank { width: 26px; text-align: center; font-weight: 800; color: var(--mute); }
-  .qual td:first-child { box-shadow: inset 3px 0 0 var(--green); }
+  /* leaderboards */
+  .leaders { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+  .lb { padding: 0; overflow: hidden; }
+  .lb h3 { display: flex; align-items: center; gap: 8px; padding: 14px 16px 0; font-size: 15px; }
+  .lb h3 .ic { font-size: 18px; }
+  .lb .top { display: flex; align-items: center; gap: 12px; margin: 12px; padding: 14px; border-radius: 16px; background: linear-gradient(120deg, color-mix(in srgb, var(--tc) 30%, var(--card2)), var(--card2) 70%); box-shadow: 0 0 0 1px color-mix(in srgb, var(--tc) 30%, var(--line)); }
+  .lb .top .grow b { display: block; font-size: 16px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lb .top .grow small { color: var(--mute); font-weight: 600; }
+  .lb .top .v { font-size: 28px; font-weight: 900; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .lb .rows { display: grid; padding: 0 12px 12px; }
+  .lb .li { padding: 8px 6px; gap: 10px; border-top: 1px solid var(--line); }
+  .lb .li b.v { margin-left: auto; font-variant-numeric: tabular-nums; }
+  /* teams */
+  .h2hcard { margin-bottom: 14px; }
+  .h2hcard .row select { width: auto; flex: 1; min-width: 160px; }
+  .h2hres { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; margin-top: 14px; padding: 14px; border-radius: 16px; background: linear-gradient(90deg, color-mix(in srgb, var(--ha) 22%, var(--card2)), var(--card2) 45%, var(--card2) 55%, color-mix(in srgb, var(--hb) 22%, var(--card2))); }
+  .h2hres .side { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 800; }
+  .h2hres .side.r { flex-direction: row-reverse; text-align: right; }
+  .h2hres .big { font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: -.02em; text-align: center; }
+  .teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+  .tcard { padding: 0; overflow: hidden; }
+  .tcard .th { display: flex; align-items: center; gap: 12px; padding: 16px; background: linear-gradient(120deg, color-mix(in srgb, var(--tc) 38%, var(--card)), var(--card) 75%); }
+  .tcard .th h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tcard .rec { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 16px 8px; }
+  .tcard .players { display: grid; padding: 0 12px 12px; }
+  .tcard .players .li { padding: 7px 4px; gap: 10px; border-top: 1px solid var(--line); }
+  .jn { min-width: 30px; height: 26px; padding: 0 6px; border-radius: 8px; display: inline-grid; place-items: center; font-size: 12px; font-weight: 900; background: color-mix(in srgb, var(--tc) 22%, var(--fill)); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .hist .li { gap: 10px; }
 </style>
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/volleyball"><span class="ball">🏐</span><span>Volleyball</span></a>
+  <a class="brand" href="/volleyball"><span class="asl" aria-hidden="true"></span><span class="bt"><b>Volleyball <em>Tournaments</em></b><small>by All Sports Live</small></span></a>
   <div class="grow"></div>
-  <button class="btn sm ghost" id="theme" title="Light / dark / automatic theme" aria-label="Theme"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg></button>
+  <a class="visit" href="/">Visit Website ↗</a>
+  <button class="theme-btn" data-theme-btn aria-label="Light or dark theme"></button>
 </header>
-<main class="wrap" id="main"><div class="skel" style="height:160px"></div></main>
+<main class="wrap" id="main"><div class="skel" style="height:380px;border-radius:26px"></div></main>
 
 <script src="/volleyball-common.js"></script>
 <script src="/volleyball-standings.js"></script>
@@ -65,17 +93,23 @@
   const { $, $$, esc, api } = VB;
   const Std = window.VolleyballStandings;
   const tid = decodeURIComponent((location.pathname.match(/\/volleyball\/tournament\/([^/?#]+)/) || [])[1] || new URLSearchParams(location.search).get('t') || '');
-  const S = { t: null, teams: [], matches: [], standings: null, leaders: null, tab: location.hash.replace('#', '') || 'matches' };
-  $('#theme').onclick = () => { const order = ['auto', 'light', 'dark']; const cur = VB.store.get('vb_theme', 'auto'); VB.store.set('vb_theme', order[(order.indexOf(cur) + 1) % 3]); VB.applyTheme(); };
+  const S = { t: null, teams: [], matches: [], standings: null, leaders: null, tab: location.hash.replace('#', '') || 'matches', team: '' };
+  const r1 = (v) => Math.round(v * 10) / 10;
 
   async function load() {
-    const r = await api('GET', `/api/volleyball/tournaments/${encodeURIComponent(tid)}`);
+    const [r] = await Promise.all([api('GET', `/api/volleyball/tournaments/${encodeURIComponent(tid)}`), loadStats()]);
     if (!r.ok) return notFound(r.status);
     S.t = r.json.tournament; S.teams = r.json.teams || []; S.matches = r.json.matches || []; S.standings = r.json.standings;
     render();
     // live matches move: look again while any is on
     clearTimeout(S.timer);
     if (S.matches.some((m) => m.status === 'live')) S.timer = setTimeout(load, 20000);
+  }
+  // the players' totals: the awards, the cover's numbers and the leaderboards
+  async function loadStats() {
+    if (S.leaders && Date.now() - S.leaders.at < 15000) return;
+    const r = await api('GET', `/api/volleyball/tournaments/${encodeURIComponent(tid)}/stats`);
+    S.leaders = { at: Date.now(), players: r.ok ? r.json.players : null, error: r.ok ? null : (r.json.error || 'Could not load') };
   }
   function notFound(status) {
     VB.authReady.then((u) => {
@@ -94,54 +128,98 @@
     const what = from ? (from.stage && from.stage.round ? from.stage.round : 'match') + (from.matchNo ? ' (M' + from.matchNo + ')' : '') : 'earlier match';
     return (src.winnerOf ? 'Winner of ' : 'Loser of ') + what;
   }
+  const avatar = (p, cls) => { const t = teamById(p.teamId), c = VB.teamColor(t, '#3b82f6'); return `<span class="av ${cls || ''}" style="--tc:${esc(c)};--on:${VB.onColor(c)}">${esc(VB.initials(p.name))}</span>`; };
+
+  // the numbers on the cover — sets and rally points from the saved scores,
+  // kills / aces / blocks from the players' totals
+  function totals() {
+    const played = S.matches.filter((m) => m.status === 'completed');
+    let sets = 0, points = 0;
+    S.matches.forEach((m) => {
+      const list = m.status === 'completed' && m.result ? m.result.setScores || [] : m.status === 'live' && m.summary ? m.summary.sets || [] : [];
+      list.forEach((x) => { if (!x.status || x.status === 'completed') sets += 1; points += (Number(x.A) || 0) + (Number(x.B) || 0); });
+    });
+    const ps = (S.leaders && S.leaders.players) || [];
+    const sum = (k) => Math.round(ps.reduce((a, p) => a + (p[k] || 0), 0));
+    return { played: played.length, total: S.matches.length, sets, points, kills: sum('kills'), aces: sum('aces'), blocks: sum('blocks'), hasStats: !!(S.leaders && S.leaders.players) };
+  }
+
+  const AWARDS = [
+    ['🏆', 'Top Scorer', 'Most points', '#f59e0b', (p) => p.points, (v) => r1(v) + ' pts'],
+    ['⚡', 'Attack King', 'Most attack kills', '#ef4444', (p) => p.kills, (v) => v + ' kills'],
+    ['🧱', 'Block Wall', 'Most block points', '#3b82f6', (p) => p.blocks, (v) => r1(v) + ' blocks'],
+    ['🎯', 'Ace Master', 'Most service aces', '#a855f7', (p) => p.aces, (v) => v + ' aces'],
+    ['🛡️', 'Best Digger', 'Most digs', '#14b8a6', (p) => p.digs, (v) => v + ' digs'],
+    ['📈', 'Most Efficient', 'Attack efficiency · 10+ attempts', '#22c55e', (p) => (p.attempts >= 10 ? p.efficiency : null), (v) => Math.round(v * 100) + '%']
+  ];
+  function leaderOf(f) {
+    const ps = (S.leaders && S.leaders.players) || [];
+    return ps.filter((p) => f(p) != null && f(p) > 0).sort((a, b) => f(b) - f(a) || (b.points || 0) - (a.points || 0));
+  }
+  function awardsHtml() {
+    const cards = AWARDS.map(([ic, title, key, color, f, fmt]) => {
+      const top = leaderOf(f)[0];
+      if (!top) return '';
+      return `<div class="award" style="--ac:${color}"><div class="ic">${ic}</div><div class="t">${esc(title)}</div><div class="k">${esc(key)}</div>
+        <div class="who">${avatar(top)}<span>${esc(top.name)} <span class="muted small">· ${esc(top.teamName)}</span></span></div><div class="v">${esc(fmt(f(top)))}</div></div>`;
+    }).filter(Boolean);
+    if (!cards.length) return '';
+    return `<section class="awards"><div class="row-h"><span class="h-bar">Tournament awards</span><span class="grow"></span><span class="tiny" style="letter-spacing:0;text-transform:none;font-weight:600">The race so far</span></div><div class="list-a">${cards.join('')}</div></section>`;
+  }
+
   function render() {
     const t = S.t;
-    document.title = `${t.name} · Volleyball`;
+    document.title = `${t.name} · Volleyball · All Sports Live`;
     const live = S.matches.filter((m) => m.status === 'live').length;
     const ko = S.matches.some((m) => m.stage && m.stage.type === 'knockout');
-    const tabs = [['matches', 'Matches'], ['table', 'Table'], ...(ko ? [['bracket', 'Bracket']] : []), ['leaders', 'Leaders'], ['teams', 'Teams']];
+    const tabs = [['matches', 'Matches', 'matches'], ['table', 'Points Table', 'table'], ['leaders', 'Leaderboards', 'leaders'], ...(ko ? [['bracket', 'Bracket', 'bracket']] : []), ['teams', 'Teams', 'teams']];
     if (!tabs.some(([k]) => k === S.tab)) S.tab = 'matches';
     const dates = [t.startDate, t.endDate].filter(Boolean).map((d) => VB.fmtDate(Date.parse(d + 'T12:00:00'), { weekday: undefined, hour: undefined, minute: undefined }));
-    $('#main').innerHTML = `<div class="card hero">${t.logo ? `<span class="logo lg" style="background:#fff"><img src="${esc(t.logo)}" alt=""></span>` : '<span class="logo lg" style="background:linear-gradient(140deg,#ffd60a,#ff9f0a);font-size:30px">🏐</span>'}
-        <div class="grow" style="min-width:0"><h1>${esc(t.name)}</h1><p class="muted small" style="margin-top:4px">${esc([dates.join(' – '), t.venue, t.city, t.organizer ? 'by ' + t.organizer : ''].filter(Boolean).join(' · '))}</p>
-        <div class="row wrapr" style="margin-top:8px;gap:6px">${live ? `<span class="badge live">${live} LIVE</span>` : ''}<span class="badge ${t.status === 'completed' ? 'done' : ''}">${t.status === 'completed' ? 'Completed' : t.status === 'ongoing' ? 'In progress' : 'Upcoming'}</span><span class="badge">${S.teams.length} teams</span><span class="badge">${esc(t.rules && t.rules.bestOf > 1 ? 'Best of ' + t.rules.bestOf : 'One set')}</span>${t.canManage ? `<a class="badge lock" href="/volleyball#/t/${esc(t.tournamentId)}">Manage</a>` : ''}</div>
-        ${t.description ? `<p class="small" style="margin-top:8px">${esc(t.description)}</p>` : ''}</div></div>
-      <div class="tabs"><div class="seg" id="tabs">${tabs.map(([k, l]) => `<button data-t="${k}" aria-pressed="${S.tab === k}">${l}</button>`).join('')}</div></div><div id="tab"></div>`;
+    const yr = (t.startDate || '').slice(0, 4) || new Date(t.createdAt || Date.now()).getFullYear();
+    const n = totals();
+    const status = t.status === 'completed' ? 'Completed' : t.status === 'ongoing' || n.played || live ? 'In progress' : 'Upcoming';
+    const fmt = t.format && t.format.type === 'groups_knockout' ? 'Groups + knockout' : t.format && t.format.type === 'knockout' ? 'Knockout' : 'League';
+    const pill = (icon, text) => (text ? `<span>${VB.icon(icon)}${esc(text)}</span>` : '');
+    const tile = (v, l) => `<div class="tile"><b>${esc(v)}</b><small>${esc(l)}</small></div>`;
+    const accent = (t.broadcast && t.broadcast.accent) || '#2563eb';
+    $('#main').innerHTML = `<section class="cover">${VB.coverArt(accent, '#22c55e')}
+        ${t.logo ? `<span class="clogo"><img src="${esc(t.logo)}" alt=""></span>` : ''}
+        <span class="kick">🏐 Volleyball · ${esc(yr)}</span>
+        <h1>${esc(t.name)}</h1>
+        <div class="sub">${live ? `<span class="badge live">${live} live now</span>` : ''}<span>${esc(status)} · ${n.played} of ${n.total} match${n.total === 1 ? '' : 'es'} played</span></div>
+        <div class="pills">${pill('cal', dates.join(' – '))}${pill('pin', [t.venue, t.city].filter(Boolean).join(', '))}${pill('trophy', fmt + ' · ' + (t.rules && t.rules.bestOf > 1 ? 'Best of ' + t.rules.bestOf : 'One set'))}${pill('teams', S.teams.length + ' teams')}${pill('user', t.organizer)}${t.canManage ? `<a href="/volleyball#/t/${esc(t.tournamentId)}">✎ Manage</a>` : ''}</div>
+        <div class="tiles">${tile(n.played, 'Matches played')}${tile(n.sets, 'Sets played')}${tile(n.points, 'Rally points')}${n.hasStats ? tile(n.kills, 'Attack kills') + tile(n.aces, 'Service aces') + tile(n.blocks, 'Block points') : ''}</div>
+      </section>
+      ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
+      ${awardsHtml()}
+      <nav class="ptabs scroll" id="tabs" aria-label="Sections">${tabs.map(([k, l, ic]) => `<button data-t="${k}" aria-pressed="${S.tab === k}">${VB.icon(ic)}${esc(l)}</button>`).join('')}</nav>
+      <div id="tab"></div>
+      <footer class="foot-note">Powered by <b>All Sports Live</b> — professional live sports overlays &amp; scorecards</footer>`;
     $$('#tabs button').forEach((b) => b.onclick = () => { S.tab = b.dataset.t; history.replaceState(null, '', '#' + S.tab); render(); });
     ({ matches: renderMatches, table: renderTable, bracket: renderBracket, leaders: renderLeaders, teams: renderTeams })[S.tab]();
   }
 
-  function matchRow(m) {
-    const A = side(m, 'A'), B = side(m, 'B');
-    const sets = m.result ? m.result.sets : m.summary ? m.summary.setsWon : null;
-    const w = m.result && m.result.winner;
-    const nameA = A ? `${VB.logoHtml(A, 'sm')}<span class="ellipsis ${w && w !== 'A' ? 'lost' : ''}">${esc(A.name)}</span>` : `<span class="ellipsis muted">${esc(slotLabel(m, 'A'))}</span>`;
-    const nameB = B ? `${VB.logoHtml(B, 'sm')}<span class="ellipsis ${w && w !== 'B' ? 'lost' : ''}">${esc(B.name)}</span>` : `<span class="ellipsis muted">${esc(slotLabel(m, 'B'))}</span>`;
-    const st = m.status === 'live' ? '<span class="badge live">LIVE</span>' : m.status === 'completed' ? '<span class="badge done">FT</span>' : m.status === 'abandoned' ? '<span class="badge warn">Abd</span>' : m.locked ? '<span class="badge lock">Locked</span>' : '';
-    const stage = m.stage ? [m.stage.group ? 'Group ' + m.stage.group : '', m.stage.round].filter(Boolean).join(' · ') : '';
-    const sc = m.status === 'scheduled' ? '<span class="muted" style="font-size:13px;font-weight:600">vs</span>' : sets ? `${sets.A}–${sets.B}` : '–';
-    const liveNow = m.status === 'live' && m.summary && m.summary.status === 'in_set' ? `<div class="tiny muted" style="text-align:center">Set ${m.summary.set}: ${m.summary.points.A}–${m.summary.points.B}</div>` : '';
-    return `<a class="m" href="/volleyball/match/${esc(m.matchId)}"><span class="when">${m.scheduledAt ? esc(VB.fmtDate(m.scheduledAt)) : 'Time to be set'}<br>${esc(stage)}</span>
-      <span class="t">${nameA}</span><span><div class="sc">${sc}</div>${liveNow}</span><span class="t r">${nameB}</span><span class="st">${st}</span></a>`;
-  }
   function renderMatches() {
-    const ms = S.matches;
+    let ms = S.matches;
     if (!ms.length) { $('#tab').innerHTML = '<div class="card empty"><b>No matches yet</b>The fixtures appear here once they are made.</div>'; return; }
+    if (S.team) ms = ms.filter((m) => (m.teamA && m.teamA.teamId === S.team) || (m.teamB && m.teamB.teamId === S.team));
     const live = ms.filter((m) => m.status === 'live');
     const upcoming = ms.filter((m) => m.status === 'scheduled').sort((a, b) => (a.scheduledAt || 9e15) - (b.scheduledAt || 9e15));
     const done = ms.filter((m) => m.status === 'completed' || m.status === 'abandoned').sort((a, b) => (b.completedAt || b.scheduledAt || 0) - (a.completedAt || a.scheduledAt || 0));
-    const block = (title, list) => (list.length ? `<div class="section-title">${title}</div><div class="list">${list.map(matchRow).join('')}</div>` : '');
-    $('#tab').innerHTML = block('Live now', live) + block('Upcoming', upcoming) + block('Results', done);
+    const block = (title, list) => (list.length ? `<div class="section-title"><span class="h-bar">${title}</span><span class="n">${list.length}</span></div><div class="mcards">${list.map((m) => VB.matchCard(m, { slotLabel })).join('')}</div>` : '');
+    $('#tab').innerHTML = `<div class="filters"><select class="input" id="tf" aria-label="Show one team's matches"><option value="">All teams</option>${S.teams.map((t) => `<option value="${esc(t.teamId)}" ${S.team === t.teamId ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>`
+      + (block('Live now', live) + block('Upcoming', upcoming) + block('Results', done) || '<div class="card empty"><b>No matches for this team</b></div>');
+    $('#tf').onchange = (e) => { S.team = e.target.value; renderMatches(); };
   }
   function renderTable() {
     const st = S.standings;
     if (!st || st.knockoutOnly) { $('#tab').innerHTML = '<div class="card empty"><b>A knockout tournament</b>See the bracket.</div>'; return; }
     const ratio = (v, w) => (v == null ? (w > 0 ? 'MAX' : '–') : Std.fmtRatio(v));
     const q = (S.t.format && S.t.format.type === 'groups_knockout' && S.t.format.qualifiersPerGroup) || 0;
-    const tables = st.groups.map((g) => `${st.groups.length > 1 || g.name ? `<div class="section-title">Group ${esc(g.name)}</div>` : ''}<div class="tbl-wrap"><table class="tbl"><thead><tr><th class="c">#</th><th>Team</th><th class="c">P</th><th class="c">W</th><th class="c">L</th><th class="c">Pts</th><th class="c">Sets</th><th class="c">Set ratio</th><th class="c">Point ratio</th><th>Form</th></tr></thead><tbody>
-      ${g.rows.map((r) => `<tr class="${q && r.position <= q ? 'qual' : ''}"><td class="c rank">${r.position}</td><td><span class="row" style="gap:8px">${VB.logoHtml(r, 'sm')}<b class="ellipsis">${esc(r.name)}</b></span></td><td class="c">${r.played}</td><td class="c">${r.won}</td><td class="c">${r.lost}</td><td class="c"><b>${Math.round(r.matchPoints * 10) / 10}</b></td><td class="c">${r.setsWon}:${r.setsLost}</td><td class="c">${ratio(r.setRatio, r.setsWon)}</td><td class="c">${ratio(r.pointRatio, r.pointsWon)}</td>
-        <td><span class="form">${(r.form || []).map((f) => `<i class="${f}">${f}</i>`).join('')}</span>${r.decidedBy ? ` <span class="tiny muted" title="What separated this team from the one below">${esc(Std.CRITERIA[r.decidedBy] || r.decidedBy)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>`).join('');
-    $('#tab').innerHTML = `<div class="stack">${tables}<div class="card flat small"><b>Points:</b> ${esc(st.policy.label)}<br><b>Ties broken by:</b> ${esc(st.tiebreakers.map((k) => Std.CRITERIA[k] || k).join(' → '))}<br><span class="muted">Only completed league and group matches count. Ratios are won ÷ lost.${q ? ` The top ${q} of each group go through.` : ''}</span></div></div>`;
+    const tables = st.groups.map((g) => `${st.groups.length > 1 || g.name ? `<div class="section-title"><span class="h-bar">Group ${esc(g.name)}</span></div>` : ''}<div class="tbl-wrap"><table class="tbl ptbl"><thead><tr><th class="c">#</th><th>Team</th><th class="c">P</th><th class="c">W</th><th class="c">L</th><th class="c">Pts</th><th class="c">Sets</th><th class="c">Set ratio</th><th class="c">Point ratio</th><th>Form</th></tr></thead><tbody>
+      ${g.rows.map((r) => { const c = VB.teamColor(teamById(r.teamId) || r); return `<tr class="${q && r.position <= q ? 'qual' : ''}" style="--tc:${esc(c)}"><td class="c"><span class="rank-pill ${r.position <= 3 ? 'r' + r.position : ''}">${r.position}</span></td><td class="team"><span class="tn">${VB.logoHtml(r, 'sm')}<b class="ellipsis">${esc(r.name)}</b></span></td><td class="c">${r.played}</td><td class="c">${r.won}</td><td class="c">${r.lost}</td><td class="c pts">${Math.round(r.matchPoints * 10) / 10}</td><td class="c">${r.setsWon}:${r.setsLost}</td><td class="c">${ratio(r.setRatio, r.setsWon)}</td><td class="c">${ratio(r.pointRatio, r.pointsWon)}</td>
+        <td><span class="form">${(r.form || []).map((f) => `<i class="${f}">${f}</i>`).join('')}</span>${r.decidedBy ? ` <span class="tiny muted" title="What separated this team from the one below">${esc(Std.CRITERIA[r.decidedBy] || r.decidedBy)}</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`).join('');
+    $('#tab').innerHTML = `<div class="stack">${tables}${q ? `<div class="legend"><span><i></i>Goes through (top ${q} of each group)</span></div>` : ''}<div class="card flat small"><b>Points:</b> ${esc(st.policy.label)}<br><b>Ties broken by:</b> ${esc(st.tiebreakers.map((k) => Std.CRITERIA[k] || k).join(' → '))}<br><span class="muted">Only completed league and group matches count. Ratios are won ÷ lost.${q ? ` The top ${q} of each group go through.` : ''}</span></div></div>`;
   }
   function renderBracket() {
     const ko = S.matches.filter((m) => m.stage && m.stage.type === 'knockout');
@@ -150,34 +228,34 @@
     const keys = [...rounds.keys()].sort((a, b) => a - b);
     const box = (m) => {
       const w = m.result && m.result.winner, sets = m.result ? m.result.sets : m.summary ? m.summary.setsWon : null;
-      const row = (s) => { const t = side(m, s); return `<div class="bt ${w === s ? 'win' : ''} ${t ? '' : 'tbd'}">${t ? VB.logoHtml(t, 'sm') : ''}<span class="ellipsis">${esc(t ? t.name : slotLabel(m, s))}</span><b>${sets && m.status !== 'scheduled' ? sets[s] : ''}</b></div>`; };
+      const row = (s) => { const t = side(m, s); return `<div class="bt ${w === s ? 'win' : ''} ${t ? '' : 'tbd'}" style="--tc:${esc(VB.teamColor(t, 'transparent'))}">${t ? VB.logoHtml(t, 'sm') : ''}<span class="ellipsis">${esc(t ? t.name : slotLabel(m, s))}</span><b>${sets && m.status !== 'scheduled' ? sets[s] : ''}</b></div>`; };
       return `<a class="bm" href="/volleyball/match/${esc(m.matchId)}">${row('A')}${row('B')}${m.status === 'live' ? '<div class="bt"><span class="badge live">LIVE</span></div>' : ''}</a>`;
     };
-    $('#tab').innerHTML = `<div class="bracket">${keys.map((k) => { const list = rounds.get(k).sort((a, b) => String(a.fixtureKey).localeCompare(String(b.fixtureKey), undefined, { numeric: true })); return `<div class="round"><h4>${esc(list[0].stage.round || 'Round ' + k)}</h4><div class="stack">${list.map(box).join('')}</div></div>`; }).join('')}</div>`;
+    $('#tab').innerHTML = `<div class="bracket">${keys.map((k) => { const list = rounds.get(k).sort((a, b) => String(a.fixtureKey).localeCompare(String(b.fixtureKey), undefined, { numeric: true })); return `<div class="round"><h4>${VB.icon('trophy')}${esc(list[0].stage.round || 'Round ' + k)}</h4><div class="stack">${list.map(box).join('')}</div></div>`; }).join('')}</div>`;
   }
   async function renderLeaders() {
-    $('#tab').innerHTML = '<div class="skel" style="height:200px"></div>';
-    if (!S.leaders || Date.now() - S.leaders.at > 30000) {
-      const r = await api('GET', `/api/volleyball/tournaments/${encodeURIComponent(tid)}/stats`);
-      S.leaders = { at: Date.now(), players: r.ok ? r.json.players : null, error: r.ok ? null : (r.json.error || 'Could not load') };
-    }
+    if (!S.leaders) { $('#tab').innerHTML = '<div class="skel" style="height:200px"></div>'; await loadStats(); }
     if (S.tab !== 'leaders') return;
     const ps = S.leaders.players;
     if (!ps) { $('#tab').innerHTML = `<div class="card empty"><b>Could not load the leaders</b>${esc(S.leaders.error)}</div>`; return; }
     if (!ps.length) { $('#tab').innerHTML = '<div class="card empty"><b>No statistics yet</b>Leaders appear once matches are played.</div>'; return; }
-    const r1 = (v) => Math.round(v * 10) / 10;
-    const boards = [['Points', (p) => p.points, r1], ['Attack kills', (p) => p.kills, String], ['Blocks', (p) => p.blocks, r1], ['Service aces', (p) => p.aces, String], ['Digs', (p) => p.digs, String],
-      ['Attack efficiency (10+ attempts)', (p) => (p.attempts >= 10 ? p.efficiency : null), (v) => Math.round(v * 100) + '%']];
-    $('#tab').innerHTML = `<div class="leaders">${boards.map(([title, f, fmt]) => {
-      const top = ps.filter((p) => f(p) != null && f(p) > 0).sort((a, b) => f(b) - f(a)).slice(0, 8);
-      return `<div class="card lb" style="padding:0;overflow:hidden"><h3 style="padding:14px 16px 8px">${esc(title)}</h3><div class="list" style="border-radius:0;box-shadow:none">${top.map((p, i) => `<div class="li small"><span class="rank">${i + 1}</span><span class="grow ellipsis"><b>${esc(p.name)}</b> <span class="muted">${esc(p.teamName)}</span></span><b>${esc(fmt(f(p)))}</b></div>`).join('') || '<div class="empty small">Nobody yet</div>'}</div></div>`;
+    const boards = [['🏆', 'Points', (p) => p.points, r1], ['⚡', 'Attack kills', (p) => p.kills, String], ['🧱', 'Blocks', (p) => p.blocks, r1], ['🎯', 'Service aces', (p) => p.aces, String], ['🛡️', 'Digs', (p) => p.digs, String],
+      ['📈', 'Attack efficiency (10+ attempts)', (p) => (p.attempts >= 10 ? p.efficiency : null), (v) => Math.round(v * 100) + '%']];
+    $('#tab').innerHTML = `<div class="leaders">${boards.map(([ic, title, f, fmt]) => {
+      const top = leaderOf(f).slice(0, 8);
+      const first = top[0], c = first ? VB.teamColor(teamById(first.teamId), '#3b82f6') : '#3b82f6';
+      return `<div class="card lb" style="--tc:${esc(c)}"><h3><span class="ic">${ic}</span>${esc(title)}</h3>
+        ${first ? `<div class="top">${avatar(first, 'lg')}<span class="grow"><b>${esc(first.name)}</b><small>${esc(first.teamName)}${first.number ? ' · #' + esc(first.number) : ''}</small></span><span class="v">${esc(fmt(f(first)))}</span></div>` : '<div class="empty small">Nobody yet</div>'}
+        <div class="rows">${top.slice(1).map((p, i) => `<div class="li small"><span class="rank-pill ${i < 2 ? 'r' + (i + 2) : ''}">${i + 2}</span>${avatar(p)}<span class="grow ellipsis"><b>${esc(p.name)}</b> <span class="muted">${esc(p.teamName)}</span></span><b class="v">${esc(fmt(f(p)))}</b></div>`).join('')}</div></div>`;
     }).join('')}</div><p class="tiny muted" style="margin-top:10px">From every completed and live match of the tournament. A kill, block or ace counts only when the scorer recorded who made it.</p>`;
   }
   function renderTeams() {
     if (!S.teams.length) { $('#tab').innerHTML = '<div class="card empty"><b>No teams yet</b></div>'; return; }
-    $('#tab').innerHTML = `<div class="card flat" style="margin-bottom:14px"><div class="row wrapr"><b>Head to head</b><select class="input" id="h1" style="width:auto;flex:1;min-width:160px">${S.teams.map((t, i) => `<option value="${esc(t.teamId)}" ${i === 0 ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select><span class="muted">v</span><select class="input" id="h2" style="width:auto;flex:1;min-width:160px">${S.teams.map((t, i) => `<option value="${esc(t.teamId)}" ${i === 1 ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select><button class="btn" id="hgo">Compare</button></div><div id="hout"></div></div>
-      <div class="teams">${S.teams.map((t) => `<div class="card"><div class="row">${VB.logoHtml(t)}<div class="grow" style="min-width:0"><h3 class="ellipsis">${esc(t.name)}</h3><span class="small muted">${esc(t.city || '')}</span></div><button class="btn sm" data-hist="${esc(t.teamId)}">History</button></div>
-        <div class="list" style="margin-top:12px">${(t.players || []).map((p) => `<div class="li small"><span class="badge" style="min-width:34px;justify-content:center">${esc(p.number)}</span><span class="grow ellipsis">${esc(p.name)}</span><span class="muted">${esc(p.libero ? 'Libero' : VB.ROLES[p.role] || '')}${p.captain ? ' · C' : ''}</span></div>`).join('') || '<div class="empty small">No players listed</div>'}</div></div>`).join('')}</div>`;
+    const rows = new Map(((S.standings && S.standings.groups) || []).flatMap((g) => g.rows).map((r) => [r.teamId, r]));
+    $('#tab').innerHTML = `<div class="card h2hcard"><div class="row wrapr"><b class="h-bar">Head to head</b><select class="input" id="h1">${S.teams.map((t, i) => `<option value="${esc(t.teamId)}" ${i === 0 ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select><span class="muted">v</span><select class="input" id="h2">${S.teams.map((t, i) => `<option value="${esc(t.teamId)}" ${i === 1 ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select><button class="btn primary" id="hgo">${VB.icon('h2h')}Compare</button></div><div id="hout"></div></div>
+      <div class="teams">${S.teams.map((t) => { const c = VB.teamColor(t), r = rows.get(t.teamId); return `<div class="card tcard" style="--tc:${esc(c)}"><div class="th">${VB.logoHtml(t)}<div class="grow" style="min-width:0"><h3>${esc(t.name)}</h3><span class="small muted">${esc([t.shortName, t.city].filter(Boolean).join(' · '))}</span></div><button class="btn sm" data-hist="${esc(t.teamId)}">History</button></div>
+        ${r ? `<div class="rec"><span class="badge">#${r.position} in the table</span><span class="badge">P ${r.played} · W ${r.won} · L ${r.lost}</span><span class="badge">Sets ${r.setsWon}:${r.setsLost}</span></div>` : ''}
+        <div class="players">${(t.players || []).map((p) => `<div class="li small"><span class="jn">${esc(p.number)}</span><span class="grow ellipsis"><b>${esc(p.name)}</b></span><span class="muted">${esc(p.libero ? 'Libero' : VB.ROLES[p.role] || '')}${p.captain ? ' · C' : ''}</span></div>`).join('') || '<div class="empty small">No players listed</div>'}</div></div>`; }).join('')}</div>`;
     $('#hgo').onclick = h2h;
     $$('[data-hist]').forEach((b) => b.onclick = () => teamHistory(teamById(b.dataset.hist)));
   }
@@ -187,7 +265,8 @@
     const r = await api('GET', `/api/volleyball/h2h?teamA=${encodeURIComponent(a)}&teamB=${encodeURIComponent(b)}`);
     if (!r.ok) { $('#hout').innerHTML = '<p class="small muted">Could not load it.</p>'; return; }
     const j = r.json, A = teamById(a), B = teamById(b);
-    $('#hout').innerHTML = `<p style="margin-top:12px"><b>${esc(A.name)} ${j.wins[a] || 0} – ${j.wins[b] || 0} ${esc(B.name)}</b> <span class="muted small">· sets ${j.sets[a] || 0}–${j.sets[b] || 0} · points ${j.points[a] || 0}–${j.points[b] || 0} (all competitions)</span></p>
+    $('#hout').innerHTML = `<div class="h2hres" style="--ha:${esc(VB.teamColor(A))};--hb:${esc(VB.teamColor(B))}"><span class="side">${VB.logoHtml(A)}<span class="ellipsis">${esc(A.name)}</span></span><span class="big">${j.wins[a] || 0} – ${j.wins[b] || 0}</span><span class="side r">${VB.logoHtml(B)}<span class="ellipsis">${esc(B.name)}</span></span></div>
+      <p style="margin-top:10px"><b>${esc(A.name)} ${j.wins[a] || 0} – ${j.wins[b] || 0} ${esc(B.name)}</b> <span class="muted small">· sets ${j.sets[a] || 0}–${j.sets[b] || 0} · points ${j.points[a] || 0}–${j.points[b] || 0} (all competitions)</span></p>
       <div class="list" style="margin-top:8px">${j.matches.map((x) => `<a class="li small" href="/volleyball/match/${esc(x.matchId)}"><span class="grow ellipsis">${esc(x.tournamentName)}</span><b>${x.teamA.teamId === a ? `${x.result.sets.A}–${x.result.sets.B}` : `${x.result.sets.B}–${x.result.sets.A}`}</b></a>`).join('') || '<div class="empty small">They have not met yet</div>'}</div>`;
   }
   async function teamHistory(t) {
@@ -198,7 +277,7 @@
     if (!r.ok) { el.innerHTML = '<div class="empty">Could not load the history</div>'; return; }
     const j = r.json, a = j.allTime, tt = j.tournament;
     el.innerHTML = `<div class="row wrapr" style="gap:8px"><span class="chip">All competitions: ${a.won}–${a.lost}</span><span class="chip">Sets ${a.setsWon}–${a.setsLost}</span>${tt ? `<span class="chip">This tournament: ${tt.won}–${tt.lost}</span>` : ''}</div>
-      <div class="list" style="margin-top:12px">${j.matches.map((x) => { const sd = x.teamA.teamId === t.teamId ? 'A' : 'B', op = sd === 'A' ? x.teamB : x.teamA, won = x.result && x.result.winner === sd; return `<a class="li small" href="/volleyball/match/${esc(x.matchId)}"><span class="form"><i class="${won ? 'W' : 'L'}">${won ? 'W' : 'L'}</i></span><span class="grow ellipsis">v ${esc(op ? op.name : '')} <span class="muted">· ${esc(x.tournamentName)}</span></span><b>${x.result ? `${x.result.sets[sd]}–${x.result.sets[sd === 'A' ? 'B' : 'A']}` : ''}</b></a>`; }).join('') || '<div class="empty small">No completed matches yet</div>'}</div>`;
+      <div class="list hist" style="margin-top:12px">${j.matches.map((x) => { const sd = x.teamA.teamId === t.teamId ? 'A' : 'B', op = sd === 'A' ? x.teamB : x.teamA, won = x.result && x.result.winner === sd; return `<a class="li small" href="/volleyball/match/${esc(x.matchId)}"><span class="form"><i class="${won ? 'W' : 'L'}">${won ? 'W' : 'L'}</i></span><span class="grow ellipsis">v ${esc(op ? op.name : '')} <span class="muted">· ${esc(x.tournamentName)}</span></span><b>${x.result ? `${x.result.sets[sd]}–${x.result.sets[sd === 'A' ? 'B' : 'A']}` : ''}</b></a>`; }).join('') || '<div class="empty small">No completed matches yet</div>'}</div>`;
   }
 
   if (!tid) { notFound(404); return; }
