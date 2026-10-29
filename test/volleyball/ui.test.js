@@ -506,6 +506,29 @@ const FAKE_FIREBASE = `(function(){
     await sc.click('.vcp-x');
     await sc.waitForSelector('.vcp.open', { state: 'detached', timeout: 3000 }).catch(() => {});
     await shot(sc, 'scorecard-points');
+    // the cricket scorecard's tabs, for volleyball
+    await sc.click('#tabs [data-t="summary"]');
+    await sc.waitForSelector('#ch-prog svg path', { timeout: 8000 });
+    ok('summary: every set as a card, its score progression and momentum drawn from the rallies', (await sc.locator('#setcards .setcard').count()) === 3 && (await sc.locator('#ch-prog svg path').count()) === 2 && (await sc.locator('#ch-lead svg path').count()) >= 1);
+    await sc.locator('#ch-prog svg').hover();
+    ok('…hovering the chart shows the score at that rally', /Rally \d+ · Set \d/.test(await sc.textContent('#ch-prog .tip')) && await sc.evaluate(() => document.querySelector('#ch-prog').classList.contains('hover')));
+    await shot(sc, 'scorecard-summary');
+    await sc.click('#tabs [data-t="clips"]');
+    await sc.waitForSelector('#clist .vclip[data-i]', { timeout: 8000 });
+    ok('clips: the match’s clips library lists the kill, with filters', /Attack kill/.test(await sc.textContent('#clist')) && (await sc.locator('#ck button').count()) === 6);
+    await sc.click('#tabs [data-t="lineups"]');
+    await sc.waitForSelector('.lucourt');
+    ok('line-ups: both starting sixes on the court', (await sc.locator('.lucourt .lupos').count()) === 12);
+    await shot(sc, 'scorecard-lineups');
+    await sc.click('#tabs [data-t="insights"]');
+    ok('insights: side-out % and where the points came from', /Side-out %/.test(await sc.textContent('#tab')) && (await sc.locator('.stackbar').count()) === 2);
+    await sc.click('#tabs [data-t="mvp"]');
+    ok('MVP: the player of the match, by points scored', /Player of the match/.test(await sc.textContent('.mvp.first')));
+    await sc.click('#tabs [data-t="info"]');
+    ok('info: the rules and both squads', /Best of 5 sets|Best of \d sets|One set/.test(await sc.textContent('#tab')) && (await sc.locator('.squad').count()) === 2);
+    await sc.goto(sc.url().replace(/\?.*$/, '') + '?tab=insights');
+    await sc.waitForSelector('.stackbar');
+    ok('?tab= opens a tab directly', (await sc.getAttribute('#tabs [data-t="insights"]', 'aria-pressed')) === 'true');
     await sc.click('#tabs [data-t="card"]');
     await shot(sc, 'scorecard-light');
     const scDark = await open(`/volleyball/match/${MID}`, { who: null, helper: null, viewport: { width: 1280, height: 900 }, scheme: 'dark' });
@@ -520,8 +543,9 @@ const FAKE_FIREBASE = `(function(){
     /* ------------------------------------------------------------ tournament page */
     head('TOURNAMENT PAGE — table, leaders, teams');
     const tp = await open(`/volleyball/tournament/${TID}`, { who: null, helper: null, viewport: { width: 1280, height: 900 } });
-    await tp.waitForSelector('.m');
-    ok('the result is listed (FT, 3–0)', /3–0/.test(await tp.textContent('.m .sc')));
+    await tp.waitForSelector('.mcard');
+    ok('the result is listed as a match card (full time, won 3–0)', /FULL TIME/.test(await tp.textContent('.mcard .mc-st')) && /won 3–0/.test(await tp.textContent('.mcard .mc-foot')));
+    ok('the cover carries the tournament’s numbers (1 match played)', /1\s*Matches played/i.test(await tp.textContent('.cover .tiles')));
     await tp.click('#tabs [data-t="table"]');
     await tp.waitForSelector('.tbl tbody tr');
     const top = await tp.evaluate(() => [...document.querySelector('.tbl tbody tr').querySelectorAll('td')].map((d) => d.textContent.trim()));
@@ -537,7 +561,7 @@ const FAKE_FIREBASE = `(function(){
     await tp.waitForSelector('#hout p');
     ok('head-to-head: Pune 1 – 0 Goa', /Pune Panthers 1 – 0 Goa Waves/.test(await tp.textContent('#hout')));
     const tpPhone = await open(`/volleyball/tournament/${TID}`, { who: null, helper: null, viewport: { width: 390, height: 844 } });
-    await tpPhone.waitForSelector('.m');
+    await tpPhone.waitForSelector('.mcard');
     ok('the tournament page fits a 390 px phone', await noOverflow(tpPhone));
     await shot(tpPhone, 'tournament-phone');
 

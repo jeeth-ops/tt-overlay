@@ -370,9 +370,165 @@
   };
   VB.closeClips = cpClose;
 
-  VB.applyTheme = function () {
-    var t = VB.store.get('vb_theme', 'auto');
-    if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = t;
+  /* 🏟️ The cricket portal's pieces, for volleyball: line icons, the arena
+     picture behind a cover, and the match card. */
+  var ICONS = {
+    matches: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    table: '<path d="M4 6h16M4 12h16M4 18h16"/><path d="M9 4v16"/>',
+    leaders: '<path d="M6 20V11M12 20V4M18 20v-6"/>',
+    bracket: '<path d="M4 5h5v6H4M4 13h5v6H4M9 8h4v8H9M13 12h7"/>',
+    teams: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.6 3-5.6 6-5.6s5.4 2 6 5.6M16 4.6a3.2 3.2 0 0 1 0 6.4M18 14.6c1.8.7 2.9 2.5 3.2 5.4"/>',
+    summary: '<path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
+    card: '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4V2.8h6V4M8.5 10h7M8.5 14h7M8.5 18h4"/>',
+    points: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
+    clips: '<rect x="3" y="5.5" width="13" height="13" rx="2.5"/><path d="m16 10 5-3v10l-5-3z"/>',
+    lineups: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 12h17"/><circle cx="8" cy="8" r=".8"/><circle cx="16" cy="8" r=".8"/><circle cx="12" cy="16" r=".8"/>',
+    insights: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+    mvp: '<path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6-4.5-4.2 6.1-.8z"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+    h2h: '<path d="M4 7h11l-3-3M20 17H9l3 3"/>',
+    play: '<path d="M7 4.5v15l13-7.5z"/>',
+    pin: '<path d="M12 21s-6.5-6.1-6.5-11.2A6.5 6.5 0 0 1 12 3.3a6.5 6.5 0 0 1 6.5 6.5C18.5 14.9 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.3"/>',
+    cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H4.5a3 3 0 0 0 3.5 4M16 6h3.5a3 3 0 0 1-3.5 4M12 13v4M8.5 20.5h7M9.5 17h5v3.5h-5z"/>',
+    user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5c.8-4 3.8-6.2 7.5-6.2s6.7 2.2 7.5 6.2"/>',
+    ball: '<circle cx="12" cy="12" r="9"/><path d="M12 3c-1.8 3.2-1.8 7.4 0 9M12 12c3.6 0 7-1.8 8.6-4.6M12 12c-1.8 3.2-5.2 5.4-8.8 5.2"/>',
+    arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>'
   };
+  VB.icon = function (name, cls) { return '<svg class="' + (cls || 'i') + '" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[name] || '') + '</svg>'; };
+
+  // The arena behind a cover: night sky, light rigs, the crowd, an orange
+  // court in perspective with its lines, the net and a ball in flight. The
+  // two colours tint the light (a tournament's, or the two teams').
+  var artN = 0;
+  VB.coverArt = function (a, b) {
+    var id = 'vba' + (++artN), A = /^#[0-9a-f]{3,8}$/i.test(a || '') ? a : '#2563eb', B = /^#[0-9a-f]{3,8}$/i.test(b || '') ? b : '#22c55e';
+    var L = function (y) { return 520 + (330 - 520) * (y - 420) / 270; }, R = function (y) { return 1080 + (1270 - 1080) * (y - 420) / 270; };
+    var line = function (y) { return '<path d="M' + L(y).toFixed(1) + ' ' + y + 'H' + R(y).toFixed(1) + '"/>'; };
+    var mesh = '';
+    for (var x = 432; x <= 1168; x += 16) mesh += 'M' + x + ' 392V440';
+    return '<svg class="art" viewBox="0 0 1600 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">'
+      + '<defs><linearGradient id="' + id + 's" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1633"/><stop offset=".55" stop-color="#081022"/><stop offset="1" stop-color="#04070e"/></linearGradient>'
+      + '<radialGradient id="' + id + 'a" cx=".18" cy=".2" r=".6"><stop offset="0" stop-color="' + A + '" stop-opacity=".55"/><stop offset="1" stop-color="' + A + '" stop-opacity="0"/></radialGradient>'
+      + '<radialGradient id="' + id + 'b" cx=".85" cy=".15" r=".55"><stop offset="0" stop-color="' + B + '" stop-opacity=".45"/><stop offset="1" stop-color="' + B + '" stop-opacity="0"/></radialGradient>'
+      + '<linearGradient id="' + id + 'beam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>'
+      + '<linearGradient id="' + id + 'c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f97316"/><stop offset="1" stop-color="#c2410c"/></linearGradient>'
+      + '<linearGradient id="' + id + 'f" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1e3a8a"/><stop offset="1" stop-color="#172554"/></linearGradient>'
+      + '<pattern id="' + id + 'p" width="14" height="12" patternUnits="userSpaceOnUse"><circle cx="3" cy="4" r="2.4" fill="#cbd5e1" fill-opacity=".22"/><circle cx="10" cy="9" r="2.2" fill="#94a3b8" fill-opacity=".16"/></pattern>'
+      + '<pattern id="' + id + 'q" width="22" height="16" patternUnits="userSpaceOnUse"><circle cx="6" cy="5" r="2" fill="' + A + '" fill-opacity=".35"/><circle cx="17" cy="11" r="2" fill="' + B + '" fill-opacity=".3"/></pattern>'
+      + '<linearGradient id="' + id + 'm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".35" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity=".5"/></linearGradient>'
+      + '<mask id="' + id + 'k"><rect x="0" y="150" width="1600" height="270" fill="url(#' + id + 'm)"/></mask>'
+      + '<radialGradient id="' + id + 'g" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fb923c" stop-opacity=".45"/><stop offset="1" stop-color="#fb923c" stop-opacity="0"/></radialGradient></defs>'
+      + '<rect width="1600" height="700" fill="url(#' + id + 's)"/><rect width="1600" height="700" fill="url(#' + id + 'a)"/><rect width="1600" height="700" fill="url(#' + id + 'b)"/>'
+      // the stands: tiers of the crowd, fading up into the dark
+      + '<g mask="url(#' + id + 'k)"><rect x="0" y="150" width="1600" height="270" fill="url(#' + id + 'p)"/><rect x="0" y="150" width="1600" height="270" fill="url(#' + id + 'q)"/></g>'
+      + '<path d="M0 300H1600M0 360H1600" stroke="#fff" stroke-opacity=".05" stroke-width="3"/>'
+      + '<rect x="0" y="404" width="1600" height="16" fill="#0f172a"/><rect x="0" y="404" width="1600" height="3" fill="' + A + '" fill-opacity=".6"/>'
+      // light rigs and their beams
+      + '<g fill="url(#' + id + 'beam)"><path d="M260 0h60l260 700H120z" opacity=".55"/><path d="M1280 0h60l140 700H1020z" opacity=".55"/><path d="M770 0h60l170 700H600z" opacity=".35"/></g>'
+      + '<g fill="#fff"><rect x="250" y="14" width="80" height="10" rx="4" opacity=".85"/><rect x="1270" y="14" width="80" height="10" rx="4" opacity=".85"/><rect x="760" y="10" width="80" height="10" rx="4" opacity=".7"/></g>'
+      // the floor, the free zone and the court (right of centre: the title sits on the stands)
+      + '<rect x="0" y="420" width="1600" height="280" fill="#0b1226"/><g transform="translate(190 0)">'
+      + '<path d="M470 400H1130L1420 700H180Z" fill="url(#' + id + 'f)"/>'
+      + '<ellipse cx="800" cy="560" rx="520" ry="150" fill="url(#' + id + 'g)"/>'
+      + '<path d="M520 420H1080L1270 690H330Z" fill="url(#' + id + 'c)"/>'
+      + '<g stroke="#fff" stroke-width="5" fill="none" stroke-linejoin="round" opacity=".92"><path d="M520 420H1080L1270 690H330Z"/>' + line(520) + '</g>'
+      + '<g stroke="#fff" stroke-width="3.5" fill="none" opacity=".8">' + line(490) + line(565) + '</g>'
+      // the net
+      + '<g><path d="M420 520V372M1180 520V372" stroke="#e2e8f0" stroke-width="7" stroke-linecap="round"/>'
+      + '<rect x="420" y="390" width="760" height="52" fill="#020617" fill-opacity=".35"/>'
+      + '<path d="' + mesh + 'M420 404H1180M420 418H1180M420 432H1180" stroke="#fff" stroke-opacity=".22" stroke-width="1.2"/>'
+      + '<rect x="420" y="384" width="760" height="8" rx="2" fill="#fff"/><rect x="420" y="440" width="760" height="4" fill="#fff" fill-opacity=".8"/>'
+      + '<path d="M449.6 330V444M1150.4 330V444" stroke="#fff" stroke-width="4" stroke-dasharray="10 10"/><path d="M449.6 340V444M1150.4 340V444" stroke="#ef4444" stroke-width="4" stroke-dasharray="10 10" stroke-dashoffset="10"/></g>'
+      // a ball in flight
+      + '<path d="M470 640Q760 120 1040 236" fill="none" stroke="#fff" stroke-opacity=".38" stroke-width="3" stroke-dasharray="2 12" stroke-linecap="round"/>'
+      + '<g transform="translate(1062 240)"><circle r="30" fill="#fde68a"/><circle r="30" fill="none" stroke="#1d4ed8" stroke-opacity=".55" stroke-width="2"/><path d="M-5-29c-8 14-8 32 1 44M1 15c14 2 24-6 28-18M1 15c-12 8-24 9-29 5M-20-21c12 4 24 2 30-8M-28 4c10 4 22 0 29-11" fill="none" stroke="#1d4ed8" stroke-opacity=".7" stroke-width="2.4" stroke-linecap="round"/></g>'
+      + '</g></svg>';
+  };
+
+  // A match card (the cricket portal's): the two colours in the header, both
+  // teams with their sets (and the live set's points), every set's score,
+  // and what to do next. opts: { href (null: no link), slotLabel(m, side), actions (html), showVenue, cls }
+  VB.matchCard = function (m, opts) {
+    opts = opts || {};
+    var esc = VB.esc, A = m.teamA, B = m.teamB, sum = m.summary, res = m.result;
+    var ca = VB.teamColor(A, '#3b82f6'), cb = VB.teamColor(B, '#f59e0b');
+    var w = res && res.winner;
+    var live = m.status === 'live', done = m.status === 'completed';
+    var sets = res ? res.sets : sum ? sum.setsWon : null;
+    var brk = live && sum && sum.status === 'set_break';
+    var st = live ? (brk ? '<span class="mc-st brk">SET BREAK</span>' : '<span class="mc-st live">LIVE</span>')
+      : done ? '<span class="mc-st done">FULL TIME</span>'
+      : m.status === 'abandoned' ? '<span class="mc-st brk">ABANDONED</span>'
+      : m.locked ? '<span class="mc-st lock">LOCKED</span>' : '<span class="mc-st">UPCOMING</span>';
+    var stage = m.stage ? [m.stage.group ? 'Group ' + m.stage.group : '', m.stage.round].filter(Boolean).join(' · ') : '';
+    var label = function (s) { return opts.slotLabel ? opts.slotLabel(m, s) : 'To be decided'; };
+    var row = function (s) {
+      var t = s === 'A' ? A : B, c = s === 'A' ? ca : cb;
+      var serving = live && sum && sum.status === 'in_set' && sum.serving === s;
+      var sc = '';
+      if (sets && m.status !== 'scheduled') {
+        var pt = live && sum && sum.status === 'in_set' ? '<span class="pt" title="Set ' + sum.set + '">' + sum.points[s] + '</span>' : '';
+        sc = '<span class="sc">' + pt + '<b>' + sets[s] + '</b></span>';
+      }
+      return '<div class="mc-team' + (w && w !== s ? ' lost' : '') + '" style="--tc:' + esc(c) + '">' + (t ? VB.logoHtml(t, 'sm') : '<span class="logo sm">?</span>')
+        + '<span class="nm">' + (t ? '<b>' + esc(t.name) + (w === s ? '<span class="won">WON</span>' : '') + (serving ? ' <span class="mc-serve" title="Serving">' + VB.icon('ball') + '</span>' : '') + '</b><small>' + esc(t.shortName || t.city || '') + '</small>'
+          : '<b class="tbd">' + esc(label(s)) + '</b><small>To be decided</small>') + '</span>' + sc + '</div>';
+    };
+    var setList = (res && res.setScores) || (sum && sum.sets) || [];
+    var setsHtml = setList.length ? '<div class="mc-sets">' + setList.map(function (x) {
+      var now = x.status && x.status !== 'completed';
+      return '<span class="' + (now ? 'now' : '') + '">S' + x.set + ' ' + x.A + '–' + x.B + '</span>';
+    }).join('') + '</div>' : '';
+    var when = m.scheduledAt ? VB.fmtDate(m.scheduledAt) : 'Time to be set';
+    var place = opts.showVenue === false ? '' : m.venue || '';
+    var foot;
+    if (done && w) {
+      var wt = w === 'A' ? A : B;
+      foot = '<b class="win">' + esc((wt ? wt.name : 'Team ' + w) + ' won ' + Math.max(sets.A, sets.B) + '–' + Math.min(sets.A, sets.B)) + (res.forfeit ? ' (forfeit)' : '') + '</b><small>' + esc([m.completedAt ? VB.fmtDate(m.completedAt) : when, place].filter(Boolean).join(' · ')) + '</small>';
+    } else if (live && sum) {
+      var srv = sum.serving ? (sum.serving === 'A' ? A : B) : null;
+      foot = '<b>' + esc(brk ? 'Break before set ' + (sum.nextSet || sum.set + 1) : 'Set ' + sum.set + ' · ' + sum.points.A + '–' + sum.points.B) + '</b><small>' + esc(sum.matchPoint ? 'Match point ' + ((sum.matchPoint === 'A' ? A : B) || {}).name : sum.setPoint ? 'Set point ' + ((sum.setPoint === 'A' ? A : B) || {}).name : srv ? srv.name + ' serving' : place || 'In play') + '</small>';
+    } else if (m.status === 'abandoned') {
+      foot = '<b>Abandoned</b><small>' + esc(when) + '</small>';
+    } else {
+      foot = '<b>' + esc(when) + '</b><small>' + esc(place || (m.locked ? m.lockReason || 'Locked' : 'Best of ' + ((m.rules && m.rules.bestOf) || 5))) + '</small>';
+    }
+    var cta = live ? '<span class="mc-cta live">' + VB.icon('play') + 'Watch live</span>' : done ? '<span class="mc-cta">Scorecard' + VB.icon('arrow') + '</span>' : '<span class="mc-cta">Match centre' + VB.icon('arrow') + '</span>';
+    var href = opts.href === null ? null : opts.href || '/volleyball/match/' + encodeURIComponent(m.matchId);
+    return '<article class="mcard' + (live ? ' is-live' : '') + (opts.cls ? ' ' + opts.cls : '') + '" style="--ta:' + esc(ca) + ';--tb:' + esc(cb) + '" data-m="' + esc(m.matchId) + '">'
+      + (href ? '<a class="mc-link" href="' + esc(href) + '" aria-label="' + esc((A ? A.name : label('A')) + ' v ' + (B ? B.name : label('B'))) + '"></a>' : '')
+      + '<div class="mc-head">' + (m.matchNo ? '<span class="tag">M' + m.matchNo + '</span>' : '') + '<span class="grow">' + esc(stage || m.title || 'Match') + '</span>' + st + '</div>'
+      + '<div class="mc-body">' + row('A') + row('B') + setsHtml + '</div>'
+      + '<div class="mc-foot"><div class="grow">' + foot + '</div>' + (href ? cta : '') + '</div>'
+      + (opts.actions ? '<div class="mc-acts">' + opts.actions + '</div>' : '')
+      + '</article>';
+  };
+
+  // Dark by default — the All Sports Live broadcast look; light for whoever
+  // picks it ('auto' from before follows the device).
+  VB.theme = function () {
+    var t = VB.store.get('vb_theme', 'dark');
+    if (t === 'auto') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    return t === 'light' ? 'light' : 'dark';
+  };
+  var paintThemeButtons = function () {
+    var t = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.innerHTML = VB.themeIcon(); b.title = t === 'dark' ? 'Light theme' : 'Dark theme'; });
+  };
+  VB.applyTheme = function () {
+    document.documentElement.dataset.theme = VB.theme();
+    paintThemeButtons();
+  };
+  VB.themeIcon = function () {
+    return VB.theme() === 'dark'
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>';
+  };
+  VB.toggleTheme = function () { VB.store.set('vb_theme', VB.theme() === 'dark' ? 'light' : 'dark'); VB.applyTheme(); };
+  // a theme button anywhere on the page: <button class="theme-btn" data-theme-btn>
+  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-theme-btn]'); if (b) VB.toggleTheme(); });
   VB.applyTheme();
+  // a page may fix its own theme (the studio is always dark): only the buttons are painted later
+  document.addEventListener('DOMContentLoaded', paintThemeButtons);
 })();
