@@ -1,6 +1,6 @@
 // cricket-scorecard.html — the match sections tab bar (Scorecard · Info ·
-// Squads · Commentary · Summary · Insights · MVP), on the REAL page with
-// data from the REAL panel.
+// Squads · Commentary · Clips · Summary · Insights · MVP), on the REAL page
+// with data from the REAL panel.
 //
 // A short match (3 overs a side, toss, squads with captain / wicketkeeper /
 // left-handers, boundaries, a wide, caught / bowled / lbw) is scored on
@@ -15,6 +15,16 @@
 //   • Info / Squads / Summary / Insights / MVP show the match's real
 //     figures (compared with the record and the deliveries), nothing invented
 //     (officials and a missing tournament say "not recorded")
+//   • Summary: one innings at a time with a switcher — total, state, extras,
+//     the chase (target, need, balls left, required rate), runs per over,
+//     progression, where the runs came from, top performers, partnerships,
+//     fall of wickets, key moments — and an innings comparison
+//   • MVP: the points and the real figures, never the sum behind the points
+//   • Clips: the match's public clips (the same list the Highlights card
+//     loads — no second request) by innings / team / category / player /
+//     search, sorted, paged, played in the page's own clip player; an
+//     unready clip cannot be played, a clip with no innings is not guessed
+//     into one; loading, failure (with retry) and empty states
 //   • Commentary is the page's own full commentary inline; "Watch Full
 //     Commentary" on the Scorecard tab still opens it full screen
 //   • a live update redraws the open tab; empty states before the first ball
@@ -119,6 +129,47 @@ async function playMatch() {
   return { pre, live, final, record, balls, panelErrors: P.errors.filter((e) => !/Could not parse CSS|Not implemented/.test(e)) };
 }
 
+// A short Test on the real panel: India declare, Australia declare, India
+// declare again, Australia chase the lead down in the 4th innings.
+async function playTest() {
+  const P = bootPanel();
+  await sleep(80);
+  const click = (sel) => P.$(sel).dispatchEvent(new P.w.Event('click', { bubbles: true }));
+  P.E(`
+    state = mergeWithDefaults(null);
+    state.format = 'Test'; state.battingTeam = 'A';
+    document.getElementById('match-id').value = 'TABS1';
+    state.teamA.name = 'India'; state.teamA.short = 'IND'; state.teamA.color = '#1f6fd1';
+    state.teamB.name = 'Australia'; state.teamB.short = 'AUS'; state.teamB.color = '#f2c200';
+    state.teamA.players = ['Rohit Sharma','Shubman Gill','Virat Kohli','Rishabh Pant','Ravindra Jadeja','R Ashwin','Jasprit Bumrah','Mohammed Siraj','Mohammed Shami','Kuldeep Yadav','Axar Patel'].map((n, i) => ({ id: 'ta' + i, name: n, isXI: true }));
+    state.teamB.players = ['David Warner','Usman Khawaja','Marnus Labuschagne','Steve Smith','Travis Head','Alex Carey','Pat Cummins','Mitchell Starc','Nathan Lyon','Josh Hazlewood','Cameron Green'].map((n, i) => ({ id: 'tb' + i, name: n, isXI: true }));
+    state.toss = { winner: 'A', decision: 'BAT' };
+    history = []; ballOutbox = []; pendingWicketDelivery = null;
+    renderPanel();
+  `);
+  const innings = (bat, bowl, kinds, declare) => {
+    P.E(`state.striker = { name:${JSON.stringify(bat[0][0])}, id:${JSON.stringify(bat[0][1])}, runs:0, balls:0, fours:0, sixes:0 };
+      state.nonStriker = { name:${JSON.stringify(bat[1][0])}, id:${JSON.stringify(bat[1][1])}, runs:0, balls:0, fours:0, sixes:0 };
+      state.bowler = { name:${JSON.stringify(bowl[0][0])}, id:${JSON.stringify(bowl[0][1])}, overs:0, balls:0, maidens:0, runs:0, wickets:0, runsThisOver:0, wicketsThisOver:0 };
+      renderPanel();`);
+    let o = 0;
+    kinds.forEach((k) => { P.E(`recordBall(${JSON.stringify(k)})`); if (P.$('#newover-modal-overlay').classList.contains('show')) { o++; const [n, id] = bowl[o % bowl.length]; P.E(`closeNewOverModal(); setLiveBowler(${JSON.stringify(n)}, ${JSON.stringify(id)}); renderPanel();`); } });
+    if (declare) { click('#declare-btn'); click('#next-innings-btn'); }
+  };
+  const IND = [['Rohit Sharma', 'ta0'], ['Shubman Gill', 'ta1']], AUS = [['David Warner', 'tb0'], ['Usman Khawaja', 'tb1']];
+  const AUSB = [['Mitchell Starc', 'tb7'], ['Pat Cummins', 'tb6']], INDB = [['Jasprit Bumrah', 'ta6'], ['Mohammed Siraj', 'ta7']];
+  innings(IND, AUSB, ['4', '1', '0', '6', '1', '1', '2', '4', '0', '1', '1', '0'], true);   // 21
+  innings(AUS, INDB, ['1', '4', '0', '0', '1', '2', '1', '0', '0', '6', '0', '1'], true);   // 16
+  innings(IND, AUSB, ['4', '4', '1', '0', '1', '1'], true);                                 // 11
+  innings(AUS, INDB, ['6', '4', '1', '2', '4'], false);                                     // 17 — the lead was 16
+  const final = P.J('state');
+  const record = P.J('buildMatchRecordForLeague()');
+  const deliveries = P.emits.filter((e) => e.ev === 'logBall').map((e) => e.payload);
+  const api = H.build({ balls: H.coll([]), clips: H.coll([]), records: H.coll([]), rooms: {}, emits: [], audits: [] }, ['personName', 'playerKey', 'normalizeKindForPublic', 'sanitizeShot', 'buildBallFromCorrection', 'mapBallForPublic'], []);
+  const balls = deliveries.map((d, i) => api.mapBallForPublic(Object.assign({ timestamp: 1790000000000 + i * 30000 }, d, { striker: api.personName(d.striker), nonStriker: api.personName(d.nonStriker), bowler: api.personName(d.bowler) })));
+  return { final, record, balls, panelErrors: P.errors.filter((e) => !/Could not parse CSS|Not implemented/.test(e)) };
+}
+
 /* ---------------- 2. the scorecard page in Chromium ---------------- */
 const FIREBASE = 'function deep(){return new Proxy(function(){},{get:(t,k)=>k===Symbol.toPrimitive?(()=>0):(k==="then"?undefined:deep()),apply:()=>deep()})};const __auth=new Proxy({currentUser:null,onAuthStateChanged(cb){setTimeout(()=>cb(null),0);return ()=>{}}},{get:(t,k)=>k in t?t[k]:deep()});window.firebase=new Proxy({initializeApp(){},apps:[],auth:Object.assign(()=>__auth,{GoogleAuthProvider:function(){}})},{get:(t,k)=>k in t?t[k]:deep()});';
 const SOCKET = 'window.io=function(){const h={};const s={on:(e,f)=>{(h[e]=h[e]||[]).push(f);return s},emit:()=>{},connected:true,removeAllListeners(){},disconnect(){}};window.__fire=(e,p)=>(h[e]||[]).forEach(f=>f(p));return s};';
@@ -126,7 +177,7 @@ const PAGE = fs.readFileSync(path.join(ROOT, 'cricket-scorecard.html'), 'utf8');
 // the same page with the tabs code (its <style> and its <script>) taken out
 const PAGE_WITHOUT_TABS = PAGE.replace(/<style id="sc-tabs-style">[\s\S]*?<\/style>/, '').replace(/<script>\s*\/\*\s*=+\s*\n\s*🧭 MATCH SECTIONS[\s\S]*?<\/script>/, '');
 
-async function open(browser, { url, vp, fixtures, record, balls, html, scheme }) {
+async function open(browser, { url, vp, fixtures, record, balls, html, scheme, clips, clipsStatus, clipsDelay }) {
   const ctx = await browser.newContext({ viewport: vp || { width: 1280, height: 900 }, reducedMotion: 'reduce', colorScheme: scheme || 'dark' });
   await ctx.addInitScript(FIREBASE + SOCKET);
   const page = await ctx.newPage();
@@ -137,6 +188,14 @@ async function open(browser, { url, vp, fixtures, record, balls, html, scheme })
     if (u.host !== 'test.local') return route.fulfill({ status: 404, body: '' });
     if (u.pathname === '/api/public/match/TABS1') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, match: record || fixtures.record }) });
     if (u.pathname === '/api/public/match/TABS1/balls') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, balls: balls || fixtures.balls }) });
+    if (u.pathname === '/api/clips/match/TABS1') {
+      (fixtures.clipCalls = fixtures.clipCalls || []).push(u.search);
+      if (clipsDelay) await sleep(clipsDelay);
+      if (clipsStatus) return route.fulfill({ status: clipsStatus, contentType: 'application/json', body: '{"success":false}' });
+      const all = clips || fixtures.clips || [];
+      const skip = Number(u.searchParams.get('skip')) || 0, limit = Number(u.searchParams.get('limit')) || 50;
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, clips: all.slice(skip, skip + limit) }) });
+    }
     if (u.pathname.startsWith('/api/')) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"success":false}' });
     if (u.pathname === '/cricket-scorecard.html') return route.fulfill({ contentType: 'text/html', body: html || PAGE });
     const f = path.join(ROOT, u.pathname);
@@ -146,6 +205,27 @@ async function open(browser, { url, vp, fixtures, record, balls, html, scheme })
   await page.goto(url);
   await page.waitForTimeout(300);
   return { ctx, page, errors };
+}
+// The clips the server's /api/clips/match/:id hands out (serializeClip's
+// shape) for this match's fours, sixes and wickets — plus one still
+// uploading and one old clip cut before innings was stored.
+function clipsFor(balls) {
+  const out = [];
+  balls.forEach((b, i) => {
+    const t = b.ballType === '6' ? 'SIX' : b.ballType === '4' ? 'FOUR' : b.isWicket ? 'WICKET' : null;
+    if (!t) return;
+    const ov = b.over, bl = b.ballInOver;
+    const d = b.dismissal || {};
+    out.push({ clipId: 'c' + i, matchId: 'TABS1', eventType: t, isHighlight: true, dismissalType: t === 'WICKET' ? (d.type || null) : null, over: ov, ballInOver: bl, innings: b.innings || 1, runs: b.runs,
+      battingTeam: (b.innings || 1) === 1 ? 'A' : 'B', striker: b.striker, bowler: b.bowler, nonStriker: b.nonStriker || null, fielder: d.fielder || null, dismissedPlayer: t === 'WICKET' ? (d.batter || b.striker) : null,
+      ready: true, status: 'COMPLETE', watchUrl: `/api/clips/c${i}/watch`, playbackUrl: '/bg-video.mp4', posterUrl: out.length % 2 ? '/logo.png' : null, downloadUrl: `/api/clips/c${i}/download`, createdAt: new Date(1790000000000 + i * 30000).toISOString(), duration: 10 });
+  });
+  const last = out[out.length - 1];
+  Object.assign(last, { ready: false, status: 'UPLOADING', playbackUrl: null });
+  const old = Object.assign({}, out[0], { clipId: 'cold', over: 2, ballInOver: 7, createdAt: new Date(1780000000000).toISOString() });
+  delete old.innings;
+  out.push(old);
+  return out;
 }
 const fire = (page, state) => page.evaluate((s) => window.__fire('liveCricketScore', s), state);
 const LIVE = 'http://test.local/cricket-scorecard.html?room=TABS1';
@@ -177,6 +257,7 @@ async function pixelDiff(page, a, b) {
   ok(fx.panelErrors.length === 0, 'the panel scored the whole match without a script error', fx.panelErrors);
   ok(fx.record.resultText === 'CSK WON BY 9 WICKETS' && fx.balls.length > 30, `result "${fx.record.resultText}", ${fx.balls.length} deliveries`);
 
+  fx.clips = clipsFor(fx.balls);
   const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
   // the fixed background behind the translucent cards is not part of the scorecard: one flat colour in both
   const hideWash = '#ambient-wash,#logo-wash{display:none!important} html,body{background:#0b0e14!important;background-image:none!important}';
@@ -210,11 +291,11 @@ async function pixelDiff(page, a, b) {
     const { ctx, page, errors } = await open(browser, { url: LIVE, fixtures: fx });
     await fire(page, fx.live); await page.waitForTimeout(600);
     const tabs = await page.$$eval('#sc-tabs [role="tab"]', (b) => b.map((x) => [x.dataset.tab, x.textContent.trim(), x.getAttribute('aria-selected')]));
-    ok(JSON.stringify(tabs.map((t) => t[0])) === JSON.stringify(['scorecard', 'info', 'squads', 'commentary', 'summary', 'insights', 'mvp']), 'seven tabs in order, Scorecard selected first', tabs);
+    ok(JSON.stringify(tabs.map((t) => t[0])) === JSON.stringify(['scorecard', 'info', 'squads', 'commentary', 'clips', 'summary', 'insights', 'mvp']), 'eight tabs in order, Scorecard selected first', tabs);
     ok(tabs[0][2] === 'true' && !new URL(page.url()).searchParams.has('tab'), 'Scorecard is selected and the link carries no ?tab=');
     const barTop = await page.$eval('#sc-tabs', (e) => e.getBoundingClientRect().top), brand = await page.$eval('#brandbar', (e) => e.getBoundingClientRect().bottom);
     ok(Math.abs(barTop - brand) < 1.5, 'the bar sits right under the brand bar');
-    for (const id of ['info', 'squads', 'commentary', 'summary', 'insights', 'mvp']) {
+    for (const id of ['info', 'squads', 'commentary', 'clips', 'summary', 'insights', 'mvp']) {
       await tab(page, id);
       const st = await page.evaluate((id) => ({ sel: document.getElementById('sct-tab-' + id).getAttribute('aria-selected'), panel: !document.getElementById('sct-p-' + id).hidden,
         others: [...document.querySelectorAll('.sct-panel')].filter((p) => p.id !== 'sct-p-' + id).every((p) => p.hidden),
@@ -273,13 +354,31 @@ async function pixelDiff(page, a, b) {
     await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-squads.png`), fullPage: true });
 
     await tab(page, 'summary');
-    const sum = await txt(page, '#sct-p-summary');
-    ok(/1st innings · Mumbai Indians 36\/2/.test(sum) && /2nd innings · Chennai Super Kings 39\/1/.test(sum), 'Summary: both innings with the totals of the record (36/2, 39/1)');
+    const segs = await page.$$eval('#sct-p-summary [data-sum-inn]', (b) => b.map((x) => [x.dataset.sumInn, x.getAttribute('aria-selected'), x.innerText.replace(/\s+/g, ' ').trim()]));
+    ok(segs.length === 2 && /1st innings MI 36\/2 \(3\.0\)/i.test(segs[0][2]) && /2nd innings CSK 39\/1 \(2\.5\)/i.test(segs[1][2]), 'Summary: an innings switcher with both innings and their totals (36/2, 39/1)', segs);
+    ok((segs.find((x) => x[1] === 'true') || [])[0] === '1', 'Summary: a match that is already over opens on the 1st innings', segs);
+    const pick = async (no) => { await page.click(`#sct-p-summary [data-sum-inn="${no}"]`); await page.waitForTimeout(250); return txt(page, '#sct-p-summary .sct-sumbody'); };
+    const s1 = await pick(1);
+    const exA = rec.extras.A || {};
+    ok(/1st innings Mumbai Indians 36\/2 3\.0 ov/i.test(s1) && /Overs complete/i.test(s1) && new RegExp(`Extras ${(exA.wd || 0) + (exA.nb || 0) + (exA.b || 0) + (exA.lb || 0)} \\(wd ${exA.wd || 0}`).test(s1), `Summary 1st innings: total, overs, "Overs complete", extras as recorded (wd ${exA.wd})`, s1.slice(0, 260));
     const p1 = (rec.partnerships['1'] || [])[0];
-    ok(p1 && sum.includes(`${p1.batters.join(' & ')} ${p1.runs} (${p1.balls})`), `Summary: partnerships — the 1st-wicket stand ${p1 && p1.runs} (${p1 && p1.balls}) as saved`);
-    ok(/Rohit Sharma c Shivam Dube b Deepak Chahar/.test(sum) && /Suryakumar Yadav b Deepak Chahar/.test(sum) && /Devon Conway lbw b Jasprit Bumrah/.test(sum), 'Summary: key moments name every wicket the way the scorecard does');
-    ok(/Biggest over/.test(sum) && /Fall of wickets/.test(sum), 'Summary: fall of wickets and the biggest over');
-    await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-summary.png`), fullPage: true });
+    ok(p1 && s1.includes(`${p1.batters.join(' & ')} ${p1.runs} (${p1.balls})`), `Summary 1st innings: partnerships — the 1st-wicket stand ${p1 && p1.runs} (${p1 && p1.balls}) as saved`);
+    ok(/Rohit Sharma c Shivam Dube b Deepak Chahar/.test(s1) && /Suryakumar Yadav b Deepak Chahar/.test(s1) && !/Devon Conway lbw/.test(s1), 'Summary 1st innings: its own key moments only, each wicket named as on the scorecard');
+    const r1 = fx.balls.filter((b) => (b.innings || 1) === 1);
+    const f1 = r1.filter((b) => b.ballType === '4').length, x1 = r1.filter((b) => b.ballType === '6').length;
+    ok(new RegExp(`Boundaries ${f1 + x1} ${f1} four${f1 === 1 ? '' : 's'} · ${x1} six${x1 === 1 ? '' : 'es'}`, 'i').test(s1) && new RegExp(`Boundaries ${f1 * 4 + x1 * 6} ${Math.round((f1 * 4 + x1 * 6) / 36 * 100)}%`).test(s1), `Summary 1st innings: ${f1} fours, ${x1} sixes — ${f1 * 4 + x1 * 6} of the 36 runs in boundaries (from the deliveries)`, s1.slice(0, 600));
+    ok((await page.$$('#sct-p-summary .sct-sumbody svg path')).length >= 1 && (await page.$$('#sct-p-summary .sct-sumbody [data-tip]')).length >= 3, 'Summary 1st innings: runs-per-over bars and progression, each over readable on hover');
+    ok(!/Target/.test(s1), 'Summary 1st innings: no chase block in a 1st innings');
+    const s2 = await pick(2);
+    ok(/2nd innings Chennai Super Kings 39\/1 2\.5 ov/i.test(s2) && /Target reached/i.test(s2) && /Target 37/i.test(s2) && /Chased down with 9 wickets and 1 ball to spare/.test(s2), 'Summary 2nd innings: 39/1, target 37, "Chased down with 9 wickets and 1 ball to spare"', s2.slice(0, 300));
+    ok(/Devon Conway lbw b Jasprit Bumrah/.test(s2) && !/Rohit Sharma c Shivam/.test(s2), 'Summary 2nd innings: switching shows that innings\' key moments');
+    ok((await page.$$('#sct-p-summary .sct-sumbody polyline')).length === 2, 'Summary 2nd innings: progression measured against the 1st innings (two lines + the target)');
+    const cmp = await txt(page, '#sct-p-summary');
+    ok(/Innings comparison/i.test(cmp) && /36 Runs 39/i.test(cmp) && /2 Wickets lost 1/i.test(cmp) && /12\.00 Run rate 13\.76/i.test(cmp), 'Summary: innings comparison — runs 36 v 39, wickets 2 v 1, run rate 12.00 v 13.76', cmp.slice(-600));
+    ok(new URL(page.url()).searchParams.get('tab') === 'summary', 'switching innings keeps the Summary tab (and its link)');
+    await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-summary-2nd.png`), fullPage: true });
+    await pick(1);
+    await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-summary-1st.png`), fullPage: true });
 
     await tab(page, 'insights');
     const ins = await txt(page, '#sct-p-insights');
@@ -291,7 +390,10 @@ async function pixelDiff(page, a, b) {
     await tab(page, 'mvp');
     const top = await txt(page, '.sct-mvp-name b'), pts = await txt(page, '.sct-mvp-pts b');
     ok(top === mvp[0] && Number(pts) === mvp[1], `MVP: ${mvp[0]} (${mvp[1]} points) — worked out independently from the record`, [top, pts]);
-    ok(/2 wkts × 20 = 40/.test(await txt(page, '.sct-calc')) && /economy 11\.00/.test(await txt(page, '.sct-why')), 'MVP: the calculation and the figures behind it are shown');
+    const chips = await txt(page, '.sct-calc'), whyT = await txt(page, '.sct-why'), mvpAll = await txt(page, '#sct-p-mvp');
+    ok(/2\/22 \(2\.0 ov\)/.test(chips) && /11\.00 economy/i.test(chips) && /Took 2 wickets for 22 runs in 2\.0 overs/.test(whyT), 'MVP: the real figures — 2/22 (2.0 ov), economy 11.00 — and why', [chips, whyT]);
+    ok(!/×|= \d+ points|per wicket|per catch|per run/i.test(mvpAll), 'MVP: points shown straight — no formula, no multipliers anywhere on the tab', mvpAll.slice(0, 300));
+    ok(/40 MVP points/i.test(await txt(page, '.sct-mvp-pts')), 'MVP: "40 MVP points"');
     ok((await page.$$('.sct-rank')).length >= 5, 'MVP: the standings list');
     await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-mvp.png`), fullPage: true });
 
@@ -324,11 +426,12 @@ async function pixelDiff(page, a, b) {
     const { ctx, page, errors } = await open(browser, { url: LIVE + '&tab=summary', fixtures: fx });
     await fire(page, fx.live); await page.waitForTimeout(700);
     const before = await txt(page, '#sct-p-summary');
-    ok(/CSK need 22 runs off 9 balls/.test(before) && /15\/1/.test(before) && /Batting/.test(before), 'mid-chase: "CSK need 22 runs off 9 balls", 15/1, the innings marked Batting');
+    ok(/CSK need 22 runs off 9 balls/.test(before) && /15\/1/.test(before) && /In progress/i.test(before), 'mid-chase: "CSK need 22 runs off 9 balls", 15/1, the innings in play shown "In progress"');
+    ok(/Target 37/i.test(before) && /Need 22/i.test(before) && /Balls left 9/i.test(before) && /Required RR 14\.67/i.test(before), '…with the chase: target 37, need 22, 9 balls left, required rate 14.67', before.slice(0, 400));
     ok(await shown(page, '#sct-tab-commentary .sct-live'), 'a live match shows the live dot on Commentary');
     await fire(page, fx.final); await page.waitForTimeout(500);
     const after = await txt(page, '#sct-p-summary');
-    ok(/CSK WON BY 9 WICKETS/i.test(after) && /39\/1/.test(after) && !/need 22/.test(after), 'the next update redraws Summary: 39/1 and the result');
+    ok(/CSK WON BY 9 WICKETS/i.test(after) && /39\/1/.test(after) && !/need 22/.test(after) && /Chased down/.test(after), 'the next update redraws Summary: 39/1 and the result, still on the innings that was followed');
     ok(!(await shown(page, '#sct-tab-commentary .sct-live')), '…and the live dot goes once there is a result');
     await tab(page, 'commentary');
     const n1 = await page.$$eval('#commentary-page-body [data-ball]', (e) => e.length).catch(() => 0);
@@ -337,6 +440,143 @@ async function pixelDiff(page, a, b) {
     ok(n1 > 0 && n2 === n1, 'Commentary stays current inline while updates arrive', [n1, n2]);
     ok(errors.length === 0, 'no page errors', errors);
     await ctx.close();
+  }
+
+  head('CLIPS — the match\'s public clips');
+  {
+    const cIn = (n) => fx.clips.filter((c) => c.innings === n);
+    fx.clipCalls = [];
+    const { ctx, page, errors } = await open(browser, { url: FINAL, fixtures: fx });
+    await page.waitForTimeout(1200);
+    const calls0 = fx.clipCalls.length;
+    await tab(page, 'clips'); await page.waitForTimeout(400);
+    ok(fx.clipCalls.length === calls0 && calls0 >= 1, 'opening Clips asks the server for nothing new — it is the list the Highlights card already loaded', [calls0, fx.clipCalls.length]);
+    const seg = await page.$$eval('#sct-p-clips [data-cl-inn]', (b) => b.map((x) => [x.dataset.clInn, x.getAttribute('aria-selected'), x.innerText.replace(/\s+/g, ' ').trim()]));
+    ok(seg.length === 3 && /1st innings · MI/i.test(seg[0][2]) && new RegExp(`${cIn(1).length} clips`).test(seg[0][2]) && /2nd innings · CSK/i.test(seg[1][2]) && /All innings/i.test(seg[2][2]) && seg[0][1] === 'true', 'Clips: 1st / 2nd innings / All, with counts; a finished match opens on the 1st', seg);
+    const cards = () => page.$$eval('#sct-p-clips .scl-card', (b) => b.map((x) => ({ id: x.dataset.clipId, dis: x.disabled, t: x.innerText.replace(/\s+/g, ' ').trim() })));
+    let cs = await cards();
+    ok(cs.length === cIn(1).length && cs.every((c) => cIn(1).some((x) => x.clipId === c.id)), `Clips 1st innings: exactly its ${cIn(1).length} clips`, cs.map((c) => c.id));
+    const c0 = cIn(1)[0];
+    ok(cs[0].id === c0.clipId && new RegExp(`Ov ${c0.over}\\.${c0.ballInOver}`).test(cs[0].t) && /MI · 1st innings/i.test(cs[0].t) && /Four · 4 runs/i.test(cs[0].t), 'a card: the player, team, innings, over.ball and what happened', cs[0].t);
+    ok(await page.$$eval('#sct-p-clips .scl-card img', (i) => i.length) === cIn(1).filter((c) => c.posterUrl).length && await page.$$eval('#sct-p-clips .scl-fallback', (i) => i.length) === cIn(1).filter((c) => !c.posterUrl).length, 'real poster frames where the clip has one, the designed fallback (no fake thumbnail) where not');
+    ok(/1 older clip with no innings recorded is under All innings/i.test(await txt(page, '#sct-p-clips')), 'the old clip with no innings is not put in an innings — it says where it is');
+    ok((await page.$$('#sct-p-clips [data-delete-clip], #sct-p-clips [data-edit-clip]')).length === 0, 'no owner edit / delete controls in the viewer\'s Clips tab');
+    // category
+    await page.click('#sct-p-clips [data-cl-type="SIX"]'); await page.waitForTimeout(200);
+    cs = await cards();
+    ok(cs.length === cIn(1).filter((c) => c.eventType === 'SIX').length && cs.every((c) => /Six · 6 runs/i.test(c.t)), 'category 6s: only the sixes of the innings', cs.map((c) => c.t));
+    await page.click('#sct-p-clips [data-cl-type=""]'); await page.waitForTimeout(200);
+    // team: in MI's innings, CSK's clips are its bowlers' / fielders' wickets
+    await page.click('#sct-p-clips [data-cl-team="B"]'); await page.waitForTimeout(200);
+    cs = await cards();
+    ok(cs.length === cIn(1).filter((c) => c.eventType === 'WICKET').length && cs.every((c) => /Wicket/.test(c.t)), 'team CSK in the 1st innings: its wickets (the clips its players earned)', cs.map((c) => c.t));
+    await page.click('#sct-p-clips [data-cl-team=""]'); await page.waitForTimeout(200);
+    // player
+    await page.selectOption('#sct-p-clips [data-cl-player]', 'Deepak Chahar'); await page.waitForTimeout(250);
+    cs = await cards();
+    const dc = cIn(1).filter((c) => [c.striker, c.bowler, c.fielder, c.dismissedPlayer].includes('Deepak Chahar'));
+    ok(cs.length === dc.length && cs.length > 0, `player Deepak Chahar: his ${dc.length} clips of the innings`, cs.map((c) => c.t));
+    await page.selectOption('#sct-p-clips [data-cl-player]', ''); await page.waitForTimeout(200);
+    // search, typed
+    await page.fill('#sct-p-clips [data-cl-q]', 'rohi'); await page.waitForTimeout(350);
+    cs = await cards();
+    const rs = cIn(1).filter((c) => [c.striker, c.bowler, c.fielder, c.dismissedPlayer].some((n) => /rohi/i.test(n || '')));
+    ok(cs.length === rs.length && cs.length > 0 && (await page.evaluate(() => document.activeElement && document.activeElement.matches('[data-cl-q]'))), `search "rohi": Rohit Sharma's ${rs.length} clips, the box keeps its focus while typing`, cs.length);
+    await page.fill('#sct-p-clips [data-cl-q]', 'zzz'); await page.waitForTimeout(350);
+    ok(/No clips match these filters/.test(await txt(page, '#sct-p-clips')), 'a search with nothing: "No clips match these filters" with a way back');
+    await page.click('#sct-p-clips [data-cl-clear]'); await page.waitForTimeout(250);
+    cs = await cards();
+    ok(cs.length === cIn(1).length, '"Clear filters" brings every clip of the innings back', [cs.length, await txt(page, '#sct-p-clips')]);
+    // sort
+    await page.selectOption('#sct-p-clips [data-cl-sort]', 'latest'); await page.waitForTimeout(250);
+    cs = await cards();
+    const newest = cIn(1).slice().sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+    ok(cs[0].id === newest.clipId, 'sort "Latest clip first"', [cs[0].id, newest.clipId]);
+    await page.selectOption('#sct-p-clips [data-cl-sort]', 'over'); await page.waitForTimeout(200);
+    // 2nd innings: the unready clip
+    await page.click('#sct-p-clips [data-cl-inn="2"]'); await page.waitForTimeout(250);
+    cs = await cards();
+    ok(cs.length === cIn(2).length && cs.filter((c) => c.dis).length === 1 && /Uploading…/.test(cs.find((c) => c.dis).t), 'Clips 2nd innings: its clips; the one still uploading says so and cannot be played', cs.map((c) => [c.id, c.dis]));
+    // All innings: the old clip, unassigned
+    await page.click('#sct-p-clips [data-cl-inn="all"]'); await page.waitForTimeout(250);
+    ok((await cards()).length === Math.min(12, fx.clips.length) && new RegExp(`^${fx.clips.length} clips$`).test(await txt(page, '#sct-p-clips .scl-count')), `All innings: ${fx.clips.length} clips, the first 12 shown`);
+    if (await page.$('#sct-p-clips [data-cl-more]')) { await page.click('#sct-p-clips [data-cl-more]'); await page.waitForTimeout(250); }
+    cs = await cards();
+    ok(cs.length === fx.clips.length && /innings not recorded/i.test((cs.find((c) => c.id === 'cold') || {}).t || '') && /shown here, not guessed into an innings/.test(await txt(page, '#sct-p-clips')), 'All innings: every clip; the old one reads "innings not recorded"', cs.length);
+    // play, and come back to the same filters
+    await page.click('#sct-p-clips [data-cl-type="FOUR"]'); await page.waitForTimeout(200);
+    const first = (await cards())[0];
+    await page.click(`#sct-p-clips .scl-card[data-clip-id="${first.id}"]`); await page.waitForTimeout(700);
+    const vm = await page.evaluate(() => ({ open: document.getElementById('video-modal-backdrop').classList.contains('open'), title: document.getElementById('video-modal-title').textContent, src: document.querySelector('#video-modal-backdrop video') && document.querySelector('#video-modal-backdrop video').getAttribute('src') }));
+    ok(vm.open && /Four/.test(vm.title) && /bg-video\.mp4/.test(vm.src || ''), 'tapping a clip plays it in the page\'s own clip player (its CDN link)', vm);
+    await page.screenshot({ path: path.join(OUT, 'clips-playing.png') });
+    await page.keyboard.press('Escape'); await page.waitForTimeout(500);
+    const kept = await page.evaluate(() => ({ open: document.getElementById('video-modal-backdrop').classList.contains('open'), inn: (document.querySelector('#sct-p-clips [data-cl-inn][aria-selected="true"]') || {}).dataset, type: (document.querySelector('#sct-p-clips .scl-chip.on[data-cl-type]') || {}).dataset }));
+    ok(!kept.open && kept.inn && kept.inn.clInn === 'all' && kept.type && kept.type.clType === 'FOUR', 'closing the player returns to the list with the same innings and filters', kept);
+    await page.click('#sct-p-clips [data-cl-type=""]'); await page.click('#sct-p-clips [data-cl-inn="1"]'); await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(OUT, 'clips.png'), fullPage: true });
+    ok(errors.length === 0, 'no page errors', errors);
+    await ctx.close();
+
+    // paging: a long list shows 12 at a time
+    const many = fx.clips.concat(Array.from({ length: 15 }, (_, i) => Object.assign({}, fx.clips[0], { clipId: 'g' + i, eventType: 'CLIP', over: null, ballInOver: null, outcome: 'Fielding highlight', createdAt: new Date(1791000000000 + i).toISOString() })));
+    const pg = await open(browser, { url: FINAL + '&tab=clips', fixtures: fx, clips: many });
+    await pg.page.waitForTimeout(1200);
+    const n1 = many.filter((c) => c.innings === 1).length;
+    ok((await pg.page.$$('#sct-p-clips .scl-card')).length === 12 && /Show 12 more · 12 left|Show \d+ more · \d+ left/.test(await txt(pg.page, '#sct-p-clips .scl-more')), `paging: 12 of the innings' ${n1} clips, then "Show more"`);
+    await pg.page.click('#sct-p-clips [data-cl-more]'); await pg.page.waitForTimeout(250);
+    ok((await pg.page.$$('#sct-p-clips .scl-card')).length === Math.min(24, n1), '"Show more" adds the next 12');
+    await pg.ctx.close();
+
+    // still loading, failed (and retry), none at all, imported
+    const ld = await open(browser, { url: FINAL + '&tab=clips', fixtures: fx, clipsDelay: 2500 });
+    await ld.page.waitForTimeout(700);
+    ok((await ld.page.$$('#sct-p-clips .scl-skel')).length > 0, 'while the clips load: placeholder cards (aria-busy), no "no clips" yet');
+    await ld.page.waitForTimeout(2600);
+    ok((await ld.page.$$('#sct-p-clips .scl-card')).length === cIn(1).length, '…then the clips, on their own');
+    await ld.ctx.close();
+    fx.clipCalls = [];
+    const er = await open(browser, { url: FINAL + '&tab=clips', fixtures: fx, clipsStatus: 500 });
+    await er.page.waitForTimeout(1200);
+    ok(/The clips could not be loaded/.test(await txt(er.page, '#sct-p-clips')), 'the server failing: "The clips could not be loaded" with Try again');
+    const before = fx.clipCalls.length;
+    await er.page.click('#sct-p-clips [data-cl-retry]'); await er.page.waitForTimeout(600);
+    ok(fx.clipCalls.length > before, '…Try again asks again');
+    await er.ctx.close();
+    const no = await open(browser, { url: FINAL + '&tab=clips', fixtures: fx, clips: [] });
+    await no.page.waitForTimeout(1200);
+    ok(/No clips for this match yet/.test(await txt(no.page, '#sct-p-clips')), 'a match with no clips says so');
+    await no.ctx.close();
+    const lv = await open(browser, { url: LIVE + '&tab=clips', fixtures: fx });
+    await fire(lv.page, fx.live); await lv.page.waitForTimeout(1200);
+    ok((await lv.page.$eval('#sct-p-clips [data-cl-inn][aria-selected="true"]', (e) => e.dataset.clInn).catch(() => '')) === '2', 'live: Clips opens on the innings in play');
+    ok(lv.errors.length === 0, 'no page errors', lv.errors);
+    await lv.ctx.close();
+  }
+
+  head('A TEST MATCH — four innings, each with its own team and number');
+  {
+    const tx = await playTest();
+    ok(tx.panelErrors.length === 0 && tx.final.inningsNumber === 4 && tx.final.target === 17, `the panel played a 4-innings Test (4th-innings target ${tx.final.target}, "${tx.record.resultText || tx.final.matchResultText || ''}")`, [tx.panelErrors, tx.final.inningsNumber, tx.final.target]);
+    const tfx = { record: tx.record, balls: tx.balls, clips: [] };
+    for (const mode of ['finished', 'live']) {
+      const { ctx, page, errors } = await open(browser, { url: (mode === 'finished' ? FINAL : LIVE) + '&tab=summary', fixtures: tfx });
+      if (mode === 'live') await fire(page, tx.final);
+      await page.waitForTimeout(1000);
+      const segs = await page.$$eval('#sct-p-summary [data-sum-inn]', (b) => b.map((x) => x.innerText.replace(/\s+/g, ' ').trim()));
+      ok(segs.length === 4 && /1st innings IND 21\/0d/i.test(segs[0]) && /2nd innings AUS 16\/0d/i.test(segs[1]) && /3rd innings IND 11\/0d/i.test(segs[2]) && /4th innings AUS 17\/0/i.test(segs[3]), `${mode}: the switcher has all four innings, each with its team and total (declarations marked d)`, segs);
+      await page.click('#sct-p-summary [data-sum-inn="3"]'); await page.waitForTimeout(250);
+      const t3 = await txt(page, '#sct-p-summary .sct-sumbody');
+      ok(/3rd innings India 11\/0d/i.test(t3) && /Declared/i.test(t3) && !/Target/.test(t3), `${mode}: the 3rd innings is India's second, declared`, t3.slice(0, 200));
+      await page.click('#sct-p-summary [data-sum-inn="4"]'); await page.waitForTimeout(250);
+      const t4 = await txt(page, '#sct-p-summary .sct-sumbody');
+      ok(/4th innings Australia 17\/0/i.test(t4) && /Target 17/i.test(t4) && /Chased down with 10 wickets to spare/.test(t4) && !/in \d+ overs/.test(t4), `${mode}: the 4th innings chases the lead — target 17 (21 + 11 − 16 + 1), no overs limit in a Test`, t4.slice(0, 300));
+      const tbl = await page.$$eval('#sct-p-summary table th', (t) => t.map((x) => x.innerText.replace(/\s+/g, ' ').trim()));
+      ok(tbl.length === 5 && /IND 1st/i.test(tbl[1]) && /AUS 4th/i.test(tbl[4]), `${mode}: four innings compared in one table`, tbl);
+      ok(errors.length === 0, `${mode}: no page errors`, errors);
+      if (mode === 'finished') await page.screenshot({ path: path.join(OUT, 'test-match-summary.png'), fullPage: true });
+      await ctx.close();
+    }
   }
 
   head('EMPTY STATES');
@@ -357,6 +597,11 @@ async function pixelDiff(page, a, b) {
     const im = await open(browser, { url: FINAL + '&tab=insights', fixtures: fx, record: imported, balls: [] });
     await im.page.waitForTimeout(900);
     ok(/imported from a scorecard/.test(await txt(im.page, '#sct-p-insights')), 'an imported scorecard (no deliveries): Insights says why there is nothing ball-by-ball');
+    await tab(im.page, 'summary');
+    const isum = await txt(im.page, '#sct-p-summary');
+    ok(/Dot balls — no ball-by-ball record/i.test(isum) && !/NaN|undefined/.test(isum), '…Summary claims nothing ball-by-ball for it (dot balls: no record), no broken numbers', isum.slice(0, 400));
+    await tab(im.page, 'clips');
+    ok(/imported from a scorecard/.test(await txt(im.page, '#sct-p-clips')), '…and Clips says an imported match has none');
     await tab(im.page, 'squads');
     ok(/players who batted or bowled/.test(await txt(im.page, '#sct-p-squads')) && (await im.page.$$('#sct-p-squads .sct-pl')).length > 0, '…and with no squad saved, Squads lists who batted or bowled and says so');
     ok(im.errors.length === 0, 'no page errors', im.errors);
@@ -369,7 +614,7 @@ async function pixelDiff(page, a, b) {
     await page.waitForTimeout(900);
     const bar = await page.$eval('#sc-tabs .sct-track', (e) => ({ sw: e.scrollWidth, cw: e.clientWidth }));
     ok(bar.sw > bar.cw, 'the tab bar scrolls sideways inside itself on a phone', bar);
-    for (const id of ['scorecard', 'info', 'squads', 'commentary', 'summary', 'insights', 'mvp']) {
+    for (const id of ['scorecard', 'info', 'squads', 'commentary', 'clips', 'summary', 'insights', 'mvp']) {
       await tab(page, id);
       await page.waitForTimeout(500);   // the bar scrolls the chosen tab into view (smoothly)
       const r = await page.evaluate((id) => { const b = document.getElementById('sct-tab-' + id).getBoundingClientRect(); return { over: document.documentElement.scrollWidth - innerWidth, inView: b.left >= -1 && b.right <= innerWidth + 1 }; }, id);
