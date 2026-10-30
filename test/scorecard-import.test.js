@@ -57,7 +57,8 @@ const V = { email: X.OWNER.email, uid: X.OWNER.uid };
 // the real server.js functions, bound to this world's collections
 function serverFns(c) {
     const fns = [['personName'], ['playerKey'], ['canonicalPlayerId', 'async function '], ['resolvePlayerId', 'async function '], ['resolvePlayerIdExplicit', 'async function '],
-        ['forgetPlayerIdCache'], ['teamNameKey'], ['sanitizeTeamColor'], ['sanitizeTeamLogo'], ['publicTeam'], ['saveTeamRecord', 'async function ']];
+        ['forgetPlayerIdCache'], ['teamNameKey'], ['sanitizeTeamColor'], ['sanitizeTeamLogo'], ['publicTeam'], ['saveTeamRecord', 'async function '],
+        ['normalizeBatHand'], ['batHandsFor', 'async function '], ['setPlayerBatHand', 'async function '], ['publicTeamWithHands', 'async function ']];
     const src = fns.map(([n, p]) => H.grab(n, p)).join('\n') + '\n' + H.grabConst('TEAM_LOGO_MAX_CHARS');
     return new Function('playersCollection', 'teamsCollection', 'playerIdCache', 'crypto',
         src + '\nreturn { resolvePlayerId, resolvePlayerIdExplicit, saveTeamRecord, forgetPlayerIdCache };')(c.players, c.teams, new Map(), crypto);
