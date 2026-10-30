@@ -382,12 +382,13 @@ async function panelSuite(file, label){
     let minted = 0;
     const code = [
       H.grabConst('TEAM_LOGO_MAX_CHARS'),
-      ...['teamNameKey', 'sanitizeTeamColor', 'sanitizeTeamLogo', 'publicTeam'].map(n => H.grab(n)),
-      H.grab('saveTeamRecord', 'async function '),
+      ...['teamNameKey', 'sanitizeTeamColor', 'sanitizeTeamLogo', 'publicTeam', 'normalizeBatHand'].map(n => H.grab(n)),
+      ...['saveTeamRecord', 'publicTeamWithHands', 'batHandsFor', 'setPlayerBatHand'].map(n => H.grab(n, 'async function ')),
       'return { saveTeamRecord, sanitizeTeamLogo };'
     ].join('\n');
-    const api = new Function('teamsCollection', 'resolvePlayerId', 'resolvePlayerIdExplicit', 'crypto', code)(
-      teams,
+    // (no player database here: hands are covered by team-roster-persistence-test.js)
+    const api = new Function('teamsCollection', 'playersCollection', 'resolvePlayerId', 'resolvePlayerIdExplicit', 'crypto', code)(
+      teams, null,
       async (uid, name) => { const k = name.toLowerCase(); return players[k] || (players[k] = 'gp_new' + (++minted)); },
       async (uid, id) => id,
       require('crypto')

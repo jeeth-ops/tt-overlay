@@ -3367,6 +3367,56 @@ async function resolvePlayerIdExplicit(ownerUid, explicitId, name){
   return explicitId;
 }
 
+// 🏏 BATTING HAND — right- or left-handed is the player's own, permanent
+// preference: it lives on their profile (players.batHand, 'L' | 'R'), keyed
+// by playerId — never on a team or a match — so the same player comes up
+// with the same hand in every team and every later match. A profile that
+// has never been told stays without the field (the panel shows right-hand
+// until the scorer picks one).
+function normalizeBatHand(h) { return h === 'L' || h === 'R' ? h : null; }
+// { asked id -> 'L' | 'R' } for the players of one owner that have a hand
+// set; an id that was merged into another profile reads the surviving one.
+async function batHandsFor(ownerUid, ids) {
+    const out = {};
+    const asked = [...new Set((ids || []).filter(x => typeof x === 'string' && x))];
+    if (!playersCollection || !ownerUid || !asked.length) return out;
+    const at = new Map(asked.map(id => [id, id])); // asked id -> profile looked at (follows merges)
+    for (let hop = 0; hop < 5 && at.size; hop++) {
+        const docs = await playersCollection.find({ ownerUid, playerId: { $in: [...new Set(at.values())] } },
+            { projection: { playerId: 1, batHand: 1, mergedInto: 1 } }).toArray();
+        const byId = new Map(docs.map(d => [d.playerId, d]));
+        for (const [id, cur] of [...at]) {
+            const d = byId.get(cur);
+            if (d && d.mergedInto && d.mergedInto !== cur) { at.set(id, d.mergedInto); continue; }
+            const h = d && normalizeBatHand(d.batHand);
+            if (h) out[id] = h;
+            at.delete(id);
+        }
+    }
+    return out;
+}
+// Stores a player's hand on their profile. A player with an id the panel
+// made (added offline) gets their profile under that same id; a name with no
+// id goes through the usual find-or-create. Returns the profile's playerId,
+// or null when it could not be stored (never another account's profile).
+async function setPlayerBatHand(ownerUid, id, name, hand) {
+    hand = normalizeBatHand(hand);
+    if (!playersCollection || !ownerUid || !hand) return null;
+    let playerId = typeof id === 'string' && id.trim() ? id.trim().slice(0, 64) : null;
+    playerId = playerId ? await canonicalPlayerId(ownerUid, playerId) : await resolvePlayerId(ownerUid, name);
+    if (!playerId) return null;
+    const now = Date.now();
+    const set = { $set: { batHand: hand, batHandAt: now, updatedAt: now } };
+    let r = await playersCollection.updateOne({ ownerUid, playerId }, set);
+    if (!r.matchedCount && String(name || '').trim()) {
+        // (an id that is another account's player is left alone)
+        if (await playersCollection.findOne({ playerId }, { projection: { _id: 1 } })) return null;
+        await resolvePlayerIdExplicit(ownerUid, playerId, name);
+        r = await playersCollection.updateOne({ ownerUid, playerId }, set);
+    }
+    return r.matchedCount ? playerId : null;
+}
+
 
 // queries can match on "any of this player's known spellings" instead of
 // just one. Returns [] if the playerId doesn't exist (caller should treat
@@ -5737,8 +5787,9 @@ app.get('/api/players/search', requireAuthorizedCreator, async (req, res) => {
     try {
         const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const players = await playersCollection.find({ ownerUid, displayName: { $regex: escaped, $options: 'i' } })
-            .project({ playerId: 1, displayName: 1 }).limit(10).toArray();
-        res.json({ success: true, players });
+            .project({ playerId: 1, displayName: 1, batHand: 1 }).limit(10).toArray();
+        // (hand: the player's batting hand from their profile, when it is set)
+        res.json({ success: true, players: players.map(p => ({ _id: p._id, playerId: p.playerId, displayName: p.displayName, ...(normalizeBatHand(p.batHand) ? { hand: p.batHand } : {}) })) });
     } catch (err) {
         console.log('Player search error:', err);
         res.status(500).json({ success: false, players: [] });
@@ -5769,7 +5820,9 @@ app.post('/api/players/resolve', requireAuthorizedCreator, async (req, res) => {
 // POST /api/players/canonicalize  { uid, ids: [...] } — maps each saved player id
 // to the surviving id if it was merged into another profile (unchanged
 // otherwise). Create New Match calls this so an old squad never brings back a
-// merged-away id. Read-only: creates nothing.
+// merged-away id. Read-only: creates nothing. `hands` is each player's
+// batting hand from their profile (only the ones that have one), so a
+// squad loaded into a new match comes up left- / right-handed by itself.
 app.post('/api/players/canonicalize', requireAuthorizedCreator, async (req, res) => {
     const ownerUid = ownerUidFrom(req) || (req.body && req.body.uid);
     const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter(x => typeof x === 'string' && x).slice(0, 200) : [];
@@ -5777,11 +5830,39 @@ app.post('/api/players/canonicalize', requireAuthorizedCreator, async (req, res)
     try {
         const map = {};
         for (const id of ids) map[id] = await canonicalPlayerId(ownerUid, id);
-        res.json({ success: true, map });
+        res.json({ success: true, map, hands: await batHandsFor(ownerUid, ids) });
     } catch (err) {
         console.log('Player canonicalize error:', err);
         res.status(500).json({ success: false, error: 'Could not check players' });
     }
+});
+
+// POST /api/players/hand?uid=  { players: [{ id?, name?, hand: 'L' | 'R' }] }
+// — the scorer picked a batter's hand: it is stored on that player's profile
+// (see BATTING HAND above), so every later match knows it. Each player is
+// answered on its own (ok + the profile's playerId); success is true only
+// when every one was stored, so the panel never says "saved" for one that
+// was not.
+app.post('/api/players/hand', requireAuthorizedCreator, async (req, res) => {
+    if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const ownerUid = ownerUidFrom(req);
+    const list = Array.isArray(req.body && req.body.players) ? req.body.players.slice(0, 60) : [];
+    if (!list.length) return res.status(400).json({ success: false, error: 'players required' });
+    const players = [];
+    for (const p of list) {
+        const id = p && typeof p.id === 'string' && p.id.trim() ? p.id.trim().slice(0, 64) : null;
+        const name = String((p && p.name) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+        const hand = normalizeBatHand(p && p.hand);
+        if (!hand || (!id && !name)) { players.push({ id, name, ok: false, error: 'hand and a player required' }); continue; }
+        try {
+            const playerId = await setPlayerBatHand(ownerUid, id, name, hand);
+            players.push(playerId ? { id, name, playerId, hand, ok: true } : { id, name, ok: false, error: 'Player not found' });
+        } catch (err) {
+            console.log('Player hand save error:', err);
+            players.push({ id, name, ok: false, error: 'Could not save' });
+        }
+    }
+    res.json({ success: players.every(p => p.ok), players });
 });
 
 // POST /api/players/:playerId/merge  { uid, intoNameKeys: [...] } — folds
@@ -5899,17 +5980,30 @@ function sanitizeTeamLogo(u) {
     if (/^https:\/\/[^\s"'<>]+$/i.test(v)) return v;
     return null;
 }
-function publicTeam(doc) {
+// hands: { playerId -> 'L' | 'R' } from the players' own profiles (batHandsFor)
+// — a player's hand is shown with the team, never stored on it. rev counts
+// the saves of the team, so a laptop holding an older copy can be told
+// (TEAM_CHANGED) instead of saving over a newer squad.
+function publicTeam(doc, hands) {
     if (!doc) return null;
     return {
         teamId: doc.teamId, name: doc.name, short: doc.short || '', color: doc.color || '', logoUrl: doc.logoUrl || '',
-        players: (doc.players || []).map(p => ({ id: p.id, name: p.name, isXI: p.isXI !== false })),
+        players: (doc.players || []).map(p => ({ id: p.id, name: p.name, isXI: p.isXI !== false, ...(hands && hands[p.id] ? { hand: hands[p.id] } : {}) })),
         captainId: doc.captainId || null, wkId: doc.wkId || null,
+        rev: Number(doc.rev) || 0,
         createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null
     };
 }
-// input: { teamId?, name, short?, color?, logoUrl?, players:[{id?,name,isXI?}], captainId?, wkId? }
+async function publicTeamWithHands(ownerUid, doc) {
+    if (!doc) return null;
+    return publicTeam(doc, await batHandsFor(ownerUid, (doc.players || []).map(p => p.id)));
+}
+// input: { teamId?, name, short?, color?, logoUrl?, players:[{id?,name,isXI?,hand?}], captainId?, wkId?, baseRev? }
 // mode: 'save' (default) | 'ensure' (an existing team of that name is returned as-is)
+// A player's `hand` ('L' | 'R'), when given, is stored on that player's
+// profile (only send it for a hand the scorer just picked). baseRev, when
+// given, is the rev of the copy the change was made on: a team saved since
+// then is not written over (409 TEAM_CHANGED, with the team as it is now).
 async function saveTeamRecord(ownerUid, input, opts) {
     opts = opts || {};
     input = input || {};
@@ -5925,20 +6019,25 @@ async function saveTeamRecord(ownerUid, input, opts) {
 
     const sameName = await teamsCollection.findOne({ ownerUid, nameKey });
     if (!teamId && sameName) {
-        if (opts.mode === 'ensure') return { status: 200, body: { success: true, team: publicTeam(sameName), reused: true } };
-        return { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `A team called "${sameName.name}" already exists — pick it from Existing Teams`, team: publicTeam(sameName) } };
+        if (opts.mode === 'ensure') return { status: 200, body: { success: true, team: await publicTeamWithHands(ownerUid, sameName), reused: true } };
+        return { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `A team called "${sameName.name}" already exists — pick it from Existing Teams`, team: await publicTeamWithHands(ownerUid, sameName) } };
     }
     if (teamId && sameName && sameName.teamId !== teamId) {
-        return { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `Another team is already called "${sameName.name}"`, team: publicTeam(sameName) } };
+        return { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `Another team is already called "${sameName.name}"`, team: await publicTeamWithHands(ownerUid, sameName) } };
     }
     let existing = null;
+    const baseRev = input.baseRev == null || input.baseRev === '' ? null : Number(input.baseRev);
+    const changedSince = async (doc) => ({ status: 409, body: { success: false, code: 'TEAM_CHANGED',
+        error: `"${doc.name}" was changed on another device after you opened it`, team: await publicTeamWithHands(ownerUid, doc) } });
     if (teamId) {
         existing = await teamsCollection.findOne({ ownerUid, teamId });
         if (!existing) return { status: 404, body: { success: false, error: 'Team not found' } };
+        if (baseRev !== null && (Number(existing.rev) || 0) !== baseRev) return changedSince(existing);
     }
 
     const players = [];
     const seen = new Set();
+    const handsNotSaved = [];
     for (const p of (Array.isArray(input.players) ? input.players : []).slice(0, 60)) {
         const pname = String((p && p.name) || '').trim().replace(/\s+/g, ' ').slice(0, 60);
         if (!pname) continue;
@@ -5949,37 +6048,123 @@ async function saveTeamRecord(ownerUid, input, opts) {
         if (seen.has(id)) continue;
         seen.add(id);
         players.push({ id, name: pname, isXI: !(p && p.isXI === false) });
+        const hand = normalizeBatHand(p && p.hand);
+        if (hand && !(await setPlayerBatHand(ownerUid, id, pname, hand).catch(() => null))) handsNotSaved.push(pname);
     }
     const captainId = players.some(p => p.id === input.captainId) ? input.captainId : null;
     const wkId = players.some(p => p.id === input.wkId) ? input.wkId : null;
     const now = Date.now();
     const fields = { name, nameKey, short, color, logoUrl, players, captainId, wkId, updatedAt: now };
+    const extra = handsNotSaved.length ? { handsNotSaved } : {};
 
     if (existing) {
-        await teamsCollection.updateOne({ ownerUid, teamId }, { $set: fields });
-        return { status: 200, body: { success: true, team: publicTeam({ ...existing, ...fields }) } };
+        const rev = (Number(existing.rev) || 0) + 1;
+        // (only over the copy that was read — a save from another laptop in between is not lost)
+        const r = await teamsCollection.updateOne({ ownerUid, teamId, ...(existing.rev == null ? { rev: { $exists: false } } : { rev: existing.rev }) }, { $set: { ...fields, rev } });
+        if (!r.matchedCount) return changedSince(await teamsCollection.findOne({ ownerUid, teamId }) || existing);
+        return { status: 200, body: { success: true, team: await publicTeamWithHands(ownerUid, { ...existing, ...fields, rev }), ...extra } };
     }
-    const doc = { ownerUid, teamId: 't_' + crypto.randomBytes(6).toString('hex'), ...fields, createdAt: now, createdBy: opts.creatorEmail || null };
+    const doc = { ownerUid, teamId: 't_' + crypto.randomBytes(6).toString('hex'), ...fields, rev: 1, createdAt: now, createdBy: opts.creatorEmail || null };
     try {
         await teamsCollection.insertOne(doc);
     } catch (err) {
         if (err && err.code === 11000) { // saved at the same instant from another laptop
             const again = await teamsCollection.findOne({ ownerUid, nameKey });
             if (again) return opts.mode === 'ensure'
-                ? { status: 200, body: { success: true, team: publicTeam(again), reused: true } }
-                : { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `A team called "${again.name}" already exists`, team: publicTeam(again) } };
+                ? { status: 200, body: { success: true, team: await publicTeamWithHands(ownerUid, again), reused: true } }
+                : { status: 409, body: { success: false, code: 'TEAM_EXISTS', error: `A team called "${again.name}" already exists`, team: await publicTeamWithHands(ownerUid, again) } };
         }
         throw err;
     }
-    return { status: 201, body: { success: true, team: publicTeam(doc) } };
+    return { status: 201, body: { success: true, team: await publicTeamWithHands(ownerUid, doc), ...extra } };
 }
 
-// GET /api/teams?uid= — this account's saved teams, A→Z.
+// 🛟 SAVED TEAMS FROM BEFORE THE SQUAD WAS KEPT — once per account, the first
+// time its teams are loaded:
+//   • a saved team with NO players gets the squad (same player ids) of the
+//     latest match it played in — by its teamId, else by its name. A team
+//     that has players is never touched.
+//   • a player's batting hand that so far was only noted on match squads
+//     (hand 'L') goes onto their profile — only when the profile has no hand
+//     yet, and only when the latest match that player was in says so.
+// Only empty fields are filled; nothing is removed. Marked done in settings.
+const profileBackfillRuns = new Map(); // ownerUid -> promise (one run at a time)
+function backfillOwnerProfiles(ownerUid) {
+    if (!ownerUid || !teamsCollection || !matchRecordsCollection || !playersCollection || !settingsCollection) return Promise.resolve(null);
+    if (!profileBackfillRuns.has(ownerUid)) {
+        profileBackfillRuns.set(ownerUid, runOwnerProfileBackfill(ownerUid).catch(err => {
+            console.log('Saved team / player backfill error (will retry):', err);
+            profileBackfillRuns.delete(ownerUid);
+            return null;
+        }));
+    }
+    return profileBackfillRuns.get(ownerUid);
+}
+async function runOwnerProfileBackfill(ownerUid) {
+    const flagId = 'profileBackfill:' + ownerUid;
+    const flag = await settingsCollection.findOne({ _id: flagId });
+    if (flag && flag.done) return flag;
+    const records = (await matchRecordsCollection.find({ ownerUid },
+        { projection: { matchId: 1, savedAt: 1, updatedAt: 1, upcoming: 1, 'teamA.name': 1, 'teamA.teamId': 1, 'teamB.name': 1, 'teamB.teamId': 1, squadA: 1, squadB: 1 } }).toArray())
+        .filter(r => r && !r.upcoming)
+        .sort((a, b) => String(a.savedAt || '').localeCompare(String(b.savedAt || '')) || (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0));
+    const squadByTeamId = new Map(), squadByName = new Map(), handOf = new Map(); // latest wins
+    for (const r of records) {
+        for (const side of ['A', 'B']) {
+            const t = r['team' + side] || {}, sq = r['squad' + side];
+            const list = sq && Array.isArray(sq.players) ? sq.players.filter(p => p && p.id && String(p.name || '').trim()) : [];
+            if (!list.length) continue;
+            const squad = { matchId: r.matchId, captainId: sq.captainId || null, wkId: sq.wkId || null,
+                players: list.map(p => ({ id: String(p.id), name: String(p.name).trim(), isXI: p.impactIn ? false : p.impactOut ? true : p.isXI !== false })) };
+            if (t.teamId) squadByTeamId.set(t.teamId, squad);
+            if (teamNameKey(t.name)) squadByName.set(teamNameKey(t.name), squad);
+            list.forEach(p => handOf.set(String(p.id), { hand: p.hand === 'L' ? 'L' : null, name: String(p.name).trim() }));
+        }
+    }
+    let teams = 0, hands = 0;
+    for (const t of await teamsCollection.find({ ownerUid }).toArray()) {
+        if ((t.players || []).length) continue;
+        const sq = squadByTeamId.get(t.teamId) || squadByName.get(t.nameKey || teamNameKey(t.name));
+        if (!sq) continue;
+        const players = [], seen = new Set();
+        for (const p of sq.players) {
+            const id = await resolvePlayerIdExplicit(ownerUid, p.id, p.name);
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            players.push({ id, name: p.name.slice(0, 60), isXI: p.isXI });
+        }
+        if (!players.length) continue;
+        const r = await teamsCollection.updateOne({ ownerUid, teamId: t.teamId, ...(t.rev == null ? { rev: { $exists: false } } : { rev: t.rev }) },
+            { $set: { players, captainId: seen.has(sq.captainId) ? sq.captainId : null, wkId: seen.has(sq.wkId) ? sq.wkId : null,
+                rev: (Number(t.rev) || 0) + 1, updatedAt: Date.now(), squadFromMatch: sq.matchId || null } });
+        if (r.matchedCount) teams++;
+    }
+    for (const [id, h] of handOf) {
+        if (h.hand !== 'L') continue;
+        const playerId = await canonicalPlayerId(ownerUid, id);
+        let r = await playersCollection.updateOne({ ownerUid, playerId, batHand: { $exists: false } }, { $set: { batHand: 'L', batHandAt: Date.now(), batHandFrom: 'match-squad' } });
+        if (!r.matchedCount && !(await playersCollection.findOne({ ownerUid, playerId }, { projection: { _id: 1 } }))) {
+            await resolvePlayerIdExplicit(ownerUid, playerId, h.name);
+            r = await playersCollection.updateOne({ ownerUid, playerId, batHand: { $exists: false } }, { $set: { batHand: 'L', batHandAt: Date.now(), batHandFrom: 'match-squad' } });
+        }
+        if (r.matchedCount) hands++;
+    }
+    const done = { done: true, teams, hands, at: Date.now() };
+    await settingsCollection.updateOne({ _id: flagId }, { $set: done }, { upsert: true });
+    if (teams || hands) console.log(`🛟 Saved teams of ${ownerUid}: ${teams} squad(s) filled from their latest match, ${hands} batting hand(s) moved onto player profiles.`);
+    return done;
+}
+
+// GET /api/teams?uid= — this account's saved teams, A→Z, each player with
+// their batting hand (from their profile).
 app.get('/api/teams', requireAuthorizedCreator, async (req, res) => {
     if (!teamsCollection) return res.json({ success: true, teams: [] });
     try {
-        const docs = await teamsCollection.find({ ownerUid: ownerUidFrom(req) }).toArray();
-        res.json({ success: true, teams: docs.map(publicTeam).sort((a, b) => a.name.localeCompare(b.name)) });
+        const ownerUid = ownerUidFrom(req);
+        await backfillOwnerProfiles(ownerUid);
+        const docs = await teamsCollection.find({ ownerUid }).toArray();
+        const hands = await batHandsFor(ownerUid, docs.flatMap(d => (d.players || []).map(p => p.id)));
+        res.json({ success: true, teams: docs.map(d => publicTeam(d, hands)).sort((a, b) => a.name.localeCompare(b.name)) });
     } catch (err) {
         console.log('Teams fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load teams' });

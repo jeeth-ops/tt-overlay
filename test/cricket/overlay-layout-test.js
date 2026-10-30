@@ -204,6 +204,8 @@ const ODI1 = [{ no: 1, team: 'A', runs: 286, wickets: 7, overs: '50.0' }];
 const TEST3 = [{ no: 1, team: 'A', runs: 237, wickets: 10, overs: '70.1' }, { no: 2, team: 'B', runs: 241, wickets: 10, overs: '80.0' }, { no: 3, team: 'A', runs: 290, wickets: 10, overs: '88.2' }];
 const S = {
   'first innings': st({ score: sc(87, 2, 11, 3), striker: pl('Rohit', 's1', 45, 30), nonStriker: pl('Virat', 's2', 32, 25), bowler: bw('Ankit', 'b1', 2, 3, 18, 1), thisOver: ['1', '0', '4'] }),
+  'first innings, big scores (208* off 151, 0-101)': st({ format: 'ODI', oversPerInnings: 50, score: sc(388, 3, 47, 2), striker: pl('Rohit Sharma', 's1', 208, 151), nonStriker: pl('Shubman Gill', 's2', 104, 99), bowler: bw('Mitchell Starc', 'b1', 9, 2, 101, 0), thisOver: ['6', '4'] }),
+  'chase, big scores and long names (5-112)': chase({ teamA: LONG_A, teamB: LONG_B, format: 'ODI', oversPerInnings: 50, target: 351, inningsArchive: [{ no: 1, team: 'A', runs: 350, wickets: 7, overs: '50.0' }], score: sc(318, 8, 48, 4), striker: { ...LONG1, runs: 158, balls: 121 }, nonStriker: { ...LONG2, runs: 100, balls: 104 }, bowler: { ...LONGB, overs: 10, balls: 0, runs: 112, wickets: 5 }, thisOver: ['W', '4', '6', '1'] }),
   'first innings, long names, 9 deliveries': st({ teamA: LONG_A, teamB: LONG_B, format: 'ODI', oversPerInnings: 50, score: sc(312, 9, 49, 5), striker: LONG1, nonStriker: LONG2, bowler: LONGB, thisOver: ['Wd', '1', 'Nb4', 'W', '0', 'LB1', '6', 'Wd2', 'B4'] }),
   'chase starts': chase({ striker: pl('Himesh', 'p1', 0, 0), nonStriker: pl('Raj', 'p2', 0, 0), bowler: bw('Ankit Sharma', 'b9', 0, 0, 0, 0) }),
   'chase (the screenshot)': chase({ score: sc(20, 0, 0, 4), striker: pl('Himesh', 'p1', 20, 4), nonStriker: pl('Raj', 'p2', 0, 0), bowler: bw('Ankit Sharma', 'b9', 0, 4, 20, 0), thisOver: ['4', '6', '4', '6'] }),
@@ -321,6 +323,15 @@ async function chasePanel(browser){
   await O.page.waitForTimeout(800);
   const [longNames, sizes] = await names();
   eq('very long names: initials + surname at one shared size, never below 24 design px', [longNames, sizes.length, sizes[0] >= 24], [['MAR Siddiqui', 'V Raghunathan', 'C Fitzgerald-Montgomery'], 1, true]);
+  // the figures are the heaviest, biggest type on their side: the batter's
+  // runs over the name, the bowler's W-R as big; balls / overs readable
+  const typo = () => O.page.evaluate(() => {
+    const u = barUnit(), f = (id) => { const cs = getComputedStyle(document.getElementById(id)); return [Math.round(parseFloat(cs.fontSize) / u), cs.fontWeight]; };
+    return { runs: f('striker-runs'), balls: f('striker-balls'), figures: f('bowler-figures-val'), overs: f('bowler-overs-val'), oversUnit: getComputedStyle(document.getElementById('bowler-overs-val'), '::after').content };
+  });
+  eq('readability: runs 34 / 700, bowling figures 32 / 700, balls and overs 16 / 600 (with "OV"), in design px', await typo(),
+    { runs: [34, '700'], balls: [16, '600'], figures: [32, '700'], overs: [16, '600'], oversUnit: '"OV"' });
+  eq('…a batter\'s runs are never smaller than the names, at any name length', await O.page.evaluate(() => parseFloat(getComputedStyle(document.getElementById('striker-runs')).fontSize) >= parseFloat(getComputedStyle(document.getElementById('striker-name')).fontSize)), true);
   eq('the score on a light team colour is in dark ink, not white', await O.page.evaluate(() => getComputedStyle(document.getElementById('score-value')).color), 'rgb(20, 17, 10)');
   eq('no script errors', O.errors, []);
   await O.ctx.close();

@@ -38,6 +38,13 @@ node test/highlight-edit.test.js                 # 🎬 pro edit of downloaded h
 node test/cricket/insert-ball-server-test.js     # Add / Insert / Remove a ball: renumbering, strike, clips, undo, 403
 node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Scorecard (owner-only ＋, preview, save)
 node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date only) + saved teams, both panels, server registry, tournament page
+node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the REAL panel: a saved team keeps its WHOLE squad with the same Player IDs
+                                                  # (Save Team in the squads card; Create New Match brings it back; roster edits change only that
+                                                  # team; an older laptop is asked, never saved over — rev / TEAM_CHANGED), teams saved before
+                                                  # squads were kept get their latest match's squad once; a batter's hand is the PLAYER'S (on
+                                                  # their profile by Player ID): RHB / LHB in the squad, at the crease, in the team editor → the
+                                                  # profile → every later match; an untouched default is never written; offline picks wait in
+                                                  # an outbox (also across a refresh); "saved" only after the server says so
 node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
 NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the overlay's score bar in Chromium at 1920x1080 / 1920x1280 / 1536x864 /
