@@ -1144,6 +1144,8 @@ function createPlayerIdentity(deps) {
         const ownerUid = String(body.ownerUid || viewer.uid);
         await checkAccount(viewer, ownerUid);
         const plan = await buildPlan(ownerUid, body);
+        // previews nobody confirmed, older than a day, are not kept
+        await db.ops.deleteMany({ ownerUid, status: 'previewed', createdAt: { $lt: now() - 24 * 60 * 60 * 1000 } }).catch(() => {});
         const opId = newOpId();
         const c = counts(plan);
         const stats = statsPreview(plan);
@@ -1222,7 +1224,7 @@ function createPlayerIdentity(deps) {
             await stage(opId, 'migrating', 'running');
             const sameNow = async (coll, before) => {
                 const cur = await db[coll].findOne({ _id: before._id });
-                if (hashOf(cur) !== hashOf(before)) throw httpError(409, `A ${coll === 'records' ? 'match' : coll.replace(/s$/, '')} changed while this was running — rolled back. Preview again.`, { code: 'DATA_CHANGED' });
+                if (hashIn(coll, cur) !== hashIn(coll, before)) throw httpError(409, `A ${coll === 'records' ? 'match' : coll.replace(/s$/, '')} changed while this was running — rolled back. Preview again.`, { code: 'DATA_CHANGED' });
             };
             for (const x of plan.records) {
                 await sameNow('records', x.before);

@@ -142,6 +142,8 @@ const { OWNER, TOK, idTokens, pk, seed, bat } = require('./player-identity-fixtu
   eq('profiles: P102 keeps its ID, name, hand; the old spellings resolve to it; P219 / P347 gone from players', [P.P102.displayName, P.P102.batHand, ['rohit sharmma', 'r. sharma'].every(k => P.P102.nameKeys.includes(k)), !!P.P219, !!P.P347], ['Rohit Sharma', 'R', true, false, false]);
   const tombs = await C('playerTombstones').find({}).toArray();
   eq('…a forwarding record per removed ID (old ID → P102), nothing else kept active', tombs.map(t => [t.playerId, t.mergedInto]).sort(), [['P219', 'P102'], ['P347', 'P102']]);
+  const oldLink = await request(port, 'GET', '/api/players/P219/stats?scope=career&uid=' + OWNER);
+  eq('an old link to P219\'s statistics still answers — with the master\'s (not 404)', [oldLink.status, oldLink.json && oldLink.json.success], [200, true]);
   eq('a laptop still holding P219: the profile route and canonicalize answer P102', [(await request(port, 'GET', '/api/players/P219')).json.playerId, (await request(port, 'GET', '/api/players/P219')).json.mergedFrom], ['P102', 'P219']);
   eq('…canonicalize (Create New Match / Start) maps P219 → P102', (await call('POST', '/api/players/canonicalize?uid=' + OWNER, { ids: ['P219', 'P347'] }, null)).json.map, { P219: 'P102', P347: 'P102' });
   const stale = await call('POST', '/api/teams?uid=' + OWNER, { team: { name: 'Stale Laptop XI', players: [{ id: 'P219', name: 'Rohit Sharmma' }] } }, null);

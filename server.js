@@ -3451,8 +3451,13 @@ async function setPlayerBatHand(ownerUid, id, name, hand) {
 async function nameKeysForPlayerId(playerId) {
     if (!playersCollection || !playerId) return [];
     try {
-        const doc = await playersCollection.findOne({ playerId }, { projection: { nameKeys: 1 } });
-        return (doc && doc.nameKeys) || [];
+        let doc = await playersCollection.findOne({ playerId }, { projection: { nameKeys: 1 } });
+        // an id Player Merge & Management removed: its master's spellings
+        if (!doc && playerTombstonesCollection) {
+            const t = await playerTombstonesCollection.findOne({ playerId });
+            if (t) doc = await playersCollection.findOne({ ownerUid: t.ownerUid, playerId: await canonicalPlayerId(t.ownerUid, t.mergedInto) }, { projection: { nameKeys: 1 } });
+        }
+        return ((doc && doc.nameKeys) || []).filter(k => !String(k).startsWith('#'));
     } catch (err) {
         console.log('nameKeysForPlayerId error:', err);
         return [];
