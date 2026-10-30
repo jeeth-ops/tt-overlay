@@ -20,7 +20,7 @@ async function bootServer(opts){
   const fakeDoc = { get: async () => ({ exists: false, data: () => null }), set: async () => {}, update: async () => {}, onSnapshot: () => () => {} };
   require.cache[require.resolve('firebase-admin')] = { id: 'firebase-admin', filename: require.resolve('firebase-admin'), loaded: true, exports: {
     initializeApp(){}, credential: { cert: () => ({}) },
-    firestore: () => ({ collection: () => ({ doc: () => fakeDoc, where: () => ({ get: async () => ({ docs: [] }) }) }) }),
+    firestore: () => ({ collection: () => ({ doc: () => fakeDoc, where: () => ({ get: async () => ({ docs: [] }) }), get: async () => ({ docs: [], size: 0, empty: true, forEach(){} }) }) }),
     auth: () => ({ verifyIdToken: async (t) => { if(opts.idTokens && opts.idTokens[t]) return opts.idTokens[t]; throw new Error('no tokens here'); }, getUser: async (uid) => { if(opts.users && opts.users[uid]) return { uid, email: opts.users[uid] }; throw new Error('no user'); },
       getUserByEmail: async () => { throw new Error('no user'); }, listUsers: async () => ({ users: [] }) }) } };
   const port = opts.port || (5200 + Math.floor(Math.random() * 700));
