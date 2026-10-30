@@ -387,11 +387,12 @@ async function panelSuite(file, label){
       'return { saveTeamRecord, sanitizeTeamLogo };'
     ].join('\n');
     // (no player database here: hands are covered by team-roster-persistence-test.js)
-    const api = new Function('teamsCollection', 'playersCollection', 'resolvePlayerId', 'resolvePlayerIdExplicit', 'crypto', code)(
+    const api = new Function('teamsCollection', 'playersCollection', 'resolvePlayerId', 'resolvePlayerIdExplicit', 'crypto', 'playerTombstonesCollection', code)(
       teams, null,
       async (uid, name) => { const k = name.toLowerCase(); return players[k] || (players[k] = 'gp_new' + (++minted)); },
       async (uid, id) => id,
-      require('crypto')
+      require('crypto'),
+      null
     );
     const r1 = await api.saveTeamRecord('U1', { name: '  D Y  Patil ', color: '#0ea5e9', logoUrl: LOGO, players: [{ id: 'gp_rahul', name: 'Rahul' }, { name: 'Karan Shah' }, { name: 'Brand New' }, { id: 'gp_rahul', name: 'Rahul again' }], captainId: 'gp_rahul' });
     eq('create: 201, tidy name, team id', [r1.status, r1.body.team.name, /^t_[0-9a-f]{12}$/.test(r1.body.team.teamId)], [201, 'D Y Patil', true]);

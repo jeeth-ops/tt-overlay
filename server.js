@@ -31,6 +31,9 @@ const ClipAttribution = require('./clip-attribution');
 // 🔀 Merge Tournaments engine — see tournament-merge.js and the MERGE
 // TOURNAMENTS section further down.
 const TournamentMerge = require('./tournament-merge');
+// 🧬 Player Merge & Management — see player-identity.js and the PLAYER
+// MERGE & MANAGEMENT section further down.
+const PlayerIdentity = require('./player-identity');
 const ScorecardImport = require('./scorecard-import');
 const ScorecardExtract = require('./scorecard-extract');
 if (R2_PUBLIC_URL && /\.r2\.dev(\/|$)/i.test(R2_PUBLIC_URL)) {
@@ -163,6 +166,15 @@ let tournamentMergesCollection = null;
 let tournamentMergeBackupsCollection = null;
 let tournamentMergeLocksCollection = null;
 let tournamentMerge = null;
+// 🧬 PLAYER MERGE & MANAGEMENT — one doc per operation (its preview, stages,
+// verification and outcome), a copy of every document it changes (rollback),
+// a lock per account, and one forwarding record per Player ID a merge
+// removed (playerTombstones: the id → the master it was merged into).
+let playerIdentityOpsCollection = null;
+let playerIdentityBackupsCollection = null;
+let playerIdentityLocksCollection = null;
+let playerTombstonesCollection = null;
+let playerIdentity = null;
 let scorecardImportsCollection = null;
 let scorecardImportPhotosCollection = null;
 let importedCommentaryCollection = null;
@@ -312,6 +324,7 @@ async function connectMongoOnce() {
         await ballsCollection.createIndex({ ballUid: 1 }, { unique: true, sparse: true });
         await initTournamentMerge();
         await initScorecardImport();
+        await initPlayerIdentity(); // (after the import: it rewrites imported commentary too)
         console.log('🍃 MongoDB connected —', mongoDb.databaseName);
         dedupeCrossTournamentMatches(); // background, never blocks startup
         backfillClipDeliveryIds().catch(err => console.log('Clip delivery backfill error:', err.message || err)); // background
@@ -2745,6 +2758,7 @@ app.post('/api/league/:name/match', requireAuthorizedCreator, async (req, res) =
     await whenMongoReady();
     if (!matchRecordsCollection || !leaguesCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     if (mergeLockResponse(res, ownerUid, leagueKey, record.matchId)) return;
+    if (playerIdentityLockResponse(res, ownerUid, record.matchId, record.roomId)) return;
     try {
         // ▶ A fixture is never written over a match that has started: a
         // laptop still showing the old fixture (with its blank scorecard)
@@ -3292,13 +3306,21 @@ function forgetPlayerIdCache(ownerUid, nameKeys) {
 }
 // Follows mergedInto links (max 5 hops) so a squad that still remembers an id
 // that was later merged resolves to the surviving profile.
+// A profile that Player Merge & Management removed has no doc any more — its
+// forwarding record (playerTombstones) says which master it went into, so a
+// laptop still holding the old id never brings the duplicate back.
 async function canonicalPlayerId(ownerUid, playerId) {
     if (!playersCollection || !ownerUid || !playerId) return playerId;
     let id = playerId;
     for (let i = 0; i < 5; i++) {
         const doc = await playersCollection.findOne({ playerId: id, ownerUid }, { projection: { mergedInto: 1 } });
-        if (!doc || !doc.mergedInto || doc.mergedInto === id) return id;
-        id = doc.mergedInto;
+        let next = doc ? doc.mergedInto : null;
+        if (!doc && playerTombstonesCollection) {
+            const t = await playerTombstonesCollection.findOne({ ownerUid, playerId: id });
+            next = t ? t.mergedInto : null;
+        }
+        if (!next || next === id) return id;
+        id = next;
     }
     return id;
 }
@@ -3385,6 +3407,11 @@ async function batHandsFor(ownerUid, ids) {
         const docs = await playersCollection.find({ ownerUid, playerId: { $in: [...new Set(at.values())] } },
             { projection: { playerId: 1, batHand: 1, mergedInto: 1 } }).toArray();
         const byId = new Map(docs.map(d => [d.playerId, d]));
+        // (a profile a merge removed: its forwarding record)
+        const missing = [...new Set(at.values())].filter(x => !byId.has(x));
+        if (missing.length && playerTombstonesCollection) {
+            (await playerTombstonesCollection.find({ ownerUid, playerId: { $in: missing } }).toArray()).forEach(t => byId.set(t.playerId, { playerId: t.playerId, mergedInto: t.mergedInto }));
+        }
         for (const [id, cur] of [...at]) {
             const d = byId.get(cur);
             if (d && d.mergedInto && d.mergedInto !== cur) { at.set(id, d.mergedInto); continue; }
@@ -5908,9 +5935,14 @@ app.post('/api/players/:playerId/merge', requireAuthorizedCreator, async (req, r
 app.get('/api/players/:playerId', async (req, res) => {
     if (!playersCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
-        const profile = await playersCollection.findOne({ playerId: req.params.playerId });
+        let profile = await playersCollection.findOne({ playerId: req.params.playerId });
+        let mergedFrom = null;
+        if (!profile && playerTombstonesCollection) {
+            const t = await playerTombstonesCollection.findOne({ playerId: req.params.playerId });
+            if (t) { mergedFrom = t.playerId; profile = await playersCollection.findOne({ ownerUid: t.ownerUid, playerId: await canonicalPlayerId(t.ownerUid, t.mergedInto) }); }
+        }
         if (!profile) return res.status(404).json({ success: false, error: 'Player not found' });
-        res.json({ success: true, playerId: profile.playerId, displayName: profile.displayName, aliases: profile.nameKeys || [] });
+        res.json({ success: true, playerId: profile.playerId, displayName: profile.displayName, aliases: (profile.nameKeys || []).filter(k => !String(k).startsWith('#')), ...(mergedFrom ? { mergedFrom } : {}) });
     } catch (err) {
         console.log('Player profile fetch error:', err);
         res.status(500).json({ success: false, error: 'Could not load player' });
@@ -11008,6 +11040,116 @@ mergeRouter.get('/history', async (req, res) => {
     catch (err) { mergeFail(res, err, 'load merge history'); }
 });
 app.use('/api/tournament-merge', mergeRouter);
+
+// ================================================================
+// 🧬 PLAYER MERGE & MANAGEMENT — chhayajeeth@gmail.com only (fixed in
+// player-identity.js, not an environment variable). Correct a player's name
+// everywhere, or replace duplicate identities of one person with the master
+// Player ID — previewed, staged, verified, rolled back on failure, and
+// reversible from Merge History. Opened from the Owner Control Center's
+// Tournaments (Tournament Manager): /admin → Player Merge & Management.
+// ================================================================
+async function initPlayerIdentity() {
+    try {
+        playerIdentityOpsCollection = mongoDb.collection('playerIdentityOps');
+        playerIdentityBackupsCollection = mongoDb.collection('playerIdentityBackups');
+        playerIdentityLocksCollection = mongoDb.collection('playerIdentityLocks');
+        playerTombstonesCollection = mongoDb.collection('playerTombstones');
+        await playerIdentityOpsCollection.createIndex({ ownerUid: 1, createdAt: -1 });
+        await playerIdentityOpsCollection.createIndex({ status: 1 });
+        await playerIdentityBackupsCollection.createIndex({ opId: 1, coll: 1, key: 1 });
+        await playerTombstonesCollection.createIndex({ ownerUid: 1, playerId: 1 }, { unique: true });
+        await playerTombstonesCollection.createIndex({ playerId: 1 });
+        playerIdentity = PlayerIdentity.createPlayerIdentity({
+            db: {
+                players: playersCollection, teams: teamsCollection, records: matchRecordsCollection, balls: ballsCollection, clips: clipsCollection,
+                leagues: leaguesCollection, panelStates: matchPanelStatesCollection, commentary: importedCommentaryCollection,
+                ops: playerIdentityOpsCollection, backups: playerIdentityBackupsCollection, locks: playerIdentityLocksCollection, tombstones: playerTombstonesCollection
+            },
+            playerKey, computeLeaderboards, versionMatchRecord,
+            authorizedCreatorEmails: AUTHORIZED_CREATOR_EMAILS, getUidForEmail,
+            invalidateTournamentCaches, invalidateClipsCache, forgetPlayerIdCache, repointPlayerIdCache, logAuditAction,
+            isTournamentLocked: (ownerUid, leagueKey) => !!(tournamentMerge && tournamentMerge.lockFor(ownerUid, leagueKey)),
+            rooms: playerIdentityRooms,
+            log: (...a) => console.log(...a)
+        });
+        const cut = await playerIdentity.recoverInterrupted();
+        if (cut) console.log(`🧬 ${cut} player operation(s) were cut off by a restart — every document was put back`);
+    } catch (e) {
+        console.log('Player Merge & Management init error (disabled):', e.message || e);
+        playerIdentity = null;
+    }
+}
+// The live room of a match (the panel / overlay / /cricket-scorecard?room=
+// copy): read without creating it, written in memory, in Firestore, and to
+// anyone watching it.
+const playerIdentityRooms = {
+    async read(roomId) {
+        const room = `room-${roomId}`;
+        if (roomStates[room] && roomStates[room].cricketState) return roomStates[room].cricketState;
+        try {
+            const doc = await db.collection('scorvix').doc(roomId).get();
+            return doc && doc.exists ? (doc.data().cricketState || null) : null;
+        } catch (e) { return null; }
+    },
+    async write(roomId, cricketState) {
+        const room = `room-${roomId}`;
+        if (roomStates[room]) roomStates[room].cricketState = cricketState;
+        try { await db.collection('scorvix').doc(roomId).set({ cricketState }, { merge: true }); } catch (e) { console.log('Player identity room write error:', e.message || e); }
+        try { io.to(room).emit('liveCricketScore', cricketState); } catch (e) { /* nobody watching */ }
+    }
+};
+// A match the operation is rewriting refuses a save for those seconds.
+function playerIdentityLockResponse(res, ownerUid, matchId, roomId) {
+    if (!playerIdentity) return false;
+    const hit = playerIdentity.lockFor(ownerUid, matchId) || (roomId ? playerIdentity.lockFor(ownerUid, roomId) : null);
+    if (!hit) return false;
+    res.status(423).json({ success: false, code: 'PLAYER_IDENTITY_IN_PROGRESS', error: 'A player correction is updating this match right now — save again in a few seconds' });
+    return true;
+}
+// Every /api/player-identity/* call: 401 = no / unverifiable sign-in,
+// 403 = signed in, but not chhayajeeth@gmail.com.
+async function requirePlayerIdentityAdmin(req, res, next) {
+    const idToken = extractIdToken(req);
+    if (!idToken) return res.status(401).json({ success: false, error: 'Sign in required' });
+    const decoded = await verifyIdTokenFull(idToken);
+    if (!decoded || !decoded.uid) return res.status(401).json({ success: false, error: 'Your sign-in could not be verified — sign in again' });
+    if (decoded.email_verified === false || !PlayerIdentity.isIdentityAdminEmail(decoded.email)) {
+        return res.status(403).json({ success: false, error: 'Access Denied' });
+    }
+    req.identityViewer = { email: String(decoded.email).trim().toLowerCase(), uid: decoded.uid };
+    next();
+}
+const identityRouter = express.Router();
+identityRouter.use(requirePlayerIdentityAdmin);
+function identityReady(res) {
+    if (playerIdentity) return true;
+    res.status(503).json({ success: false, error: 'Database not configured' });
+    return false;
+}
+function identityFail(res, err, what) {
+    const status = (err && err.status) || 500;
+    if (status >= 500) console.log(`Player Merge & Management (${what}) error:`, err);
+    const body = { success: false, error: status >= 500 ? `Could not ${what}` : err.message };
+    ['code', 'changed'].forEach(k => { if (err && err[k] !== undefined) body[k] = err[k]; });
+    res.status(status).json(body);
+}
+const identityRoute = (method, path, what, fn) => identityRouter[method](path, async (req, res) => {
+    if (!identityReady(res)) return;
+    try { res.json({ success: true, ...(await fn(req)) }); }
+    catch (err) { identityFail(res, err, what); }
+});
+identityRoute('get', '/access', 'check access', async (req) => ({ allowed: true, email: req.identityViewer.email }));
+identityRoute('get', '/accounts', 'load the accounts', (req) => playerIdentity.accounts(req.identityViewer));
+identityRoute('get', '/overview', 'load the players', (req) => playerIdentity.overview(req.identityViewer, req.query));
+identityRoute('get', '/search', 'search the players', (req) => playerIdentity.search(req.identityViewer, req.query));
+identityRoute('get', '/player/:playerId', 'load the player', (req) => playerIdentity.player(req.identityViewer, { ...req.query, playerId: req.params.playerId }));
+identityRoute('post', '/preview', 'preview the change', (req) => playerIdentity.preview(req.identityViewer, req.body || {}));
+identityRoute('post', '/execute', 'start the change', (req) => playerIdentity.execute(req.identityViewer, req.body || {}));
+identityRoute('get', '/ops', 'load the history', (req) => playerIdentity.listOps(req.identityViewer, req.query));
+identityRoute('get', '/ops/:opId', 'load the operation', (req) => playerIdentity.getOp(req.identityViewer, req.params.opId));
+identityRoute('post', '/ops/:opId/rollback', 'roll the change back', (req) => playerIdentity.rollback(req.identityViewer, req.params.opId));
+app.use('/api/player-identity', identityRouter);
 
 // ================================================================
 // 📷 IMPORT SCORECARD FROM PHOTOS — chhayajeeth@gmail.com only.
