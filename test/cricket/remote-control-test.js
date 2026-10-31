@@ -18,6 +18,15 @@
      • a used QR / a forged session / an unpaired socket cannot score
      • "Disconnect all phones" ends the pairing; laptop closed → "offline"
      • a locked match's laptop needs its key to start the remote
+     • GRAPHICS: every graphics card of the panel is on the phone with every
+       one of its controls; score bug / stat card / summary / milestone /
+       Match Intro go on and off air through the panel's own controls, the
+       overlay is told, the phone shows the real ON AIR state, an ON AIR
+       graphic needs a second tap to come off, "On air now" takes it off
+     • CLIPPER: "Clip Done!" only once the laptop's clipper reports the file
+       saved, matched by clip id (two clips at once, a failed one), Clip Now
+     • MATCH: teams, batting/bowling, the bowler card; a laptop confirm() is
+       asked on the phone; Run Out / Penalty open the panel's own popups
 
      npm install --no-save jsdom
      node test/cricket/remote-control-test.js
@@ -46,14 +55,36 @@ function get(port, p){
 let base = '', ioClientJs = '';
 const hostJs = read('cricket-remote-host.js');
 
-function stubs(w, calls){
+// The laptop's local Clipper / Stream Engine, standing in: keeps the clip
+// jobs it is asked for, and reports them as the real ones do.
+function makeEngine(){
+  const jobs = new Map();
+  return { jobs, set(clipId, status, extra){ const j = jobs.get(clipId); if(j) Object.assign(j, { status, localSaved: /SAVED|COMPLETE|SENT/.test(status) }, extra || {}); } };
+}
+function stubs(w, calls, engine){
   w.fetch = (url, opts) => {
     const u = new URL(String(url), base);
     let body = null;
     try{ body = opts && opts.body ? JSON.parse(opts.body) : null; }catch(e){}
     const local = (u.hostname === '127.0.0.1' && u.port === '5006') || (u.hostname === 'localhost' && u.port === '5005');
     calls.push({ url: String(url), path: u.pathname, local, body });
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ success: true, ok: true, recordingActive: true, recording: true, jobs: [] }) });
+    let out = { success: true, ok: true, recordingActive: true, recording: true, jobs: [] };
+    if(local && engine){
+      if(u.pathname === '/clip' && body && body.clipId){
+        if(!engine.jobs.has(body.clipId)) engine.jobs.set(body.clipId, { clipId: body.clipId, eventType: body.eventType, t0: body.timestamp, matchId: body.matchId, status: 'CUTTING' });
+        out = { success: true, clipId: body.clipId };
+      } else if(u.pathname.startsWith('/clip-jobs/')){
+        const j = engine.jobs.get(decodeURIComponent(u.pathname.slice('/clip-jobs/'.length)));
+        out = j ? { success: true, job: { ...j } } : { success: false, error: 'not found' };
+      } else if(u.pathname === '/clip-jobs'){
+        out = { success: true, jobs: [...engine.jobs.values()].map(j => ({ ...j })) };
+      } else if(u.pathname === '/status'){
+        out = { success: true, ffmpegAvailable: true, recording: { state: 'recording' }, recordingActive: true };
+      }
+    }
+    const res = { ok: true, status: 200, json: () => Promise.resolve(JSON.parse(JSON.stringify(out))) };
+    res.clone = () => ({ json: () => Promise.resolve(JSON.parse(JSON.stringify(out))) });
+    return Promise.resolve(res);
   };
   Object.defineProperty(w.navigator, 'mediaDevices', { value: { enumerateDevices: () => Promise.resolve([]), getUserMedia: () => Promise.reject(new Error('no camera')) } });
   w.firebase = undefined; w.alert = () => {}; w.confirm = () => true;
@@ -73,8 +104,9 @@ async function bootLaptop(file, room, opts){
   const errors = [];
   vc.on('jsdomError', e => errors.push(e.message));
   const calls = [];
+  const engine = makeEngine();
   const dom = new JSDOM(html, { runScripts: 'dangerously', pretendToBeVisual: true, url: `${base}/${file.replace('.html', '')}`, virtualConsole: vc,
-    beforeParse(w){ stubs(w, calls); Object.entries(opts.storage || {}).forEach(([k, v]) => w.localStorage.setItem(k, v)); } });
+    beforeParse(w){ stubs(w, calls, engine); Object.entries(opts.storage || {}).forEach(([k, v]) => w.localStorage.setItem(k, v)); } });
   const w = dom.window;
   await until(() => w.document.readyState === 'complete', 4000);
   w.eval(hostJs);       // <script src="/cricket-remote-host.js"> at the end of <body>
@@ -82,7 +114,7 @@ async function bootLaptop(file, room, opts){
   E(`document.getElementById('match-id').value = ${JSON.stringify(room)}; document.getElementById('connect-btn').click();`);
   await until(() => E('!!(socket && socket.connected)'), 6000);
   await sleep(1400);   // the panel's first-connect hydration window
-  if(opts.seed === false) return { dom, w, E, calls, errors, $: (s) => w.document.querySelector(s), close: () => { try{ w.close(); }catch(e){} } };
+  if(opts.seed === false) return { dom, w, E, calls, engine, errors, $: (s) => w.document.querySelector(s), close: () => { try{ w.close(); }catch(e){} } };
   // a match in progress (seeded after Connect: switching to a new Match ID starts a fresh match)
   E(`
     state.format = 'T20'; state.oversPerInnings = 20; state.battingTeam = 'A'; state.inningsNumber = 1;
@@ -96,7 +128,7 @@ async function bootLaptop(file, room, opts){
     pushState(true, true);
   `);
   await sleep(300);
-  return { dom, w, E, calls, errors, $: (s) => w.document.querySelector(s), close: () => { try{ w.close(); }catch(e){} },
+  return { dom, w, E, calls, engine, errors, $: (s) => w.document.querySelector(s), close: () => { try{ w.close(); }catch(e){} },
     storage: () => { const o = {}; for(let i = 0; i < w.localStorage.length; i++){ const k = w.localStorage.key(i); o[k] = w.localStorage.getItem(k); } return o; } };
 }
 
@@ -118,9 +150,14 @@ async function bootPhone(url){
     text: (s) => { const el = $(s); if(!el) return ''; const parts = el.children.length && el.classList.contains('prow') ? [...el.children].map(c => c.textContent) : [el.textContent]; return parts.join(' ').replace(/\s+/g, ' ').trim(); },
     tap: (el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true })),
     sheetButton: (re) => [...w.document.querySelectorAll('#sheet-body button')].find(b => re.test(b.textContent)),
+    notes: () => [...w.document.querySelectorAll('#notes .note')].filter(n => !n.classList.contains('out')).map(n => n.textContent.replace(/\s+/g, ' ').trim()),
+    sec: (id) => w.document.querySelector(`[data-sec-card="${id}"]`),
+    secButton: (id, re) => { const c = w.document.querySelector(`[data-sec-card="${id}"]`); return c && [...c.querySelectorAll('button[data-op]')].find(b => re.test(b.textContent)); },
+    onAir: () => [...w.document.querySelectorAll('#oa-list .oa-row span')].map(x => x.textContent),
     close: () => { try{ w.close(); }catch(e){} } };
 }
 
+const PANEL_FAILED = { P3: 'FAILED_PERMANENT', P1: 'CUT_FAILED' };
 const clips = (L, type) => L.calls.filter(c => c.local && /\/clip$/.test(c.path) && (!type || (c.body && c.body.eventType === type)));
 const last = (L) => JSON.parse(L.E('JSON.stringify((state.ballLog || []).slice(-1)[0] || null)'));
 const score = (L) => L.E('state.score.runs + "/" + state.score.wickets + " (" + state.score.overs + "." + state.score.balls + ")"');
@@ -149,14 +186,16 @@ async function suite(file, opts){
   ok(T('QR link for THIS match: /cricket-remote?pair=…'), /\/cricket-remote\?pair=[\w.%-]+$/.test(link || ''), link);
   ok(T('the QR is drawn (or the link shown) in the pairing window'), L.$('#cr-remote-overlay').classList.contains('show'));
   const P = await bootPhone(link);
-  await until(() => /Live/.test(P.text('#conn')), 8000);
-  eq(T('phone: paired straight from the QR, no login — 🟢 Live'), P.text('#conn'), '🟢 Live · laptop connected');
+  await until(() => P.text('#conn-t') === 'Connected', 8000);
+  eq(T('phone: paired straight from the QR, no login — Connected'), P.text('#conn-t'), 'Connected');
   eq(T('phone: the pair token leaves the address bar (a reload uses the saved pairing)'), [P.w.location.search, !!P.w.localStorage.getItem('cricketRemoteSession')], ['', true]);
   await until(() => L.E('window.__crRemote.phones.length') === 1, 4000);
   eq(T('laptop: 1 phone connected, shown on the button'), [L.E('window.__crRemote.phones.length'), L.$('#cr-remote-btn .cr-n').textContent], [1, '1']);
   await until(() => P.text('#runs') === '60/2', 4000);
   eq(T('phone shows the laptop\'s match: score, overs, batters, bowler'), [P.text('#runs'), P.text('#overs'), P.text('#p-s'), P.text('#p-ns'), P.text('#p-b'), P.text('#bat-name')],
-    ['60/2', '12.1 (20)', 'Harsh Rane 10 (8)', 'Sahil Gode 5 (6)', '🎯 Jamshed Alam 2.1-0-12-0', 'Kanga Kings']);
+    ['60/2', '12.1 / 20 ov', 'Harsh Rane 10 (8)', 'Sahil Gode 5 (6)', '🎯 Jamshed Alam 2.1-0-12-0', 'Kanga Kings']);
+  ok(T('header: match, Match ID, laptop / clipper / graphics status'), /KK vs SS/.test(P.text('#mt-title')) && P.text('#mt-sub').includes(ROOM) && P.$('#ch-laptop').classList.contains('on') && P.$('#ch-gfx').classList.contains('on'),
+    [P.text('#mt-title'), P.text('#mt-sub'), P.$('#ch-laptop').className, P.$('#ch-gfx').className].join(' | '));
   L.$('#cr-close').click();
 
   console.log('\n=== FOUR pressed on the phone ===');
@@ -174,6 +213,16 @@ async function suite(file, opts){
   await until(() => P.text('#runs') === '64/2', 3000);
   eq(T('phone shows 64/2 and the 4 in this over'), [P.text('#runs'), P.$$('#pips .pip').map(p => p.textContent).slice(-1)[0]], ['64/2', '4']);
   ok(T('phone: confirmed (vibration + nothing left to send)'), P.vibrations() > 0 && P.text('#queue') === '');
+
+  console.log('\n=== "Clip Done!" — only when the laptop has the clip ===');
+  const fourId = fourClip && fourClip.body && fourClip.body.clipId;
+  await until(() => P.notes().some(n => /FOUR clip/.test(n)), 4000);
+  ok(T('phone: a clip note slides in at the top — the laptop is cutting the FOUR'), P.notes().some(n => /(Generating|Cutting) clip/.test(n) && /FOUR clip/.test(n)), JSON.stringify(P.notes()));
+  await sleep(1600);
+  ok(T('…and it does NOT say "Clip Done!" while the laptop is still cutting'), !P.notes().some(n => /Clip Done/.test(n)), JSON.stringify(P.notes()));
+  L.engine.set(fourId, 'LOCAL_SAVED');
+  await until(() => P.notes().some(n => /Clip Done/.test(n)), 5000);
+  ok(T('the laptop\'s clipper reports the file saved → "🎬 Clip Done!" for the FOUR'), P.notes().some(n => /Clip Done/.test(n) && /FOUR clip/.test(n)), JSON.stringify(P.notes()));
 
   console.log('\n=== The wagon wheel that follows, answered on the phone ===');
   await until(() => /Where did it go/.test(P.text('#sheet-body')), 3000);
@@ -202,6 +251,7 @@ async function suite(file, opts){
   eq(T('6 then 1: 71/2 (12.4) — the open wheel is skipped, as Esc does'), score(L), '71/2 (12.4)');
   await until(() => clips(L, 'SIX').length, 3000);
   eq(T('SIX clip asked of the laptop clipper; no clip for the single'), [clips(L, 'SIX').length, clips(L).filter(c => c.body && /FOUR|WICKET/.test(c.body.eventType)).length], [1, 0]);
+  const sixId = clips(L, 'SIX')[0].body.clipId;
   // the single changed ends
   await until(() => /Sahil Gode/.test(P.text('#p-s')), 3000);
   eq(T('phone: strike changed after the single'), P.text('#p-s'), 'Sahil Gode 5 (6)');
@@ -211,7 +261,7 @@ async function suite(file, opts){
   L.$('[data-ball="2"]').click();     // the laptop operator scores
   if(L.E('typeof maybePromptNewBowler') === 'function') L.E('maybePromptNewBowler()');
   await until(() => P.text('#runs') === '73/2', 3000);
-  eq(T('a ball scored ON THE LAPTOP shows on the phone'), [P.text('#runs'), P.text('#overs')], ['73/2', '12.5 (20)']);
+  eq(T('a ball scored ON THE LAPTOP shows on the phone'), [P.text('#runs'), P.text('#overs')], ['73/2', '12.5 / 20 ov']);
   await until(() => L.$('#ww-overlay').classList.contains('show'), 1500);
   if(L.$('#ww-overlay').classList.contains('show')) L.$('#ww-skip').click();
   await sleep(400);
@@ -223,6 +273,17 @@ async function suite(file, opts){
   ok(T('laptop opened its own Wicket Details'), L.$('#wd-overlay').classList.contains('show'));
   await until(() => clips(L, 'WICKET').length, 3000);
   eq(T('the WICKET clip is asked of the laptop clipper at the press, as on the laptop'), clips(L, 'WICKET').length, 1);
+  // two clips at once (the SIX still cutting, the WICKET just asked for) — each keeps its own note
+  const wktId = clips(L, 'WICKET')[0].body.clipId;
+  await until(() => P.notes().some(n => /WICKET clip/.test(n)) && P.notes().some(n => /SIX clip/.test(n)), 4000);
+  ok(T('two clips at once: a note each (SIX, WICKET), both still cutting'), P.notes().filter(n => /(Generating|Cutting) clip/.test(n)).length >= 2, JSON.stringify(P.notes()));
+  L.engine.set(wktId, PANEL_FAILED[tag], { error: 'Disk full on the laptop' });
+  await until(() => P.notes().some(n => /Clip failed/.test(n)), 5000);
+  ok(T('the WICKET clip fails on the laptop → "Clip failed" with the reason; the SIX is still cutting'),
+    P.notes().some(n => /Clip failed/.test(n) && /Disk full/.test(n)) && P.notes().some(n => /SIX clip/.test(n) && /(Generating|Cutting)/.test(n)) && !P.notes().some(n => /Clip Done/.test(n) && /SIX/.test(n)), JSON.stringify(P.notes()));
+  L.engine.set(sixId, 'LOCAL_SAVED');
+  await until(() => P.notes().some(n => /Clip Done/.test(n) && /SIX clip/.test(n)), 5000);
+  ok(T('…then the SIX is saved → "Clip Done!" for the SIX (not mixed up with the WICKET)'), P.notes().some(n => /Clip Done/.test(n) && /SIX clip/.test(n)), JSON.stringify(P.notes()));
   await until(() => P.sheetButton(/^Bowled/), 3000);
   ok(T('phone shows the same popup: out types, CONFIRM switched off until a type is chosen'), P.sheetButton(/^Bowled/) && P.sheetButton(/CONFIRM WICKET/) && P.sheetButton(/CONFIRM WICKET/).disabled);
   P.tap(P.sheetButton(/^Bowled/));
@@ -249,7 +310,7 @@ async function suite(file, opts){
   await until(() => L.$('#newover-modal-overlay').classList.contains('show'), 3000);
   await until(() => /bowling next/.test(P.text('#sheet-body')), 3000);
   ok(T('end of the over: "who\'s bowling next?" on the phone'), /bowling next/.test(P.text('#sheet-body')));
-  const bowlIn = P.$$('#sheet-body input[type=text]').find(i => i.dataset.ref === '#newover-modal-input');
+  const bowlIn = P.$$('#sheet-body input[type=text]').find(i => /#newover-modal-input$/.test(i.dataset.ref));
   if(bowlIn){
     bowlIn.value = 'Shubham Mane';
     bowlIn.dispatchEvent(new P.w.Event('input', { bubbles: true }));
@@ -269,7 +330,7 @@ async function suite(file, opts){
   await until(() => !P.$('#sheet').classList.contains('show'), 3000);
   ok(T('phone: popup gone once answered'), !P.$('#sheet').classList.contains('show'), P.text('#sheet-body').slice(0, 120) + ' | laptop open: ' + L.E(`[...document.querySelectorAll('[id$="overlay"].show')].map(e => e.id).join(',')`));
   await until(() => P.text('#runs') === '73/3', 3000);
-  eq(T('phone shows 73/3 (13.0) and the new bowler'), [P.text('#runs'), P.text('#overs'), P.text('#p-b')], ['73/3', '13.0 (20)', '🎯 Shubham Mane 0.0-0-0-0']);
+  eq(T('phone shows 73/3 (13.0) and the new bowler'), [P.text('#runs'), P.text('#overs'), P.text('#p-b')], ['73/3', '13.0 / 20 ov', '🎯 Shubham Mane 0.0-0-0-0']);
 
   console.log('\n=== Wide from the phone (the extras picker answered on the phone) ===');
   P.tap(P.$('#pad [data-ball="Wd"]'));
@@ -289,6 +350,168 @@ async function suite(file, opts){
   await until(() => P.text('#runs') === '73/3', 3000);
   eq(T('…and the phone shows it'), P.text('#runs'), '73/3');
 
+  console.log('\n=== GRAPHICS: every graphics card of the laptop panel, live ===');
+  const want = ['scorebug', 'bcg', 'statcards', 'summary', 'milestones', 'tournament'].concat(tag === 'P3' ? ['playercards'] : []);
+  await until(() => want.every(id => P.sec(id)), 4000);
+  const gfxIds = P.$$('#gfx-secs [data-sec-card]').map(e => e.dataset.secCard);
+  ok(T('the Graphics tab has every graphics card of the panel: ' + want.join(', ')), want.every(id => gfxIds.includes(id)), JSON.stringify(gfxIds));
+  ok(T('…named as on the laptop (Broadcast Graphics, Summary Graphics, …)'), /Broadcast Graphics/.test(P.sec('bcg').textContent) && /Summary Graphics/.test(P.sec('summary').textContent) && /Milestone/.test(P.sec('milestones').textContent));
+  for(const id of want){
+    const counts = L.E(`(() => {
+      const id = ${JSON.stringify(id)};
+      const roots = window.__crRemote.sectionRoots(id).filter(Boolean);
+      const ex = window.__crRemote.sectionExclude(id);
+      const vis = (el, root) => { for(let n = el; n; n = n.parentElement){ if(ex.includes(n)) return false; if(!(n.tagName === 'SELECT' && n._proDD)){ if(n.hidden) return false; const cs = getComputedStyle(n); if(cs.display === 'none' || cs.visibility === 'hidden') return false; } if(n === root) return true; } return true; };
+      const seen = new Set(); let n = 0;
+      roots.forEach(root => [root, ...root.querySelectorAll('*')].forEach(el => {
+        if(!el.matches('button, input, select, textarea') || seen.has(el)) return;
+        seen.add(el);
+        if(el.closest('.pro-dd') || (el.tagName === 'INPUT' && /^(hidden|password|file|color)$/.test(el.type))) return;
+        if(el.tagName === 'SELECT' && el._proDD){ if((el._proDD.wrap && !vis(el._proDD.wrap, root)) || !vis(el.parentElement, root)) return; n++; return; }
+        if(!vis(el, root) || (el.tagName === 'BUTTON' && !el.textContent.trim())) return;
+        n++;
+      }));
+      const sec = window.__crRemote.readSection(id);
+      const m = ((sec && sec.items) || []).reduce((a, it) => a + (it.k === 'seg' ? it.opts.length : ['b', 'tg', 's', 'i'].includes(it.k) ? 1 : 0), 0);
+      return [n, m];
+    })()`);
+    ok(T(`"${id}": all ${counts[0]} controls the laptop shows in it are on the phone`), counts[0] > 0 && counts[1] === counts[0], `laptop ${counts[0]} · phone ${counts[1]}`);
+  }
+
+  console.log('\n=== Score bug: the real state, both ways ===');
+  const sbBtn = () => P.sec('scorebug') && P.sec('scorebug').querySelector('.tg');
+  ok(T('score bug switch: ON AIR on the phone, and in "On air now"'), sbBtn() && sbBtn().classList.contains('on') && /ON AIR/.test(sbBtn().textContent) && P.onAir().some(x => /Scorecard/.test(x)), P.onAir().join(','));
+  const ovSeen = [];
+  overlay.on('liveCricketScore', (st) => { if(st && 'visible' in st) ovSeen.push('visible:' + st.visible); });
+  ['cricketPlayerStat', 'cricketHidePlayerStat', 'cricketEvent', 'cricketInningsSummary', 'cricketHideInningsSummary', 'cricketGraphicState'].forEach(ev => overlay.on(ev, (d) => ovSeen.push(ev + (ev === 'cricketGraphicState' ? ':' + ((d && d.mode) || 'off') : ''))));
+  P.tap(sbBtn());
+  await until(() => L.E('state.visible') === false, 3000);
+  eq(T('phone switch → the laptop\'s own switch turns the score bug off'), [L.E('state.visible'), L.$('#visible-toggle').checked], [false, false]);
+  await until(() => ovSeen.includes('visible:false'), 3000);
+  ok(T('…the overlay is told'), ovSeen.includes('visible:false'));
+  await until(() => sbBtn() && !sbBtn().classList.contains('on') && !P.onAir().some(x => /Scorecard/.test(x)), 3000);
+  ok(T('…the phone shows it OFF AIR and drops it from "On air now"'), sbBtn() && !sbBtn().classList.contains('on') && /OFF AIR/.test(sbBtn().textContent) && !P.onAir().some(x => /Scorecard/.test(x)));
+  L.$('#visible-toggle').click();
+  await until(() => sbBtn() && sbBtn().classList.contains('on'), 4000);
+  ok(T('switched back ON on the laptop → the phone shows ON AIR again'), sbBtn() && sbBtn().classList.contains('on') && P.onAir().some(x => /Scorecard/.test(x)));
+
+  console.log('\n=== Stat card on, then off from "On air now" ===');
+  const psBtn = () => P.secButton('statcards', /Player Stat Card/i);
+  ok(T('the Player Stat Card switch is on the phone'), !!psBtn());
+  P.tap(psBtn());
+  await until(() => L.$('#player-stat-toggle').checked, 3000);
+  eq(T('phone → the laptop\'s Player Stat Card switch is on'), [L.$('#player-stat-toggle').checked, !!L.E('state.showPlayerStatCard')], [true, true]);
+  await until(() => ovSeen.includes('cricketPlayerStat'), 3000);
+  ok(T('…the overlay got the player card'), ovSeen.includes('cricketPlayerStat'));
+  await until(() => P.onAir().some(x => /Player stat card/.test(x)), 3000);
+  ok(T('…"On air now" lists it'), P.onAir().some(x => /Player stat card/.test(x)), P.onAir().join(','));
+  const offBtn = [...P.$$('#oa-list .oa-row')].find(r => /Player stat card/.test(r.textContent)).querySelector('button');
+  P.tap(offBtn);
+  await until(() => !L.$('#player-stat-toggle').checked, 3000);
+  await until(() => ovSeen.includes('cricketHidePlayerStat'), 3000);
+  ok(T('TAKE OFF → the laptop switch is off, the overlay hides the card'), !L.$('#player-stat-toggle').checked && ovSeen.includes('cricketHidePlayerStat'));
+  await until(() => !P.onAir().some(x => /Player stat card/.test(x)), 3000);
+  ok(T('…and it leaves "On air now"'), !P.onAir().some(x => /Player stat card/.test(x)));
+
+  console.log('\n=== Summary + milestone graphics ===');
+  P.tap(P.secButton('summary', /^Show Now$/));
+  await until(() => ovSeen.includes('cricketInningsSummary'), 3000);
+  ok(T('Innings Summary "Show Now" from the phone → on the overlay'), ovSeen.includes('cricketInningsSummary'));
+  P.tap(P.secButton('summary', /^Hide Now$/));
+  await until(() => ovSeen.includes('cricketHideInningsSummary'), 3000);
+  ok(T('"Hide Now" → off the overlay'), ovSeen.includes('cricketHideInningsSummary'));
+  P.tap(P.secButton('milestones', /Drinks Break/));
+  await until(() => ovSeen.includes('cricketEvent'), 3000);
+  ok(T('"Drinks Break" from the phone → the overlay plays it'), ovSeen.includes('cricketEvent'));
+  await until(() => /Last sent to the overlay/.test(P.text('#gfxlog')), 3000);
+  ok(T('the phone confirms what the laptop last sent to the overlay'), /Last sent to the overlay: .+📱/.test(P.text('#gfxlog')), P.text('#gfxlog'));
+
+  console.log('\n=== Broadcast Graphics: Match Intro on and off air ===');
+  const introTile = () => P.secButton('bcg', /MATCH INTRO/);
+  ok(T('MATCH INTRO tile, OFF'), introTile() && !introTile().classList.contains('on'));
+  P.tap(introTile());
+  await until(() => L.$('#bcg-intro-btn').classList.contains('on'), 4000);
+  ok(T('phone → the laptop runs its own Match Intro (the server holds it ON AIR)'), L.$('#bcg-intro-btn').classList.contains('on'));
+  await until(() => ovSeen.some(x => /^cricketGraphicState:(?!off)/.test(x)), 3000);
+  ok(T('…the overlay is told'), ovSeen.some(x => /^cricketGraphicState:(?!off)/.test(x)), ovSeen.join(','));
+  await until(() => introTile() && introTile().classList.contains('on') && P.onAir().some(x => /MATCH INTRO/.test(x)), 4000);
+  ok(T('…the phone tile shows ON AIR, and "On air now" lists it'), introTile() && introTile().classList.contains('on') && /ON AIR/.test(introTile().textContent));
+  P.tap(introTile());
+  await sleep(700);
+  ok(T('one tap on an ON AIR graphic does nothing but ask — no accidental off air'), L.$('#bcg-intro-btn').classList.contains('on') && /TAP TO TAKE OFF/.test(introTile().textContent));
+  P.tap(introTile());
+  await until(() => !L.$('#bcg-intro-btn').classList.contains('on'), 4000);
+  ok(T('the second tap takes it off air on the laptop'), !L.$('#bcg-intro-btn').classList.contains('on'));
+  await until(() => introTile() && !introTile().classList.contains('on') && !P.onAir().some(x => /MATCH INTRO/.test(x)), 4000);
+  ok(T('…and the phone follows'), introTile() && !introTile().classList.contains('on'));
+
+  console.log('\n=== A control added to a panel card later + a laptop confirm() ===');
+  L.E(`(() => { const b = document.createElement('button'); b.className = 'full small'; b.id = 'test-confirm-btn'; b.textContent = 'Test Confirm Graphic';
+    b.addEventListener('click', () => { if(confirm('Really put the test graphic on air?')) window.__confirmed = (window.__confirmed || 0) + 1; });
+    document.getElementById('card-milestone-trigger').appendChild(b); })()`);
+  await until(() => P.secButton('milestones', /Test Confirm Graphic/), 4000);
+  ok(T('a new button in a graphics card shows up on the phone by itself'), !!P.secButton('milestones', /Test Confirm Graphic/));
+  P.tap(P.secButton('milestones', /Test Confirm Graphic/));
+  await until(() => /Really put the test graphic on air/.test(P.text('#sheet-body')) && P.$('#sheet').classList.contains('show'), 4000);
+  ok(T('the laptop\'s confirm() is asked ON THE PHONE (the laptop is never stuck on a dialog)'), /Really put the test graphic/.test(P.text('#sheet-body')) && !L.E('window.__confirmed'));
+  P.tap(P.sheetButton(/^Cancel$/));
+  await sleep(500);
+  ok(T('Cancel → nothing happens on the laptop'), !L.E('window.__confirmed'));
+  await until(() => !P.$('#sheet').classList.contains('show'), 2000);
+  P.tap(P.secButton('milestones', /Test Confirm Graphic/));
+  await until(() => P.$('#sheet').classList.contains('show') && P.sheetButton(/^Confirm$/), 4000);
+  P.tap(P.sheetButton(/^Confirm$/));
+  await until(() => L.E('window.__confirmed') === 1, 4000);
+  eq(T('Confirm → done on the laptop, once'), L.E('window.__confirmed'), 1);
+  L.E(`document.getElementById('test-confirm-btn').remove()`);
+
+  console.log('\n=== CLIPPER tab ===');
+  ok(T('clipper status: ' + (tag === 'P3' ? 'Stream Engine' : 'Clipper Helper') + ', recording state'), new RegExp(tag === 'P3' ? 'Stream Engine' : 'Clipper Helper').test(P.text('#cstat')) && /Recording/.test(P.text('#cstat')), P.text('#cstat'));
+  const jobsTxt = P.$$('#jobs .job').map(j => j.textContent.replace(/\s+/g, ' '));
+  ok(T('clip activity: the FOUR (saved), SIX (saved), WICKET (failed) pressed on the phone'),
+    jobsTxt.some(t => /FOUR/.test(t) && /Saved/.test(t) && /📱/.test(t)) && jobsTxt.some(t => /SIX/.test(t) && /Saved/.test(t)) && jobsTxt.some(t => /WICKET/.test(t) && /Disk full/.test(t)), JSON.stringify(jobsTxt));
+  L.calls.length = 0;
+  P.tap(P.$('#clip-now'));
+  await until(() => clips(L, 'HIGHLIGHT').length, 4000);
+  eq(T('Clip Now → the laptop cuts a HIGHLIGHT from its recording'), clips(L, 'HIGHLIGHT').length, 1);
+  await until(() => P.notes().some(n => /Highlight clip/.test(n)), 4000);
+  ok(T('…with its own note'), P.notes().some(n => /Highlight clip/.test(n) && /(Generating|Cutting)/.test(n)), JSON.stringify(P.notes()));
+  L.engine.set(clips(L, 'HIGHLIGHT')[0].body.clipId, 'LOCAL_SAVED');
+  await until(() => P.notes().some(n => /Clip Done/.test(n) && /Highlight/.test(n)), 5000);
+  ok(T('…"Clip Done!" once the laptop saved it'), P.notes().some(n => /Clip Done/.test(n) && /Highlight/.test(n)), JSON.stringify(P.notes()));
+  if(L.$('#hl-prompts .hl-prompt')) L.E('answerOldestHighlightPrompt(false)');
+  ok(T('the recording card of the laptop is on the phone (Drive / folder settings stay on the laptop)'), !!P.sec('recording') && !/Connect Google Drive|Choose Folder/.test(P.sec('recording').textContent), P.sec('recording') ? '' : 'no recording card');
+
+  console.log('\n=== MATCH tab ===');
+  ok(T('teams, Match ID, batting and bowling of this innings'), /Kanga Kings/.test(P.text('#minfo')) && /Shivaji Strikers/.test(P.text('#minfo')) && P.text('#minfo').includes(ROOM)
+    && /Rohan Raje/.test(P.text('#bat-tbl')) && /Harsh Rane/.test(P.text('#bat-tbl')) && /Shubham Mane/.test(P.text('#bowl-tbl')), [P.text('#minfo'), P.text('#bat-tbl'), P.text('#bowl-tbl')].join(' | ').slice(0, 300));
+  const matchIds = P.$$('#match-secs [data-sec-card]').map(e => e.dataset.secCard);
+  ok(T('the panel\'s match controls: at the crease, bowler, new batsman, match events'), ['crease', 'bowler', 'newbat', 'events'].every(id => matchIds.includes(id)), JSON.stringify(matchIds));
+  P.tap(P.$('#a-bowler'));
+  await until(() => /Bowler/.test(P.text('#sheet-body')) && P.$('#sheet').classList.contains('show'), 3000);
+  ok(T('"Bowler" on the scoring screen opens the laptop\'s bowler card in a sheet'), /Set \/ Change Bowler/.test(P.text('#sheet-body')), P.text('#sheet-body').slice(0, 160));
+  P.tap(P.$('#sheet-hide'));
+  await until(() => !P.$('#sheet').classList.contains('show'), 2000);
+
+  console.log('\n=== Run Out and Penalty: the panel\'s own popups ===');
+  P.tap(P.$('#a-runout'));
+  await until(() => L.$('#wd-overlay').classList.contains('show'), 3000);
+  ok(T('Run Out → the laptop\'s Wicket Details, Run Out already chosen'), L.$('#wd-overlay').classList.contains('show') && L.$('#wd-types [data-wd-type="Run Out"]').classList.contains('on'));
+  await until(() => P.sheetButton(/^Run Out$/) && P.sheetButton(/^Run Out$/).classList.contains('on'), 3000);
+  ok(T('…the phone shows it chosen'), P.sheetButton(/^Run Out$/) && P.sheetButton(/^Run Out$/).classList.contains('on'));
+  P.tap(P.sheetButton(/^Cancel$/));
+  await until(() => !L.$('#wd-overlay').classList.contains('show'), 3000);
+  ok(T('Cancel on the phone → nothing recorded'), score(L) === '73/3 (13.0)' && !L.$('#wd-overlay').classList.contains('show'), score(L));
+  if(!P.$('#a-penalty').disabled){
+    P.tap(P.$('#a-penalty'));
+    await until(() => L.$('#penalty-modal-overlay').classList.contains('show'), 3000);
+    await until(() => /Penalty/i.test(P.text('#sheet-body')), 3000);
+    ok(T('Penalty → the laptop\'s Penalty Runs popup, on the phone too'), L.$('#penalty-modal-overlay').classList.contains('show') && /Penalty/i.test(P.text('#sheet-body')));
+    P.tap(P.sheetButton(/Cancel/));
+    await until(() => !L.$('#penalty-modal-overlay').classList.contains('show'), 3000);
+    ok(T('…cancelled from the phone'), !L.$('#penalty-modal-overlay').classList.contains('show'));
+  }
+
   console.log('\n=== The same command twice / a stale Undo ===');
   const session = P.w.localStorage.getItem('cricketRemoteSession');
   const raw = P.w.io('/cricket-remote', { forceNew: true });
@@ -296,6 +519,7 @@ async function suite(file, opts){
   await until(() => raw.connected, 4000);
   const j = await ack('remote:join', { session, label: 'Test' });
   eq(T('the saved session rejoins (a reload / a dropped line)'), [j.ok, j.matchId], [true, ROOM]);
+  ok(T('…and gets the laptop\'s latest at once: score, graphics cards, on-air list, clips'), j.parts && j.parts.score && j.parts.score.runs === L.E('state.score.runs') && j.parts['sec:bcg'] && Array.isArray(j.parts.onair) && j.parts.clips);
   const a1 = await ack('remote:cmd', { cmdId: 'dup-cmd-0001', cmd: { t: 'ball', v: '0' } });
   const a2 = await ack('remote:cmd', { cmdId: 'dup-cmd-0001', cmd: { t: 'ball', v: '0' } });
   await sleep(300);
@@ -322,6 +546,17 @@ async function suite(file, opts){
   eq(T('…nor make QR codes for someone else\'s laptop'), [hijack.ok, hijack.error], [false, 'not-registered']);
   stranger.disconnect();
 
+  console.log('\n=== Rapid taps: 1, 2, 1 without waiting ===');
+  if(L.$('#ww-overlay').classList.contains('show')) L.$('#ww-skip').click();
+  const n0 = L.E('state.ballLog.length'), r0 = L.E('state.score.runs');
+  ['1', '2', '1'].forEach(v => P.tap(P.$(`#pad [data-ball="${v}"]`)));
+  await until(() => L.E('state.ballLog.length') === n0 + 3, 8000);
+  await sleep(600);
+  eq(T('three quick taps → exactly three balls, in order, +4 runs'), [L.E('state.ballLog.length') - n0, L.E('state.score.runs') - r0, L.E('state.ballLog.slice(-3).map(e => e.ballType).join(",")')], [3, 4, '1,2,1']);
+  await until(() => P.text('#runs') === `${L.E('state.score.runs')}/3`, 3000);
+  ok(T('…the phone ends on the laptop\'s score'), P.text('#runs') === `${L.E('state.score.runs')}/3`, P.text('#runs'));
+  if(L.$('#ww-overlay').classList.contains('show')) L.$('#ww-skip').click();
+
   console.log('\n=== Disconnect all phones ===');
   L.$('#cr-remote-btn').click();
   L.$('#cr-revoke').click();
@@ -337,20 +572,20 @@ async function suite(file, opts){
 
   console.log('\n=== Laptop goes away ===');
   const P2 = await bootPhone(newLink);
-  await until(() => /Live/.test(P2.text('#conn')), 8000);
-  ok(T('a second phone pairs with the new code'), /Live/.test(P2.text('#conn')));
+  await until(() => P2.text('#conn-t') === 'Connected', 8000);
+  ok(T('a second phone pairs with the new code'), P2.text('#conn-t') === 'Connected');
   const laptopStorage = L.storage();
   L.close();
-  await until(() => /offline/.test(P2.text('#conn')), 6000);
-  eq(T('laptop closed → phone shows 🔴 Laptop offline'), P2.text('#conn'), '🔴 Laptop offline');
+  await until(() => /offline/.test(P2.text('#conn-t')), 6000);
+  eq(T('laptop closed → phone shows "Laptop offline" (and says so under the header)'), [P2.text('#conn-t'), P2.$('#netbar').classList.contains('show')], ['Laptop offline', true]);
   P2.tap(P2.$('#pad [data-ball="4"]'));
   await until(() => P2.$$('#toasts .toast').some(t => /offline/i.test(t.textContent)), 4000);
   ok(T('a press is refused with "Laptop is offline — nothing was scored"'), P2.$$('#toasts .toast').some(t => /Laptop is offline — nothing was scored/.test(t.textContent)));
 
   console.log('\n=== The laptop comes back (browser reopened on the same match) ===');
   const L2 = await bootLaptop(file, ROOM, { storage: laptopStorage, seed: false });
-  await until(() => /Live/.test(P2.text('#conn')), 8000);
-  eq(T('the phone is live again by itself — no new QR needed'), P2.text('#conn'), '🟢 Live · laptop connected');
+  await until(() => P2.text('#conn-t') === 'Connected', 8000);
+  eq(T('the phone is live again by itself — no new QR needed'), P2.text('#conn-t'), 'Connected');
   const before2 = L2.E('state.score.runs');
   P2.tap(P2.$('#pad [data-ball="4"]'));
   await until(() => L2.E('state.score.runs') === before2 + 4, 5000);
@@ -382,7 +617,7 @@ async function lockSuite(mem){
   const { port, mem } = await bootServer();
   base = `http://127.0.0.1:${port}`;
   ioClientJs = await get(port, '/socket.io/socket.io.js');
-  ok('server serves the phone page at /cricket-remote', /Scoring Remote/.test(await get(port, '/cricket-remote')));
+  ok('server serves the phone page at /cricket-remote', /Scorvix Remote/.test(await get(port, '/cricket-remote')));
   ok('…and the laptop script', /PHONE REMOTE/.test(await get(port, '/cricket-remote-host.js')));
   await suite('cricket-panel3.html');
   await suite('cricket-panel.html');

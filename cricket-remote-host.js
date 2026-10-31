@@ -13,6 +13,15 @@
      • WICKET / Wide / No Ball / … open this panel's own popups; the phone
        shows a copy of the popup that is open here and answers it through
        the same controls, so every rule and check of the panel applies.
+     • GRAPHICS / CLIPPER / MATCH: the panel's own cards (Broadcast Graphics,
+       Stat Cards, Summary Graphics, Milestones, Recording, Bowler, …) are
+       read off this page as they are — every button, switch and choice with
+       its live state — and shown on the phone. A tap there presses the same
+       control here. A control added to one of those cards later shows up on
+       the phone by itself.
+     • Clips: every clip request this panel sends to its local Clipper /
+       Stream Engine is followed by its clip id until the laptop reports the
+       file cut and saved — only then does the phone say "Clip Done!".
    Commands run one at a time, in order, and each has an id: a command the
    phone sends twice (a retry after a dropped answer) is done once.
    ============================================================ */
@@ -32,6 +41,9 @@
   // Open, but never in the way of the next delivery (it answers itself).
   const NONBLOCKING = new Set(['auto-card-modal-overlay']);
   const BALL_KINDS = ['0', '1', '2', '3', '4', '5', '6', 'W', 'Wd', 'Nb', 'B', 'LB', 'OT'];
+  // WICKET straight into one dismissal of the panel's own Wicket Details.
+  const BALL_PICKS = ['Run Out'];
+  const QUICK = { penalty: 'lc-penalty-btn', retired: 'lc-retired-btn', impact: 'lc-impact-btn' };
   const DONE_KEEP = 300;
 
   const $ = (id) => document.getElementById(id);
@@ -90,44 +102,52 @@
     return el ? { el, id: el.id, title: overlayTitle(el) } : null;
   }
 
-  /* ---------------- a copy of the open popup, for the phone ----------------
-     Read straight off the panel's own DOM: headings, text, buttons (with
-     their on / disabled state), dropdowns, inputs, check boxes, the wagon
-     wheel. A control is named by its id, or its position inside the popup;
-     the phone hands that name back, and it is checked against the control's
-     text before anything is pressed. */
+  /* ---------------- reading the panel's own controls ----------------
+     Straight off this page's DOM: headings, text, status rows, buttons (with
+     their on / disabled state), on-off switches, choice groups, dropdowns,
+     inputs, the wagon wheel. A control is named by its id, or its position
+     inside its card; the phone hands that name back, and it is checked
+     against the control's text before anything is pressed. */
   function shown(el){
     if(el.hidden) return false;
     if(el.style && (el.style.display === 'none' || el.style.visibility === 'hidden')) return false;
     const cs = window.getComputedStyle ? getComputedStyle(el) : null;
     return !(cs && (cs.display === 'none' || cs.visibility === 'hidden'));
   }
+  function shownUpTo(el, root){
+    for(let n = el; n; n = n.parentElement){
+      if(!(n.tagName === 'SELECT' && n._proDD) && !shown(n)) return false;
+      if(n === root) return true;
+    }
+    return true;
+  }
   function textOf(el){
     let out = '';
     (function walk(n){
       for(const c of n.childNodes){
         if(c.nodeType === 3) out += ' ' + c.nodeValue;
-        else if(c.nodeType === 1 && !/^(SVG|svg|KBD|STYLE|SCRIPT|SELECT|OPTION|TEMPLATE)$/.test(c.tagName) && shown(c)) walk(c);
+        else if(c.nodeType === 1 && !/^(SVG|svg|KBD|STYLE|SCRIPT|SELECT|OPTION|TEMPLATE|DATALIST)$/.test(c.tagName) && shown(c)) walk(c);
       }
     })(el);
     return norm(out);
   }
-  function refOf(el, root){
+  function refIn(el, root){
     if(el.id) return '#' + el.id;
     const path = [];
     for(let n = el; n && n !== root; n = n.parentElement) path.unshift(Array.prototype.indexOf.call(n.parentElement.children, n));
     return 'p:' + path.join('.');
   }
-  function resolveRef(root, ref){
-    if(typeof ref !== 'string') return null;
-    if(ref[0] === '#'){ const el = document.getElementById(ref.slice(1)); return el && root.contains(el) ? el : null; }
+  function resolveIn(root, ref){
+    if(typeof ref !== 'string' || !root) return null;
+    if(ref[0] === '#'){ const el = document.getElementById(ref.slice(1)); return el && (el === root || root.contains(el)) ? el : null; }
     if(!ref.startsWith('p:')) return null;
     let n = root;
-    for(const i of ref.slice(2).split('.')){ n = n && n.children[Number(i)]; }
+    if(ref.length > 2) for(const i of ref.slice(2).split('.')){ n = n && n.children[Number(i)]; }
     return n || null;
   }
   const isBtn = (el) => el.tagName === 'BUTTON' || /^(button|radio|tab|option)$/.test(el.getAttribute('role') || '') || el.classList.contains('wm-pill');
   const isOn = (el) => ['on', 'active', 'selected', 'sel', 'picked'].some(c => el.classList.contains(c)) || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true';
+  const INTERACTIVE = 'button, input, select, textarea, [role=button], [role=radio], [role=tab], .wm-pill, #ww-svg';
   function sigOf(el){
     if(el.tagName === 'SELECT') return 'select';
     if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return 'input:' + (el.type || 'text');
@@ -136,6 +156,7 @@
   }
   function toneOf(el){
     const c = ' ' + (el.className && el.className.baseVal == null ? el.className : '') + ' ';
+    if(/ (bcg-stop) /.test(c) || /border-color:var\(--red\)/.test(el.getAttribute('style') || '')) return 'stop';
     if(/ (primary|wd-confirm) /.test(c)) return 'primary';
     if(/ (b-wicket) /.test(c)) return 'wicket';
     if(/ (b-extra) /.test(c)) return 'extra';
@@ -151,68 +172,111 @@
   }
   function placeholderOf(sel){
     const first = sel.options[0];
-    return first && first.value === '' ? norm(first.textContent) : '— choose —';
+    return first && first.value === '' ? norm(first.textContent) : '';
   }
-  function serialize(ov){
-    const root = ov.el, items = [];
+  // A card's title without its "— note" tail.
+  function cardTitle(card){
+    const h = card && card.querySelector(':scope > h2, :scope > div > h2');
+    if(!h) return '';
+    const c = h.cloneNode(true);
+    c.querySelectorAll('.note, span[id]').forEach(n => n.remove());
+    return norm(c.textContent);
+  }
+  // Reads one or more roots (cards, rows or single buttons) into items.
+  // A ref is "<root index>|<ref inside that root>".
+  function serialize(roots, exclude){
+    const items = [];
     let tooBig = false;
-    const push = (it) => { if(items.length >= 220){ tooBig = true; return; } items.push(it); };
-    (function walk(el){
-      for(const c of el.children){
-        if(tooBig) return;
+    const push = (it) => { if(items.length >= 260){ tooBig = true; return; } items.push(it); };
+    const ex = exclude || new Set();
+    roots.forEach((root, ri) => {
+      if(!root) return;
+      const R = (el) => ri + '|' + refIn(el, root);
+      function visit(c){
+        if(tooBig || ex.has(c)) return;
         if(c.tagName === 'SELECT' && c._proDD){
-          if(c._proDD.wrap && !shown(c._proDD.wrap)) continue;
-          if(!shown(c.parentElement)) continue;
-          push({ k: 's', ref: refOf(c, root), sig: 'select', value: c.value, ph: placeholderOf(c), opts: selectItems(c) });
-          continue;
+          if(c._proDD.wrap && !shown(c._proDD.wrap)) return;
+          push({ k: 's', ref: R(c), sig: 'select', value: c.value, ph: placeholderOf(c) || '— choose —', opts: selectItems(c), dis: !!c.disabled });
+          return;
         }
-        if(c.classList && c.classList.contains('pro-dd')) continue;      // shown above, as its select
-        if(/^(SCRIPT|STYLE|TEMPLATE)$/.test(c.tagName) || !shown(c)) continue;
+        if(c.classList && c.classList.contains('pro-dd')) return;      // shown above, as its select
+        if(/^(SCRIPT|STYLE|TEMPLATE|DATALIST|A)$/.test(c.tagName) || !shown(c)) return;
         if(c.id === 'ww-svg'){
-          push({ k: 'ww', ref: '#ww-svg', zones: wwZones(), boundary: c.classList.contains('boundary'), picked: !!(typeof ww !== 'undefined' && ww && ww.picked) });
-          continue;
+          push({ k: 'ww', ref: R(c), zones: wwZones(), boundary: c.classList.contains('boundary') });
+          return;
         }
-        if(c.tagName === 'svg' || c.tagName === 'SVG') continue;
+        if(c.tagName === 'svg' || c.tagName === 'SVG') return;
+        if(c.tagName === 'H2' && c.parentElement && (c.parentElement === root && root.classList.contains('card') || c.parentElement.parentElement === root && root.classList.contains('card'))) return;   // the card title is the section's name
+        if(c.getAttribute('role') === 'radiogroup'){
+          const opts = Array.prototype.filter.call(c.querySelectorAll('[role=radio]'), b => shown(b)).map(b => ({ ref: R(b), sig: sigOf(b), text: textOf(b), on: isOn(b), dis: !!b.disabled || b.getAttribute('aria-disabled') === 'true' }));
+          const lbId = c.getAttribute('aria-labelledby');
+          const label = norm(c.getAttribute('aria-label') || (lbId && $(lbId) ? textOf($(lbId)) : ''));
+          // its label already went out as text just before: once is enough
+          const prev = items[items.length - 1];
+          if(label && prev && prev.k === 't' && prev.text.toLowerCase() === label.toLowerCase()) items.pop();
+          if(opts.length) push({ k: 'seg', label, opts });
+          for(const x of c.children) if(x.getAttribute('role') !== 'radio') visit(x);
+          return;
+        }
         if(isBtn(c)){
           const label = textOf(c);
-          if(label) push({ k: 'b', ref: refOf(c, root), sig: sigOf(c), text: label, on: isOn(c), dis: !!c.disabled || c.getAttribute('aria-disabled') === 'true', tone: toneOf(c) });
-          continue;
+          if(!label) return;
+          const b = c.querySelector('b'), sm = c.querySelector('small'), ico = c.querySelector('.bcg-ico');
+          const it = { k: 'b', ref: R(c), sig: sigOf(c), text: label, on: isOn(c), dis: !!c.disabled || c.getAttribute('aria-disabled') === 'true', tone: toneOf(c) };
+          if(b){ it.title = textOf(b); it.sub = sm ? textOf(sm) : ''; it.ico = ico ? textOf(ico) : ''; it.tile = true; }
+          push(it);
+          return;
         }
         if(c.tagName === 'SELECT'){
-          push({ k: 's', ref: refOf(c, root), sig: 'select', value: c.value, ph: placeholderOf(c), opts: selectItems(c) });
-          continue;
+          push({ k: 's', ref: R(c), sig: 'select', value: c.value, ph: placeholderOf(c), opts: selectItems(c), dis: !!c.disabled });
+          return;
         }
         if(c.tagName === 'INPUT' || c.tagName === 'TEXTAREA'){
           const type = (c.type || 'text').toLowerCase();
-          if(type === 'password' || type === 'hidden' || type === 'file') continue;
+          if(type === 'password' || type === 'hidden' || type === 'file' || type === 'color') return;
           if(type === 'checkbox' || type === 'radio'){
             const lab = c.closest('label');
-            push({ k: 'c', ref: refOf(c, root), sig: sigOf(c), on: !!c.checked, text: lab ? textOf(lab) : norm(c.getAttribute('aria-label') || ''), radio: type === 'radio', dis: !!c.disabled });
+            push({ k: 'tg', ref: R(c), sig: sigOf(c), on: !!c.checked, text: lab ? textOf(lab) : norm(c.getAttribute('aria-label') || ''), radio: type === 'radio', dis: !!c.disabled });
           } else {
-            push({ k: 'i', ref: refOf(c, root), sig: sigOf(c), value: String(c.value || '').slice(0, 200), ph: c.placeholder || '', num: type === 'number' });
+            push({ k: 'i', ref: R(c), sig: sigOf(c), value: String(c.value || '').slice(0, 200), ph: c.placeholder || '', num: type === 'number', dis: !!c.disabled });
           }
-          continue;
+          return;
         }
-        if(c.tagName === 'LABEL' && c.querySelector('input[type=checkbox], input[type=radio]')){
-          const inp = c.querySelector('input[type=checkbox], input[type=radio]');
-          push({ k: 'c', ref: refOf(inp, root), sig: sigOf(inp), on: !!inp.checked, text: textOf(c), radio: inp.type === 'radio', dis: !!inp.disabled });
-          continue;
+        // one switch + its words (a .toggle-row, a <label> with text): one item
+        const controls = c.querySelectorAll('input, button, select, textarea');
+        if(controls.length === 1 && controls[0].type === 'checkbox' && shown(controls[0].closest('label') || controls[0])){
+          const inp = controls[0];
+          push({ k: 'tg', ref: R(inp), sig: sigOf(inp), on: !!inp.checked, text: textOf(c), dis: !!inp.disabled });
+          return;
         }
-        if(/^H[1-4]$/.test(c.tagName)){ const t = textOf(c); if(t) push({ k: 'h', text: t }); continue; }
-        const interactive = c.querySelector('button, input, select, textarea, [role=button], [role=radio], [role=tab], .wm-pill, #ww-svg, h1, h2, h3, h4');
+        if(/^H[1-4]$/.test(c.tagName)){ const t = textOf(c); if(t) push({ k: 'h', text: t }); return; }
+        const interactive = c.querySelector(INTERACTIVE + ', h1, h2, h3, h4');
         if(!interactive){
+          const cs = window.getComputedStyle ? getComputedStyle(c) : null;
+          const kids = Array.prototype.filter.call(c.children, x => shown(x));
+          // a label / value grid (Recording ● Active, Buffer ● 12 s, …)
+          if(cs && cs.display === 'grid' && kids.length >= 2 && kids.length % 2 === 0 && kids.every(x => !x.children.length || x.querySelector('b, small'))){
+            const rows = [];
+            for(let i = 0; i < kids.length; i += 2) rows.push([textOf(kids[i]), textOf(kids[i + 1])]);
+            push({ k: 'kv', rows });
+            return;
+          }
           const t = textOf(c);
           if(t){
             const cls = String(c.className || '');
-            push({ k: 't', text: t.slice(0, 400), tone: /err|warn|bad/.test(cls) ? 'warn' : /preview|summary|note|hint|sub|ctx/.test(cls) ? 'note' : '' });
+            const small = /font-size:\s*1[01](\.\d+)?px/.test(c.getAttribute('style') || '') && /opacity/.test(c.getAttribute('style') || '');
+            const it = { k: 't', text: t.slice(0, 600), tone: c.getAttribute('role') === 'status' ? (c.classList.contains('on') ? 'air' : 'status') : /shortcut-hint|hint/.test(cls) || small || t.length > 160 ? 'hint' : /err|warn|bad/.test(cls) ? 'warn' : /preview|summary|note|sub|ctx|status|result/.test(cls) ? 'note' : '' };
+            const dot = c.querySelector('.dot') || (c.classList.contains('dot') ? c : null);
+            if(dot) it.dot = dot.classList.contains('on');
+            push(it);
           }
-          continue;
+          return;
         }
-        walk(c);
+        for(const x of c.children) visit(x);
       }
-    })(root);
-    if(tooBig) return { id: ov.id, title: ov.title, tooBig: true };
-    return { id: ov.id, title: ov.title, items };
+      visit(root);
+    });
+    return { items, tooBig };
   }
   // The wagon wheel's regions as the laptop draws them (right/left-hander).
   function wwZones(){
@@ -221,9 +285,250 @@
       return WW_ZONES.map(z => { const [a0, a1] = wwRange(z, ww.hand); return { id: z.id, a0, a1, inner: z.inner, deep: z.deep }; });
     }, []);
   }
+  function serializeOverlay(ov){
+    const s = serialize([ov.el]);
+    return s.tooBig ? { id: ov.id, title: ov.title, tooBig: true } : { id: ov.id, title: ov.title, items: s.items };
+  }
 
-  /* ---------------- the summary the phone shows ---------------- */
-  function teamOf(t){ return { name: (t && t.name) || '', short: (t && t.short) || '', color: (t && t.color) || '' }; }
+  /* ---------------- the panel's cards the phone gets ----------------
+     Each is the panel's own card (or rows / buttons of it), read as it is.
+     tab: gfx = GRAPHICS, clip = CLIPPER, match = MATCH. */
+  const up = (el, n) => { let x = el; for(let i = 0; x && i < (n || 1); i++) x = x.parentElement; return x; };
+  const SECTIONS = [
+    { id: 'scorebug', tab: 'gfx', icon: '📺', title: 'Score Bug', roots: () => [up($('visible-toggle'), 2)] },
+    { id: 'bcg', tab: 'gfx', icon: '🎬', roots: () => [$('card-broadcast-graphics')] },
+    { id: 'playercards', tab: 'gfx', icon: '🧑', title: 'Player & Bowler Cards', roots: () => [$('card-live-players')] },
+    { id: 'statcards', tab: 'gfx', icon: '🃏', roots: () => [$('card-stat-cards')] },
+    { id: 'summary', tab: 'gfx', icon: '📊', roots: () => [$('card-summary-graphics')] },
+    { id: 'milestones', tab: 'gfx', icon: '⚡', roots: () => [$('card-milestone-trigger')] },
+    { id: 'tournament', tab: 'gfx', icon: '🏆', title: 'Tournament Graphics',
+      // the history / points views only — never the Matches list (Resume / Delete stay on the laptop)
+      roots: () => [up($('view-player-history-btn')), $('view-points-table-btn'),
+        safe(() => (['player', 'team', 'points'].includes(historyPanelView) ? $('league-matches-list') : null), null)] },
+    { id: 'recording', tab: 'clip', icon: '🎥', roots: () => [$('card-recording')],
+      exclude: () => [up($('connect-drive-btn')), up($('drive-folder-link'), 2), $('rec-data-root-input'), $('rec-data-root-browse-btn'),
+        $('rec-data-root-save-btn'), $('ce-clip-jobs-list'), $('clip-jobs-list'), $('rec-resolution-select') && $('rec-resolution-select').closest('label')] },
+    { id: 'clipper', tab: 'clip', icon: '✂️', roots: () => (PANEL === 'panel' ? [$('card-clipper-helper')] : []),
+      exclude: () => [$('clipper-first'), $('clip-jobs-list'), $('clipper-open-btn')] },
+    { id: 'crease', tab: 'match', icon: '👥', roots: () => [$('card-players')] },
+    { id: 'bowler', tab: 'match', icon: '🎯', roots: () => [$('card-bowler')] },
+    { id: 'newbat', tab: 'match', icon: '🆕', roots: () => [$('card-new-batsman')] },
+    { id: 'events', tab: 'match', icon: '🩹', title: 'Match Events', roots: () => [$('lc-retired-btn'), $('lc-penalty-btn'), $('lc-impact-btn'), $('freehit-banner'), $('so-bar')] },
+    { id: 'innings', tab: 'match', icon: '🔁', title: 'Innings', roots: () => ['next-innings-btn', 'declare-btn', 'stumps-btn', 'resume-day-btn', 'draw-btn'].map($) }
+  ];
+  const SEC = Object.fromEntries(SECTIONS.map(s => [s.id, s]));
+  function secRoots(sec){ return (safe(() => sec.roots(), []) || []).map(r => r || null); }
+  function secExclude(sec){ return new Set((safe(() => (sec.exclude ? sec.exclude() : []), []) || []).filter(Boolean)); }
+  function readSection(sec){
+    const roots = secRoots(sec);
+    if(!roots.some(r => r && shown(r))) return null;
+    const s = serialize(roots, secExclude(sec));
+    if(!s.items.length) return null;
+    const first = roots.find(r => r && r.classList && r.classList.contains('card'));
+    // (the card's own leading emoji gives way to the section icon)
+    const title = (sec.title || cardTitle(first) || sec.id).replace(/^[^\p{L}\p{N}]+/u, '') || sec.id;
+    return { id: sec.id, tab: sec.tab, icon: sec.icon, title, items: s.items, tooBig: s.tooBig || undefined };
+  }
+  // A control of a section, as a ready-made command for the phone.
+  function secAct(secId, el, op, value){
+    const sec = SEC[secId];
+    if(!sec || !el) return null;
+    const roots = secRoots(sec);
+    const i = roots.findIndex(r => r && (r === el || r.contains(el)));
+    if(i < 0) return null;
+    const a = { t: 'ui', sec: secId, ref: i + '|' + refIn(el, roots[i]), sig: sigOf(el), op: op || 'click' };
+    if(value !== undefined) a.value = value;
+    return a;
+  }
+
+  /* ---------------- what is on air right now ----------------
+     From what the panel itself holds: the Broadcast Graphics state (kept by
+     the server, rendered on this card), the switches that put cards on the
+     overlay, the active player card, the tournament cards. Each comes with
+     the panel's own control that takes it off. */
+  function onAirList(){
+    const L = [];
+    const vis = $('visible-toggle');
+    if(vis && vis.checked) L.push({ id: 'scorebug', label: 'Scorecard (score bug)', act: secAct('scorebug', vis, 'set', false) });
+    document.querySelectorAll('#card-broadcast-graphics .bcg-btn.on').forEach(b => {
+      let off = b;
+      const visible = (el) => el && shownUpTo(el, $('card-broadcast-graphics'));
+      if(b.id === 'bcg-toss-btn' && visible($('bcg-toss-hide'))) off = $('bcg-toss-hide');
+      if((b.id === 'bcg-bat-btn' || b.id === 'bcg-bowl-btn') && visible($('bcg-card-hide'))) off = $('bcg-card-hide');
+      if(b.id === 'bcg-xi-btn' && visible($('bcg-xi-stop'))) off = $('bcg-xi-stop');
+      if(b.id === 'bcg-intro-btn' && visible($('bcg-intro-stop'))) off = $('bcg-intro-stop');
+      L.push({ id: b.id, label: textOf(b.querySelector('b') || b), act: secAct('bcg', off, 'click') });
+    });
+    const toggles = [['player-stat-toggle', 'Player stat card', 'player'], ['bowler-stat-toggle', 'Bowler stat card', 'bowler'], ['team-stat-toggle', 'Team stats card', 'team']];
+    toggles.forEach(([id, label]) => { const t = $(id); if(t && t.checked) L.push({ id, label, act: secAct('statcards', t, 'set', false) }); });
+    const kind = state.activeCardKind, hideBtn = $('hide-current-card-btn');
+    const shadowed = toggles.some(([id, , k]) => k === kind && $(id) && $(id).checked);
+    if(kind && hideBtn && !hideBtn.disabled && !shadowed) L.push({ id: 'activecard', label: norm(state.activeCardLabel) || 'Player card', act: secAct('playercards', hideBtn, 'click') });
+    if(state.showPointsTableCard) L.push({ id: 'points', label: 'Points table', act: { t: 'gfxoff', id: 'points' } });
+    if(state.showPlayerHistoryCard) L.push({ id: 'playerhistory', label: 'Player history' + (state.playerHistoryOverlayName ? ' · ' + state.playerHistoryOverlayName : ''), act: { t: 'gfxoff', id: 'playerhistory' } });
+    if(state.showTeamHistoryCard) L.push({ id: 'teamhistory', label: 'Team history' + (state.teamHistoryOverlayName ? ' · ' + state.teamHistoryOverlayName : ''), act: { t: 'gfxoff', id: 'teamhistory' } });
+    return L;
+  }
+  // Every graphic this panel sends to the overlay, from either device —
+  // the phone's "sent ✓" line for graphics the overlay times out by itself.
+  const GFX_EVENTS = {
+    cricketInningsSummary: 'Innings Summary — on air', cricketHideInningsSummary: 'Innings Summary — off air',
+    cricketMatchSummary: 'Match Summary — on air', cricketHideMatchSummary: 'Match Summary — off air',
+    cricketPlayerStat: 'Player stat card — on air', cricketHidePlayerStat: 'Player stat card — off air',
+    cricketBowlerStat: 'Bowler stat card — on air', cricketHideBowlerStat: 'Bowler stat card — off air',
+    cricketTeamStat: 'Team stats — on air', cricketHideTeamStat: 'Team stats — off air',
+    cricketPlayerHistory: 'Player history — on air', cricketHidePlayerHistory: 'Player history — off air',
+    cricketTeamHistory: 'Team history — on air', cricketHideTeamHistory: 'Team history — off air',
+    cricketPointsTable: 'Points table — on air', cricketHidePointsTable: 'Points table — off air',
+    cricketOverSummary: 'Over summary', cricketEvent: 'Animation', cricketGraphic: 'Broadcast graphic'
+  };
+  const gfxLog = [];
+  const SP = io.Socket && io.Socket.prototype;
+  if(SP && typeof SP.emit === 'function' && !SP.__crWrapped){
+    const emit0 = SP.emit;
+    SP.__crWrapped = true;
+    SP.emit = function(ev, data){
+      try{
+        if(this !== rs && GFX_EVENTS[ev]){
+          let label = GFX_EVENTS[ev];
+          if(ev === 'cricketEvent'){ const e = (data && data.event) || data || {}; label = '⚡ ' + (norm(e.text || e.kind) || 'Animation'); }
+          if(ev === 'cricketGraphic'){ const d = data || {}; label = '🎬 ' + norm([d.action || d.cmd || d.type, d.mode || d.kind].filter(Boolean).join(' ')) || label; }
+          const lastSame = gfxLog.find(x => x.label === label);
+          if(!lastSame || Date.now() - lastSame.at > 8000){
+            gfxLog.unshift({ label, at: Date.now(), from: capturing ? 'phone' : 'laptop' });
+            gfxLog.length = Math.min(gfxLog.length, 10);
+          }
+        }
+      }catch(e){}
+      return emit0.apply(this, arguments);
+    };
+  }
+
+  /* ---------------- clips: from request to "saved on the laptop" ----------------
+     Every POST this panel makes to its local Clipper (localhost:5005) or
+     Stream Engine (127.0.0.1:5006) /clip is noted with its clip id; the
+     job is then followed through the same engine's own job record. The
+     phone's "Clip Done!" comes only from that record saying the file is
+     cut and saved. */
+  const clipJobs = new Map();   // clipId -> job
+  const nativeFetch = window.fetch;
+  const isClipEngine = (u) => (u.hostname === '127.0.0.1' && u.port === '5006') || (u.hostname === 'localhost' && u.port === '5005');
+  const PROCESSING = ['WAITING', 'WAITING_FOR_POSTROLL', 'QUEUED', 'CUTTING', 'CUT_RETRY', 'PENDING', 'STARTED'];
+  const FAILED = ['CUT_FAILED', 'FAILED_PERMANENT', 'FAILED'];
+  const UPLOADED = ['COMPLETE', 'SYNC_COMPLETE'];
+  function stageOf(job){
+    const st = String(job.syncStatus || job.status || '').toUpperCase();
+    if(UPLOADED.includes(st)) return 'uploaded';
+    if(FAILED.includes(st)) return job.localSaved || job.localPath || job.localFilePath ? 'saved' : 'failed';
+    if(PROCESSING.includes(st)) return 'processing';
+    if(job.localSaved || st) return 'saved';   // LOCAL_SAVED, LOCAL_ONLY, FORWARDING, SENDING, SENT, OFFLINE_PENDING, …
+    return 'processing';
+  }
+  function ballLabel(meta){
+    if(!meta) return '';
+    const over = meta.over != null && meta.ballInOver != null ? `${meta.over}.${meta.ballInOver}` : '';
+    return [over, meta.striker].filter(Boolean).join(' · ');
+  }
+  function noteClipRequest(body){
+    const clipId = String(body.clipId || '');
+    if(!clipId) return null;
+    let job = clipJobs.get(clipId);
+    if(!job){
+      job = { clipId, eventType: String(body.eventType || 'CLIP').toUpperCase(), label: ballLabel(body.ballMeta), t0: Number(body.timestamp) || Date.now(),
+        origin: capturing ? 'phone' : 'laptop', stage: 'requested', status: '', error: '', at: Date.now() };
+      clipJobs.set(clipId, job);
+      while(clipJobs.size > 40) clipJobs.delete(clipJobs.keys().next().value);
+    }
+    return job;
+  }
+  function setStage(job, stage, error){
+    if(job.stage === stage && (error || '') === job.error) return;
+    if(job.stage === 'uploaded' || (job.stage === 'saved' && stage === 'processing')) return;
+    job.stage = stage; job.error = error || ''; job.changedAt = Date.now();
+    if(stage === 'saved' && !job.doneAt) job.doneAt = Date.now();
+  }
+  if(typeof nativeFetch === 'function'){
+    window.fetch = function(input, init){
+      let job = null;
+      try{
+        const url = new URL(typeof input === 'string' ? input : (input && input.url) || '', location.href);
+        if(init && /^post$/i.test(init.method || '') && isClipEngine(url) && url.pathname === '/clip'){
+          job = noteClipRequest(JSON.parse(init.body || '{}'));
+        }
+      }catch(e){}
+      const p = nativeFetch.apply(this, arguments);
+      if(job){
+        Promise.resolve(p).then(r => (r && typeof r.clone === 'function' ? r.clone() : r).json()).then(res => {
+          if(res && res.success === false && !res.duplicate) setStage(job, 'failed', res.error || 'The clipper did not accept the clip');
+          else if(job.stage === 'requested' || job.stage === 'waiting') setStage(job, 'processing');
+          pollClipsSoon();
+        }).catch(() => {
+          // Panel 1 keeps the request in its clip outbox and re-sends it; Panel 3 cannot start it.
+          setStage(job, PANEL === 'panel' ? 'waiting' : 'failed', PANEL === 'panel' ? 'Clipper Helper not reachable — kept, will be sent when it is back' : 'Local Stream Engine not reachable — clip could not be started');
+        });
+      }
+      return p;
+    };
+  }
+  let clipPollTimer = null, clipPolling = false;
+  function pollClipsSoon(){ clearTimeout(clipPollTimer); clipPollTimer = setTimeout(pollClips, 600); }
+  async function pollClips(){
+    if(clipPolling) return;
+    const live = [...clipJobs.values()].filter(j => ['requested', 'processing', 'waiting'].includes(j.stage) || (j.stage === 'saved' && Date.now() - (j.doneAt || 0) < 180000));
+    if(!live.length) return;
+    clipPolling = true;
+    try{
+      if(PANEL === 'panel3'){
+        for(const j of live){
+          let job = safe(() => { const u = clipUiJobs.get(j.clipId); return u && u.job; }, null);
+          if(!job){
+            const r = await nativeFetch.call(window, `${STREAM_ENGINE_URL}/clip-jobs/${encodeURIComponent(j.clipId)}`).then(x => x.json()).catch(() => null);
+            job = r && r.success && r.job;
+          }
+          if(job){ j.status = job.status || ''; setStage(j, stageOf(job), stageOf(job) === 'failed' ? (job.error || 'Clip failed') : ''); }
+        }
+      } else {
+        const m = String(mid()).replace(/[^a-zA-Z0-9_-]/g, '');
+        const r = await nativeFetch.call(window, `${CLIPPER_HELPER_URL}/clip-jobs?limit=25${m ? `&matchId=${encodeURIComponent(m)}` : ''}`).then(x => x.json()).catch(() => null);
+        const byId = new Map(((r && r.jobs) || []).map(x => [x.clipId, x]));
+        for(const j of live){
+          const job = byId.get(j.clipId);
+          if(job){ j.status = job.syncStatus || job.status || ''; setStage(j, stageOf(job), stageOf(job) === 'failed' ? (job.error || 'Clip failed') : ''); }
+        }
+      }
+      // a request that never became a job on the laptop
+      live.forEach(j => { if(j.stage === 'requested' && Date.now() - j.at > 20000) setStage(j, 'failed', 'The clipper never started this clip'); });
+    } finally { clipPolling = false; }
+    clipPollTimer = setTimeout(pollClips, 1200);
+  }
+  function dotOn(id){ const d = $(id); return !!(d && d.classList.contains('on')); }
+  function clipperStatus(){
+    if(PANEL === 'panel3'){
+      return {
+        engine: { name: 'Stream Engine', on: dotOn('ce-engine-dot'), text: norm($('ce-engine-status') && $('ce-engine-status').textContent) },
+        // the panel writes "● RECORDING" (capitals) while it records, "● Not recording" when it does not
+        rec: { on: dotOn('rec-dot') || /\bRECORDING\b/.test(norm($('rec-status') && $('rec-status').textContent)), text: norm($('rec-status') && $('rec-status').textContent) },
+        path: norm($('rec-data-root-status') && $('rec-data-root-status').textContent),
+        rows: [['Buffer', 'ce-buffer'], ['Clip worker', 'ce-worker'], ['Cloudflare', 'ce-cloudflare'], ['Recording file', 'rec-duration']].map(([l, id]) => [l, norm($(id) && $(id).textContent)]).filter(r => r[1] && r[1] !== '—')
+      };
+    }
+    return {
+      engine: { name: 'Clipper Helper', on: dotOn('clipper-status-dot'), text: norm($('clipper-status-text') && $('clipper-status-text').textContent) },
+      rec: { on: dotOn('rec-dot'), text: norm($('rec-status') && $('rec-status').textContent) },
+      path: '', rows: []
+    };
+  }
+  function clipsPart(){
+    const jobs = [...clipJobs.values()].sort((a, b) => b.at - a.at).slice(0, 15)
+      .map(j => ({ clipId: j.clipId, eventType: j.eventType, label: j.label, t0: j.t0, origin: j.origin, stage: j.stage, status: j.status, error: j.error, at: j.at, doneAt: j.doneAt || null }));
+    return { jobs, status: clipperStatus(), canHighlight: !!($('save-highlight-btn') || $('highlight-btn')) };
+  }
+
+  /* ---------------- the match, as the phone shows it ---------------- */
+  function teamOf(t){
+    const logo = t && typeof t.logoUrl === 'string' && (/^https?:\/\//.test(t.logoUrl) || (/^data:image\//.test(t.logoUrl) && t.logoUrl.length < 90000)) ? t.logoUrl : '';
+    return { name: (t && t.name) || '', short: (t && t.short) || '', color: (t && t.color) || '', logo };
+  }
   function batterOf(p){ return p && p.name ? { name: p.name, runs: p.runs || 0, balls: p.balls || 0, fours: p.fours || 0, sixes: p.sixes || 0 } : null; }
   function summary(){
     const s = state || {};
@@ -233,12 +538,11 @@
     const log = s.ballLog || [];
     const last = log[log.length - 1];
     const ov = openOverlay();
-    const mirrored = ov && MIRROR.has(ov.id) ? ov : null;
     const crr = safe(() => calcCRR(), null), rrr = safe(() => calcRRR(), null);
     return {
-      v: 1, panel: PANEL, matchId: mid(),
+      v: 2, panel: PANEL, matchId: mid(),
       online: !!(typeof socket !== 'undefined' && socket && socket.connected),
-      bat: teamOf(bk === 'A' ? s.teamA : s.teamB), bowl: teamOf(bk === 'A' ? s.teamB : s.teamA),
+      bat: teamOf(bk === 'A' ? s.teamA : s.teamB), bowl: teamOf(bk === 'A' ? s.teamB : s.teamA), battingKey: bk,
       runs: score.runs || 0, wkts: score.wickets || 0,
       overs: safe(() => fmtOvers(score.overs || 0, score.balls || 0), `${score.overs || 0}.${score.balls || 0}`),
       maxOvers: s.oversPerInnings || null, innings: s.inningsNumber || 1,
@@ -252,11 +556,41 @@
       freeHit: !!s.freeHit,
       inningsOver: !!safe(() => isInningsOver(), false),
       off: BALL_KINDS.filter(k => { const el = document.querySelector(`[data-ball="${k}"]`); return !el || el.disabled; }),
+      quick: Object.keys(QUICK).filter(k => { const el = $(QUICK[k]); return el && !el.disabled && shown(el); }),
       last: last ? { id: last.deliveryId || null, over: last.over || '', n: log.length } : { id: null, over: '', n: 0 },
       hl: { asks: document.querySelectorAll('#hl-prompts .hl-prompt').length, pending: safe(() => pendingHighlights.length, 0) },
-      modal: mirrored ? serialize(mirrored) : null,
-      busy: ov && !mirrored ? ov.title : null,
+      busy: ov && !MIRROR.has(ov.id) ? ov.title : null,
       rev: rev()
+    };
+  }
+  function matchPart(){
+    const s = state || {};
+    const bk = s.battingTeam === 'B' ? 'B' : 'A', wk = bk === 'A' ? 'B' : 'A';
+    const inn = s.inningsNumber || 1;
+    const bat = ((s.battingCard && s.battingCard[bk]) || []).filter(r => (r.inningsNo || inn) === inn).map(r => ({ name: r.name, runs: r.runs || 0, balls: r.balls || 0, fours: r.fours || 0, sixes: r.sixes || 0, how: r.out ? norm(r.howOut) : '' }));
+    [s.striker, s.nonStriker].forEach((p, i) => {
+      if(p && p.name && !bat.some(r => r.name === p.name)) bat.push({ name: p.name, runs: p.runs || 0, balls: p.balls || 0, fours: p.fours || 0, sixes: p.sixes || 0, how: '' });
+      const row = p && bat.find(r => r.name === p.name && !r.how);
+      if(row){ Object.assign(row, { runs: p.runs || 0, balls: p.balls || 0, fours: p.fours || 0, sixes: p.sixes || 0, crease: i === 0 ? 'striker' : 'non-striker' }); }
+    });
+    const bowl = ((s.bowlingCard && s.bowlingCard[wk]) || []).filter(r => (r.inningsNo || inn) === inn).map(r => ({ name: r.name, o: `${r.overs || 0}.${r.balls || 0}`, m: r.maidens || 0, r: r.runs || 0, w: r.wickets || 0 }));
+    const b = s.bowler || {};
+    if(b.name){
+      const row = bowl.find(r => r.name === b.name);
+      const live = { name: b.name, o: `${b.overs || 0}.${b.balls || 0}`, m: b.maidens || 0, r: b.runs || 0, w: b.wickets || 0, now: true };
+      if(row) Object.assign(row, live); else bowl.push(live);
+    }
+    const tossWinner = s.toss && (s.toss.winner === 'A' ? s.teamA : s.toss.winner === 'B' ? s.teamB : null);
+    return {
+      matchId: mid(), title: norm(s.matchTitle) || (s.matchNo ? `Match ${s.matchNo}` : ''), stage: s.matchStage || '',
+      tournament: norm(s.matchLeague || s.leagueName || ''), venue: norm(s.venue), format: s.format || '', overs: s.oversPerInnings || null,
+      date: s.matchDate || '', innings: inn, battingKey: bk, target: s.target || null,
+      teamA: teamOf(s.teamA), teamB: teamOf(s.teamB),
+      toss: tossWinner ? `${tossWinner.name || tossWinner.short} won the toss · chose to ${s.toss.decision === 'BOWL' ? 'bowl' : 'bat'}` : '',
+      archive: (s.inningsArchive || []).map(a => ({ no: a.no, team: a.team, score: `${a.runs}/${a.wickets}`, overs: a.overs })),
+      batting: bat, bowling: bowl,
+      extras: s.extras && s.extras[bk] ? s.extras[bk] : null,
+      partnership: { runs: s.partnershipRuns || 0, balls: s.partnershipBalls || 0 }
     };
   }
 
@@ -268,8 +602,9 @@
     el.click();
     return { ok: true };
   }
-  function pressBall(v){
+  function pressBall(v, pick){
     if(!BALL_KINDS.includes(v)) return fail('bad-request', 'Unknown ball.');
+    if(pick != null && (v !== 'W' || !BALL_PICKS.includes(pick))) return fail('bad-request', 'Unknown dismissal.');
     const block = blockingOverlay();
     if(block) return fail('modal-open', MIRROR.has(block.id) ? `Finish “${block.title}” first.` : `“${block.title}” is open on the laptop — close it there first.`);
     // A new delivery: the wagon wheel of the last one is skipped, as Esc does.
@@ -277,7 +612,12 @@
     if(wheel && wheel.classList.contains('show')){ const skip = $('ww-skip'); if(skip) skip.click(); }
     const btn = document.querySelector(`[data-ball="${v}"]`);
     if(btn && btn.disabled) return fail('disabled', 'Scoring is closed on the laptop (innings or match over).');
-    return press(btn);
+    const r = press(btn);
+    if(r.ok && pick){
+      const chip = Array.prototype.find.call(document.querySelectorAll('#wd-types [data-wd-type]'), b => b.dataset.wdType === pick);
+      if(chip && !chip.disabled) chip.click();
+    }
+    return r;
   }
   async function pressUndo(cmd){
     const block = blockingOverlay();
@@ -286,7 +626,7 @@
     const log = state.ballLog || [];
     const last = log[log.length - 1];
     const lastId = last ? (last.deliveryId || null) : null;
-    if(cmd.last !== undefined && (cmd.last.id !== lastId || cmd.last.n !== log.length))
+    if(cmd.last !== undefined && (!cmd.last || cmd.last.id !== lastId || cmd.last.n !== log.length))
       return fail('changed', 'The score just changed — check it, then press Undo again.');
     const r0 = rev();
     const seen = capturing ? capturing.length : 0;
@@ -297,25 +637,21 @@
   }
   function setSelect(sel, value){
     value = String(value == null ? '' : value);
+    if(sel.disabled) return fail('disabled', 'That choice is locked on the laptop right now.');
     if(value && !Array.prototype.some.call(sel.options, o => o.value === value)){
-      const items = selectItems(sel);
-      const it = items.find(x => x.v === value);
-      if(!it) return fail('stale', 'That name is not in the list any more — choose again.');
+      const it = selectItems(sel).find(x => x.v === value);
+      if(!it) return fail('stale', 'That choice is not in the list any more — choose again.');
       const opt = document.createElement('option');
       opt.value = it.v; opt.textContent = it.l;
       sel.appendChild(opt);
     }
     sel.value = value;
+    sel.dispatchEvent(new Event('input', { bubbles: true }));
     sel.dispatchEvent(new Event('change', { bubbles: true }));
     if(sel._proDD && typeof sel._proDD.refreshLabel === 'function') safe(() => sel._proDD.refreshLabel());
     return { ok: true };
   }
-  function uiAction(cmd){
-    const ov = openOverlay();
-    if(!ov || !MIRROR.has(ov.id)) return fail('stale', 'That window is already closed on the laptop.');
-    const el = resolveRef(ov.el, cmd.ref);
-    if(!el || !ov.el.contains(el)) return fail('stale', 'The screen changed — try again.');
-    for(let n = el; n && n !== ov.el; n = n.parentElement){ if(!(n.tagName === 'SELECT' && n._proDD) && !shown(n)) return fail('stale', 'The screen changed — try again.'); }
+  function applyOp(el, cmd){
     if(cmd.sig && sigOf(el) !== cmd.sig) return fail('stale', 'The screen changed — try again.');
     if(cmd.op === 'click') return press(el);
     if(cmd.op === 'set'){
@@ -326,6 +662,7 @@
         return { ok: true };
       }
       if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'){
+        if(el.disabled || el.readOnly) return fail('disabled', 'That field is locked on the laptop.');
         el.value = String(cmd.value == null ? '' : cmd.value).slice(0, 200);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -334,6 +671,97 @@
     }
     return fail('bad-request', 'Unknown action.');
   }
+  function modalAction(cmd){
+    const ov = openOverlay();
+    if(!ov || !MIRROR.has(ov.id)) return fail('stale', 'That window is already closed on the laptop.');
+    const ref = String(cmd.ref || '').replace(/^0\|/, '');
+    const el = resolveIn(ov.el, ref);
+    if(!el || !shownUpTo(el, ov.el)) return fail('stale', 'The screen changed — try again.');
+    return applyOp(el, cmd);
+  }
+  function sectionAction(cmd){
+    const sec = SEC[cmd.sec];
+    if(!sec) return fail('bad-request', 'Unknown section.');
+    if(sec.tab === 'match'){
+      const block = blockingOverlay();
+      if(block) return fail('modal-open', `Finish “${block.title}” first.`);
+    }
+    const [i, ...rest] = String(cmd.ref || '').split('|');
+    const roots = secRoots(sec);
+    const root = roots[Number(i)];
+    const el = root && resolveIn(root, rest.join('|'));
+    if(!el || !shownUpTo(el, root)) return fail('stale', 'The screen changed — try again.');
+    const ex = secExclude(sec);
+    for(let n = el; n && n !== root.parentElement; n = n.parentElement) if(ex.has(n)) return fail('bad-request', 'That control stays on the laptop.');
+    return applyOp(el, cmd);
+  }
+  async function waitFor(fn, ms){ for(let t = 0; t < (ms || 2000); t += 50){ const v = safe(fn, null); if(v) return v; await sleep(50); } return null; }
+  // Taking a tournament card off air needs its view open on the panel first.
+  async function gfxOff(id){
+    const spec = {
+      points: { flag: 'showPointsTableCard', view: 'points', toggle: 'points-table-overlay-toggle', open: () => {} },
+      playerhistory: { flag: 'showPlayerHistoryCard', view: 'player', toggle: 'player-history-overlay-toggle', open: () => renderPlayerHistoryResults(state.playerHistoryOverlayName, currentLeagueMatchesLive()) },
+      teamhistory: { flag: 'showTeamHistoryCard', view: 'team', toggle: 'team-history-overlay-toggle', open: () => renderTeamHistoryResults(state.teamHistoryOverlayName, currentLeagueMatchesLive()) }
+    }[id];
+    if(!spec) return fail('bad-request', 'Unknown graphic.');
+    if(!state[spec.flag]) return { ok: true, already: true };
+    if(!$(spec.toggle)){
+      safe(() => { if(historyPanelView !== spec.view || $('league-matches-list').style.display === 'none') setHistoryPanelView(spec.view); });
+      await sleep(80);
+      if(!$(spec.toggle)) safe(spec.open);
+    }
+    const t = await waitFor(() => $(spec.toggle), 2500);
+    if(!t) return fail('missing', 'Could not open that card on the laptop — take it off there.');
+    t.click();
+    await waitFor(() => !state[spec.flag], 2500);
+    return state[spec.flag] ? fail('not-done', 'The laptop did not take it off air.') : { ok: true };
+  }
+  async function run(cmd){
+    if(!mid()) return fail('no-match', 'No match is connected on the laptop.');
+    const n0 = (state.ballLog || []).length;
+    const toasts = [];
+    capturing = toasts;
+    // A laptop confirm() never blocks a phone press: the phone asks the
+    // question itself and sends the press again with confirmed:true.
+    const c0 = window.confirm, a0 = window.alert, p0 = window.prompt;
+    let asked = null;
+    window.confirm = (msg) => { if(cmd && cmd.confirmed) return true; if(asked == null) asked = norm(msg); return false; };
+    window.alert = (msg) => { const t = norm(msg); if(t){ toasts.push(t); safe(() => origToast && origToast.call(window, t, 5000)); } };
+    window.prompt = (msg) => { if(asked == null) asked = norm(msg); return null; };
+    let r;
+    try{
+      switch(cmd && cmd.t){
+        case 'ball': r = pressBall(String(cmd.v), cmd.pick == null ? null : String(cmd.pick)); break;
+        case 'undo': r = await pressUndo(cmd); break;
+        case 'swap': {
+          const block = blockingOverlay();
+          r = block ? fail('modal-open', `Finish “${block.title}” first.`) : press($('swap-strike'));
+          break;
+        }
+        case 'quick': {
+          const block = blockingOverlay();
+          r = !QUICK[cmd.id] ? fail('bad-request', 'Unknown action.') : block ? fail('modal-open', `Finish “${block.title}” first.`) : press($(QUICK[cmd.id]));
+          break;
+        }
+        case 'highlight': r = press($('save-highlight-btn') || $('highlight-btn')); break;
+        case 'hl': r = (typeof answerOldestHighlightPrompt === 'function' && answerOldestHighlightPrompt(!!cmd.yes)) ? { ok: true } : fail('stale', 'No highlight question is open.'); break;
+        case 'ui': r = cmd.sec ? sectionAction(cmd) : modalAction(cmd); break;
+        case 'gfxoff': r = await gfxOff(String(cmd.id)); break;
+        case 'ww': r = wwPick(cmd); break;
+        default: r = fail('bad-request', 'Unknown command.');
+      }
+      // let what the press schedules (the wagon wheel, the next popup) open
+      await sleep(40);
+    } finally {
+      capturing = null;
+      window.confirm = c0; window.alert = a0; window.prompt = p0;
+    }
+    if(asked != null && !(cmd && cmd.confirmed)) r = { ok: false, error: 'confirm', message: asked };
+    r.recorded = (state.ballLog || []).length > n0;
+    r.toasts = toasts.slice(0, 4);
+    if(!r.ok && !r.message && toasts.length) r.message = toasts[0];
+    return r;
+  }
   function wwPick(cmd){
     const x = Number(cmd.x), y = Number(cmd.y);
     if(!isFinite(x) || !isFinite(y) || Math.abs(x) > 130 || Math.abs(y) > 130) return fail('bad-request', 'Bad position.');
@@ -341,35 +769,6 @@
     const wheel = $('ww-overlay');
     if(!wheel || !wheel.classList.contains('show')) return fail('stale', 'The wagon wheel is already closed.');
     return wwPickAt(x, y) ? { ok: true } : fail('stale', 'Tap inside the field.');
-  }
-  async function run(cmd){
-    if(!mid()) return fail('no-match', 'No match is connected on the laptop.');
-    const n0 = (state.ballLog || []).length;
-    const toasts = [];
-    capturing = toasts;
-    let r;
-    try{
-      switch(cmd && cmd.t){
-        case 'ball': r = pressBall(String(cmd.v)); break;
-        case 'undo': r = await pressUndo(cmd); break;
-        case 'swap': {
-          const block = blockingOverlay();
-          r = block ? fail('modal-open', `Finish “${block.title}” first.`) : press($('swap-strike'));
-          break;
-        }
-        case 'highlight': r = press($('save-highlight-btn') || $('highlight-btn')); break;
-        case 'hl': r = (typeof answerOldestHighlightPrompt === 'function' && answerOldestHighlightPrompt(!!cmd.yes)) ? { ok: true } : fail('stale', 'No highlight question is open.'); break;
-        case 'ui': r = uiAction(cmd); break;
-        case 'ww': r = wwPick(cmd); break;
-        default: r = fail('bad-request', 'Unknown command.');
-      }
-      // let what the press schedules (the wagon wheel, the next popup) open
-      await sleep(40);
-    } finally { capturing = null; }
-    r.recorded = (state.ballLog || []).length > n0;
-    r.toasts = toasts.slice(0, 4);
-    if(!r.ok && !r.message && toasts.length) r.message = toasts[0];
-    return r;
   }
 
   // One at a time, in the order they came; a repeated id answers from memory.
@@ -392,8 +791,8 @@
     const reply = typeof ack === 'function' ? ack : () => {};
     if(!msg || typeof msg.cmdId !== 'string') return reply(fail('bad-request'));
     loadDone();
-    if(done.has(msg.cmdId)) return reply(Object.assign({}, done.get(msg.cmdId), { duplicate: true, state: summary() }));
-    if(inflight.has(msg.cmdId)){ inflight.get(msg.cmdId).then(r => reply(Object.assign({}, r, { duplicate: true, state: summary() }))); return; }
+    if(done.has(msg.cmdId)) return reply(Object.assign({}, done.get(msg.cmdId), { duplicate: true, parts: freshParts() }));
+    if(inflight.has(msg.cmdId)){ inflight.get(msg.cmdId).then(r => reply(Object.assign({}, r, { duplicate: true, parts: freshParts() }))); return; }
     const p = chain.then(() => run(msg.cmd || {})).catch(e => fail('host-error', 'Laptop error: ' + ((e && e.message) || e)));
     chain = p.then(() => {}, () => {});
     inflight.set(msg.cmdId, p);
@@ -402,20 +801,77 @@
       remember(msg.cmdId, res);
       lastAction = { text: describe(msg.cmd), ok: res.ok, at: Date.now(), who: (msg.from && msg.from.label) || 'Phone' };
       renderChip(true);
-      const st = summary();
-      lastSent = JSON.stringify(st);
-      reply(Object.assign({}, res, { state: st }));
-      if(rs && rs.connected) rs.emit('remoteHost:state', st);
+      markDirty();
+      reply(Object.assign({}, res, { parts: freshParts() }));
     });
   }
   function describe(cmd){
     if(!cmd) return '';
-    if(cmd.t === 'ball') return { W: 'WICKET', Wd: 'Wide', Nb: 'No Ball', B: 'Bye', LB: 'Leg Bye', OT: 'Overthrow' }[cmd.v] || String(cmd.v);
-    return { undo: 'Undo', swap: 'Swap strike', highlight: 'Highlight', hl: 'Highlight answer', ui: 'Popup', ww: 'Wagon wheel' }[cmd.t] || '';
+    if(cmd.t === 'ball') return cmd.pick || { W: 'WICKET', Wd: 'Wide', Nb: 'No Ball', B: 'Bye', LB: 'Leg Bye', OT: 'Overthrow' }[cmd.v] || String(cmd.v);
+    return { undo: 'Undo', swap: 'Swap strike', quick: cmd.id, highlight: 'Highlight', hl: 'Highlight answer', ui: cmd.sec ? 'Panel: ' + cmd.sec : 'Popup', gfxoff: 'Off air', ww: 'Wagon wheel' }[cmd.t] || '';
+  }
+
+  /* ---------------- publishing to the phones, in parts ----------------
+     score · modal · onair · clips · match · gfxlog · sections · sec:<id>.
+     A part goes out only when it changed; a card is re-read when something
+     on the page moved (or every 2 s, for values set without a DOM change). */
+  const sent = new Map();   // part -> json
+  const secDirty = new Set(SECTIONS.map(s => s.id));
+  const secReadAt = new Map(), secPresent = new Map();
+  const observed = new WeakSet();
+  function markDirty(){ SECTIONS.forEach(s => secDirty.add(s.id)); }
+  // the laptop operator touching anything may change any card
+  ['click', 'change', 'input'].forEach(ev => document.addEventListener(ev, markDirty, true));
+  // each card is watched on its own: a card is re-read only when it moved
+  function armObservers(){
+    if(typeof MutationObserver !== 'function') return;
+    SECTIONS.forEach(sec => secRoots(sec).forEach(r => {
+      if(!r || observed.has(r)) return;
+      observed.add(r);
+      new MutationObserver(() => secDirty.add(sec.id)).observe(r, { subtree: true, childList: true, attributes: true, characterData: true });
+    }));
+  }
+  function parts(full){
+    armObservers();
+    const out = { score: summary(), onair: onAirList(), clips: clipsPart(), gfxlog: gfxLog.slice(0, 8), match: matchPart() };
+    const ov = openOverlay();
+    out.modal = ov && MIRROR.has(ov.id) ? serializeOverlay(ov) : null;
+    const now = Date.now();
+    const list = [];
+    SECTIONS.forEach(sec => {
+      const k = 'sec:' + sec.id;
+      // (values a panel sets without touching the DOM — a switch's .checked — are caught every 2 s)
+      if(full || secDirty.has(sec.id) || now - (secReadAt.get(sec.id) || 0) > 2000){
+        out[k] = readSection(sec);
+        secPresent.set(sec.id, !!out[k]);
+        secReadAt.set(sec.id, now);
+        secDirty.delete(sec.id);
+      }
+      if(secPresent.get(sec.id)) list.push({ id: sec.id, tab: sec.tab });
+    });
+    out.sections = list;
+    return out;
+  }
+  function freshParts(){
+    const p = parts(true), changed = {};
+    Object.keys(p).forEach(k => { const j = JSON.stringify(p[k]); if(sent.get(k) !== j){ sent.set(k, j); changed[k] = p[k]; } });
+    // the reply carries them; the other phones get them the usual way
+    Object.keys(changed).forEach(k => { if(rs && rs.connected) rs.emit('remoteHost:part', { k, v: changed[k] }); });
+    return changed;
+  }
+  function publish(){
+    if(!rs || !rs.connected || !registeredFor || !phones.length) return;   // nobody to show it to
+    const p = parts(false);
+    Object.keys(p).forEach(k => {
+      const j = JSON.stringify(p[k]);
+      if(sent.get(k) === j) return;
+      sent.set(k, j);
+      rs.emit('remoteHost:part', { k, v: p[k] });
+    });
   }
 
   /* ---------------- the connection ---------------- */
-  let registeredFor = null, registeredLock = null, regError = null, lastReg = 0, phones = [], lastSent = '';
+  let registeredFor = null, registeredLock = null, regError = null, lastReg = 0, phones = [];
   function lockTokenFor(m){ return safe(() => (typeof mlToken === 'function' ? mlToken(m) : null), null) || null; }
   function ensureSocket(){
     if(rs) return rs;
@@ -429,10 +885,11 @@
     rs.on('remoteHost:phones', (list) => {
       const grew = Array.isArray(list) && list.length > phones.length;
       phones = Array.isArray(list) ? list : [];
-      lastSent = ''; publish();   // a phone that just joined gets the match at once
+      if(grew){ sent.clear(); markDirty(); }   // a phone that just joined gets everything at once
+      publish();
       renderChip(); renderModal();
       if(grew){
-        safe(() => origToast && origToast.call(window, `📱 ${phones[phones.length - 1].label || 'Phone'} connected as a scoring remote`, 3500));
+        safe(() => origToast && origToast.call(window, `📱 ${phones[phones.length - 1].label || 'Phone'} connected as a remote`, 3500));
         if(modalOpen()) newQr();   // that code is used up — the next phone gets a fresh one
       }
     });
@@ -445,18 +902,10 @@
     lastReg = Date.now();
     rs.emit('remoteHost:register', { matchId: m, hostId: rec.id, epoch: rec.epoch, lockToken, panel: PANEL }, (res) => {
       if(mid() !== m) return;
-      if(res && res.ok){ registeredFor = m; registeredLock = lockToken; regError = null; phones = res.phones || []; lastSent = ''; publish(); }
+      if(res && res.ok){ registeredFor = m; registeredLock = lockToken; regError = null; phones = res.phones || []; sent.clear(); markDirty(); publish(); }
       else { registeredFor = null; regError = (res && res.error) || 'error'; }
       renderChip(); renderModal();
     });
-  }
-  function publish(){
-    if(!rs || !rs.connected || !registeredFor || !phones.length) return;   // nobody to show it to
-    const st = summary();
-    const json = JSON.stringify(st);
-    if(json === lastSent) return;
-    lastSent = json;
-    rs.emit('remoteHost:state', st);
   }
   // Nothing connects until the operator opens the Phone Remote window, or
   // this browser already paired a phone for this match (a reload mid-match
@@ -473,7 +922,7 @@
       else if(registeredFor === m) publish();
     }
   }
-  setInterval(tick, 300);
+  setInterval(tick, 350);
 
   /* ---------------- the laptop's own controls: 📱 button + pairing window ---------------- */
   const css = document.createElement('style');
@@ -502,7 +951,7 @@
   btn.id = 'cr-remote-btn';
   btn.className = 'small';
   btn.type = 'button';
-  btn.title = 'Score from a phone — the phone presses this panel\'s buttons; overlay and clips run from this laptop';
+  btn.title = 'Control this match from a phone — scoring, graphics and clips; everything still runs on this laptop';
   btn.innerHTML = '📱 Phone Remote <span class="cr-n">0</span>';
   const anchor = $('connect-btn');
   if(anchor && anchor.parentNode) anchor.insertAdjacentElement('afterend', btn);
@@ -514,7 +963,7 @@
   ovl.innerHTML = `
     <div class="wicket-modal cr-modal" role="dialog" aria-labelledby="cr-title">
       <h3 id="cr-title">📱 Phone Remote</h3>
-      <div class="wm-sub">Scan with the phone. It opens this match as a scoring remote: every press on the phone presses this panel's button — the overlay and the clips run from this laptop, exactly as always.</div>
+      <div class="wm-sub">Scan with the phone. It opens this match as a wireless control panel — scoring, broadcast graphics and clips. Every tap on the phone presses this panel's own control: the overlay, the graphics and the clips run from this laptop, exactly as always.</div>
       <div class="cr-status" id="cr-status"></div>
       <div class="cr-qr" id="cr-qr"></div>
       <div class="cr-exp" id="cr-exp"></div>
@@ -628,5 +1077,7 @@
   }, true);
 
   // For tests / support: what the phone would see right now.
-  window.__crRemote = { summary, run, hostRec, get registeredFor(){ return registeredFor; }, get phones(){ return phones; } };
+  window.__crRemote = { summary, parts: () => parts(true), onAirList, readSection: (id) => readSection(SEC[id]), clipJobs, run, hostRec,
+    sectionRoots: (id) => secRoots(SEC[id]), sectionExclude: (id) => [...secExclude(SEC[id])], sections: SECTIONS.map(x => ({ id: x.id, tab: x.tab })),
+    get registeredFor(){ return registeredFor; }, get phones(){ return phones; } };
 })();
