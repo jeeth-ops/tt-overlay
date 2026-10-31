@@ -788,6 +788,17 @@ const playerHelper = require('./player-helper').setup({
     getRoomState: (room) => getRoomState(room),
     getCollection: () => (mongoDb ? mongoDb.collection('playerHelperLinks') : null),
 });
+// 📱 Phone Remote — a paired phone scores THROUGH the laptop panel; the
+// laptop presses its own buttons, so overlay + clipper work as always
+// (see cricket-remote.js).
+require('./cricket-remote').setup({
+    io, safeMatchId,
+    getMatchLock: (roomId) => getMatchLock(roomId),
+    lockTokenMatches: (lock, token) => lockTokenMatches(lock, token),
+    getSecret: () => process.env.CRICKET_REMOTE_SECRET || matchLockSecret,
+    whenReady: () => whenMongoReady(),
+});
+app.get('/cricket-remote', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-remote.html'));
 app.get('/player-helper', (req, res) => sendHtmlNoCache(res, __dirname + '/player-helper.html'));
 app.get('/ph/:token', (req, res) => sendHtmlNoCache(res, __dirname + '/player-helper-mobile.html'));
 
