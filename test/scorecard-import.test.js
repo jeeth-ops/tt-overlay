@@ -60,8 +60,8 @@ function serverFns(c) {
         ['forgetPlayerIdCache'], ['teamNameKey'], ['sanitizeTeamColor'], ['sanitizeTeamLogo'], ['publicTeam'], ['saveTeamRecord', 'async function '],
         ['normalizeBatHand'], ['batHandsFor', 'async function '], ['setPlayerBatHand', 'async function '], ['publicTeamWithHands', 'async function ']];
     const src = fns.map(([n, p]) => H.grab(n, p)).join('\n') + '\n' + H.grabConst('TEAM_LOGO_MAX_CHARS');
-    return new Function('playersCollection', 'teamsCollection', 'playerIdCache', 'crypto',
-        src + '\nreturn { resolvePlayerId, resolvePlayerIdExplicit, saveTeamRecord, forgetPlayerIdCache };')(c.players, c.teams, new Map(), crypto);
+    return new Function('playersCollection', 'teamsCollection', 'playerIdCache', 'crypto', 'playerTombstonesCollection',
+        src + '\nreturn { resolvePlayerId, resolvePlayerIdExplicit, saveTeamRecord, forgetPlayerIdCache };')(c.players, c.teams, new Map(), crypto, null);
 }
 
 async function world(opts) {

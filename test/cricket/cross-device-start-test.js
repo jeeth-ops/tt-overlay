@@ -104,7 +104,7 @@ function makeServer(){
     return { lost: [] };
   };
   const api = new Function('app', 'io', 'crypto', 'safeMatchId', 'requireAuthorizedCreator', 'requireOwner', 'ownerUidFrom', 'logAuditAction',
-    'RECORDS', 'LEAGUES', 'STORE', 'writeMatchRecordSafely', 'mergeLockResponse', 'invalidateTournamentCaches', 'ensureLeaguePublicToken',
+    'RECORDS', 'LEAGUES', 'STORE', 'writeMatchRecordSafely', 'mergeLockResponse', 'invalidateTournamentCaches', 'ensureLeaguePublicToken', 'playerIdentityLockResponse',
     'let matchRecordsCollection = RECORDS, leaguesCollection = LEAGUES, matchLocksCollection = STORE;\n' +
     'let matchLockSecret = "test-secret-for-match-locks-0123456789";\n' +
     'let ready = Promise.resolve(); const whenMongoReady = () => ready;\n' +
@@ -114,7 +114,7 @@ function makeServer(){
     '  db: (on) => { matchRecordsCollection = on ? RECORDS : null; leaguesCollection = on ? LEAGUES : null; matchLocksCollection = on ? STORE : null; },' +
     '  hold: () => { let go; ready = new Promise(r => { go = r; }); return () => { ready = Promise.resolve(); go(); }; } };')(
     app, io, crypto, new Function('return ' + H.grab('safeMatchId'))(), requireAuthorizedCreator, requireOwner, ownerUidFrom, async () => {},
-    records, leagues, store, writeMatchRecordSafely, () => false, () => {}, async () => null);
+    records, leagues, store, writeMatchRecordSafely, () => false, () => {}, async () => null, () => false); // (no tournament merge / player operation running here)
   async function call(method, url, { body, headers } = {}){
     const u = new URL(url, 'https://example.test');
     const r = routes.find(x => x.method === method && x.re.test(u.pathname));

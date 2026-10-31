@@ -133,6 +133,15 @@ node test/tournament-merge-server.test.js        # the REAL server.js over HTTP:
 NODE_PATH=$(npm root -g) node test/tournament-merge-ui.test.js  # the wizard in Chromium against the real server: sign-in / access denied, homepage button,
                                                   # select → preview → player IDs → confirm → progress → done → history → undo player changes,
                                                   # phone + light theme, keyboard
+node test/player-identity-server.test.js         # 🧬 Player Merge & Management on the REAL server.js (in-memory MongoDB): chhayajeeth@gmail.com
+                                                  # only (401 / 403 everywhere else), fuzzy search + duplicate levels (never merged by a name),
+                                                  # Global Player Replace across tournaments / teams / scorecards / dismissal text / deliveries /
+                                                  # clips (videos untouched) / panel + live-room copies / imported commentary, stats recalculated,
+                                                  # one leaderboard entry, removed IDs forwarded (a stale laptop never brings one back), Correct
+                                                  # Player Name, refusals (opposite teams, same innings, a taken name, a live match), a change
+                                                  # after the preview, an injected failure and a restart → everything put back, rollback
+NODE_PATH=$(npm root -g) node test/player-identity-ui.test.js   # the same in Chromium through /admin → Tournaments: search, compare,
+                                                  # master, preview, confirm, the server's stages, History, roll back, phone + light
 node test/scorecard-model.test.js                # 📷 Import Scorecard: the cricket rules (overs, dismissal lines, FIRST + LAST names, the result,
                                                   # every check on an innings) and the browser's OCR text reader
 node test/scorecard-import.test.js               # the import engine with the real server.js player / team functions: Jeeth Kumar Suvarna →

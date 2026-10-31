@@ -2544,5 +2544,13 @@ module.exports = {
     _internals: {
         similarNames, similarTeams, replaceNames, recordRefs, ballSlots, clipSlots, transformRecord, transformBall, transformClip,
         scoringFingerprint, planMerge, buildUnits, teamCatalog, levenshtein, hydrate, stable, sameMatch, resolveRef, collapsedNames
+    },
+    // The same rewriters, for player-identity.js (Player Merge & Management):
+    // one player's references renamed / re-pointed in every match, delivery
+    // and clip — with the same guarantees (scores and media never touched).
+    identity: {
+        recordRefs, ballSlots, clipSlots, transformRecord, transformBall, transformClip, scoringFingerprint, collapsedNames,
+        replaceNames, clipBelongs, hydrate, resolveRef, stable, deepClone, levenshtein, similarNames, inningsBattingSide,
+        retiredKey, BALL_FIELDS, CLIP_FIELDS, CLIP_MEDIA_FIELDS
     }
 };
