@@ -38,6 +38,10 @@ node test/highlight-edit.test.js                 # 🎬 pro edit of downloaded h
 node test/cricket/insert-ball-server-test.js     # Add / Insert / Remove a ball: renumbering, strike, clips, undo, 403
 node test/cricket/insert-ball-ui-test.js         # Add / Insert Ball in Edit Scorecard (owner-only ＋, preview, save)
 node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date only) + saved teams, both panels, server registry, tournament page
+node test/cricket/remote-control-test.js         # 📱 Phone Remote: real server + both panels + the phone page in jsdom — QR pairing, 4/6/W/Wide/Undo
+                                                  # pressed on the phone are scored by the laptop's own buttons (overlay updated, the laptop's clipper
+                                                  # asked for FOUR/SIX/WICKET), popups answered on the phone, one command id done once, stale Undo /
+                                                  # used QR / forged session refused, Disconnect all phones, laptop offline → back, locked match
 node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the REAL panel: a saved team keeps its WHOLE squad with the same Player IDs
                                                   # (Save Team in the squads card; Create New Match brings it back; roster edits change only that
                                                   # team; an older laptop is asked, never saved over — rev / TEAM_CHANGED), teams saved before

@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b1020">
+<meta name="robots" content="noindex">
+<title>Scoring Remote</title>
+<link rel="icon" href="/favicon-32x32.png">
+<script src="/socket.io/socket.io.js"></script>
+<!-- 📱 PHONE REMOTE — the phone side. The phone only SENDS presses; the
+     laptop panel it is paired with presses its own buttons, so the score,
+     the overlay and the clips (cut from the laptop's recording) are exactly
+     what a press on the laptop gives. See cricket-remote.js. -->
+<style>
+  :root{
+    --bg:#0b1020; --card:#141b31; --card2:#1a2340; --line:rgba(255,255,255,.08);
+    --tx:#eef2ff; --mut:#9aa6c7; --acc:#ff7a1a; --team:#ff7a1a;
+    --four:#2563eb; --six:#7c3aed; --wkt:#dc2626; --ext:#d97706; --ok:#16a34a;
+    --r:18px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;height:100%}
+  body{display:flex;flex-direction:column;min-height:100%;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);overscroll-behavior:none;user-select:none;-webkit-user-select:none}
+  button{font:inherit;color:inherit;border:0;cursor:pointer;touch-action:manipulation}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px 6px}
+  .brand{font-weight:800;font-size:15px;letter-spacing:.2px;opacity:.9}
+  .pill{font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;background:#334155;white-space:nowrap;max-width:62vw;overflow:hidden;text-overflow:ellipsis}
+  .pill.ok{background:rgba(22,163,74,.18);color:#4ade80}
+  .pill.warn{background:rgba(217,119,6,.2);color:#fbbf24}
+  .pill.bad{background:rgba(220,38,38,.2);color:#f87171}
+  main{flex:1;display:flex;flex-direction:column;gap:10px;padding:4px 12px 14px;max-width:560px;width:100%;margin:0 auto}
+
+  .score{position:relative;border-radius:var(--r);padding:14px 16px 12px;background:#141b31;background:linear-gradient(135deg,color-mix(in srgb,var(--team) 34%,#141b31),#141b31 70%);border:1px solid var(--line);overflow:hidden}
+  .teamline{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:#dbe3ff}
+  .tdot{width:10px;height:10px;border-radius:50%;background:var(--team);box-shadow:0 0 0 3px rgba(255,255,255,.12)}
+  .inn{margin-left:auto;font-size:11.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+  .big{display:flex;align-items:baseline;gap:12px;margin-top:4px}
+  #runs{font-size:46px;font-weight:900;letter-spacing:-1px;line-height:1.05;font-variant-numeric:tabular-nums}
+  #overs{font-size:20px;font-weight:800;color:#dbe3ff;font-variant-numeric:tabular-nums}
+  #overs small{font-size:13px;color:var(--mut);font-weight:700}
+  .sub{font-size:13px;color:var(--mut);margin-top:2px;min-height:17px}
+  .badge{position:absolute;top:12px;right:12px;font-size:11px;font-weight:900;letter-spacing:.8px;padding:4px 8px;border-radius:8px;background:#facc15;color:#1f1300;display:none}
+  .badge.show{display:block;animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{transform:scale(1.06)}}
+  .bump{animation:bump .35s ease}
+  @keyframes bump{40%{transform:scale(1.08)}}
+
+  .players{display:grid;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+  .prow{display:flex;justify-content:space-between;align-items:center;font-size:15px;gap:8px}
+  .prow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prow b{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .prow.st span::before{content:"▶ ";color:var(--acc);font-size:12px}
+  .prow.bw{border-top:1px solid var(--line);padding-top:6px;color:#cbd5f5;font-size:14px}
+  .muted{color:var(--mut)}
+
+  .over{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:9px 12px;min-height:46px}
+  .over > span{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);white-space:nowrap}
+  #pips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+  #pips::-webkit-scrollbar{display:none}
+  .pip{min-width:30px;height:30px;padding:0 6px;border-radius:15px;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:#26304f;flex:0 0 auto}
+  .pip.p4{background:var(--four)} .pip.p6{background:var(--six)} .pip.pw{background:var(--wkt)} .pip.px{background:#7c4a03;color:#fde68a} .pip.p0{background:#1e2742;color:var(--mut)}
+
+  .banner{display:none;align-items:center;gap:8px;border-radius:14px;padding:10px 12px;font-size:14px;font-weight:600}
+  .banner.show{display:flex}
+  .banner.hl{background:rgba(124,58,237,.18);border:1px solid rgba(124,58,237,.45)}
+  .banner.busy{background:rgba(217,119,6,.15);border:1px solid rgba(217,119,6,.4);color:#fde68a}
+  .banner .sp{flex:1}
+  .banner button{padding:9px 14px;border-radius:10px;background:#334155;font-weight:800}
+  .banner button.y{background:var(--six)}
+
+  .pad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:2px}
+  .k{position:relative;min-height:62px;border-radius:16px;background:var(--card2);border:1px solid var(--line);font-size:24px;font-weight:900;display:flex;align-items:center;justify-content:center;transition:transform .08s ease,filter .15s;overflow:hidden}
+  .k small{display:block;font-size:11px;font-weight:700;opacity:.8}
+  .k:active{transform:scale(.95);filter:brightness(1.25)}
+  .k.s2{grid-column:span 2}
+  .k.four{background:linear-gradient(160deg,#3b82f6,var(--four));min-height:70px;font-size:30px}
+  .k.six{background:linear-gradient(160deg,#8b5cf6,var(--six));min-height:70px;font-size:30px}
+  .k.wkt{background:linear-gradient(160deg,#ef4444,var(--wkt));font-size:18px;letter-spacing:.8px}
+  .k.ext{background:#2a2414;border-color:rgba(217,119,6,.35);color:#fcd34d;font-size:15px}
+  .k.tool{font-size:14px;min-height:52px;background:#18213b}
+  .k[disabled]{opacity:.35;filter:grayscale(.6)}
+  .k.offline{opacity:.55}
+  .k.sending::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);animation:sweep .8s linear infinite}
+  @keyframes sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+  .k.ok{box-shadow:0 0 0 3px var(--ok) inset}
+  .k.bad{animation:shake .35s;box-shadow:0 0 0 3px var(--wkt) inset}
+  @keyframes shake{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+  .tools{grid-template-columns:repeat(3,1fr)}
+  .queue{font-size:12px;color:var(--mut);text-align:center;min-height:16px}
+
+  /* the laptop's open popup, on the phone */
+  .sheet-bg{position:fixed;inset:0;background:rgba(3,6,15,.6);backdrop-filter:blur(2px);display:none;z-index:20}
+  .sheet-bg.show{display:block}
+  .sheet{position:fixed;left:0;right:0;bottom:0;max-height:88vh;overflow-y:auto;background:#121a30;border-radius:22px 22px 0 0;border-top:1px solid var(--line);padding:8px 14px calc(18px + env(safe-area-inset-bottom));z-index:21;transform:translateY(105%);transition:transform .22s ease;max-width:600px;margin:0 auto}
+  .sheet.show{transform:none}
+  .grab{width:44px;height:5px;border-radius:3px;background:#334155;margin:4px auto 10px}
+  .hide-x{position:absolute;top:10px;right:12px;padding:8px 12px;border-radius:10px;background:#1e2846;font-size:13px;font-weight:800;display:none}
+  .sheet.soft .hide-x{display:block}
+  .sheet h3{margin:4px 0 8px;font-size:19px}
+  .sheet h4{margin:12px 0 6px;font-size:15px}
+  .st{font-size:13.5px;color:#cbd5f5;margin:6px 0;line-height:1.4}
+  .st.note{color:var(--mut)} .st.warn{color:#fbbf24}
+  .bgrp{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:8px 0}
+  .bgrp.few{grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}
+  .sb{min-height:52px;padding:8px 10px;border-radius:13px;background:#1e2846;border:1px solid var(--line);font-size:15px;font-weight:700;text-align:center;line-height:1.2;transition:transform .08s}
+  .sb:active{transform:scale(.96)}
+  .sb.on{background:#3a2a1c;background:color-mix(in srgb,var(--acc) 30%,#1e2846);border-color:var(--acc);box-shadow:0 0 0 2px var(--acc) inset}
+  .sb.primary{background:linear-gradient(160deg,#22c55e,#15803d);border-color:transparent}
+  .sb.wicket{background:#3a1416;border-color:rgba(220,38,38,.45)}
+  .sb.extra{background:#2a2414;border-color:rgba(217,119,6,.35)}
+  .sb.ghost{background:transparent}
+  .sb[disabled]{opacity:.35}
+  .sb.sending{opacity:.7}
+  .fld{display:block;width:100%;min-height:50px;margin:6px 0;padding:10px 12px;border-radius:12px;border:1px solid #334155;background:#0d1428;color:var(--tx);font-size:16px}
+  .chk{display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;background:#1a2340;margin:6px 0;font-size:14px}
+  .chk input{width:22px;height:22px}
+  .wwbox{display:flex;justify-content:center;margin:6px 0}
+  .wwbox svg{width:min(86vw,360px);height:auto;touch-action:manipulation}
+  .wwz{fill:rgba(255,255,255,.04);stroke:rgba(255,255,255,.25);stroke-width:.6}
+  .wwz.hot{fill:rgba(250,204,21,.45)}
+  .wwl{font-size:6.5px;fill:#fff;text-anchor:middle;dominant-baseline:middle;pointer-events:none;font-weight:700;opacity:.9}
+  .wwl.in{font-size:5.2px;opacity:.75}
+
+  .toasts{position:fixed;left:0;right:0;top:calc(52px + env(safe-area-inset-top));display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;z-index:40;padding:0 12px}
+  .toast{max-width:520px;background:rgba(15,23,42,.95);border:1px solid var(--line);color:#e2e8f0;padding:9px 14px;border-radius:12px;font-size:13.5px;font-weight:600;box-shadow:0 8px 30px rgba(0,0,0,.4);animation:tin .2s ease}
+  .toast.bad{border-color:rgba(220,38,38,.6)} .toast.ok{border-color:rgba(22,163,74,.6)}
+  @keyframes tin{from{opacity:0;transform:translateY(-6px)}}
+
+  .gate{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;z-index:50;gap:14px}
+  .gate.show{display:flex}
+  .gate .ic{font-size:54px}
+  .gate h2{margin:0;font-size:21px}
+  .gate p{margin:0;color:var(--mut);font-size:15px;line-height:1.5;max-width:360px}
+  .gate button{margin-top:6px;padding:12px 20px;border-radius:12px;background:#334155;font-weight:800}
+  @media (max-height:640px){ .k{min-height:54px} .k.four,.k.six{min-height:60px} #runs{font-size:38px} }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">🏏 Scoring Remote</div>
+  <div class="pill" id="conn">Connecting…</div>
+</header>
+<main>
+  <section class="score" id="score">
+    <div class="teamline"><span class="tdot"></span><span id="bat-name">—</span><span class="inn" id="inn"></span></div>
+    <div class="big"><span id="runs">0/0</span><span id="overs">0.0</span></div>
+    <div class="sub" id="chase"></div>
+    <div class="badge" id="freehit">FREE HIT</div>
+  </section>
+  <section class="players">
+    <div class="prow st" id="p-s"><span>—</span><b></b></div>
+    <div class="prow" id="p-ns"><span>—</span><b></b></div>
+    <div class="prow bw" id="p-b"><span>🎯 —</span><b></b></div>
+  </section>
+  <section class="over"><span>This over</span><div id="pips"></div></section>
+  <div class="banner hl" id="hl"><span class="sp">🎬 Was that a highlight?</span><button class="y" id="hl-y">Yes</button><button id="hl-n">No</button></div>
+  <div class="banner busy" id="busy"></div>
+  <section class="pad" id="pad">
+    <button class="k" data-ball="0" aria-label="Dot ball">0</button>
+    <button class="k" data-ball="1">1</button>
+    <button class="k" data-ball="2">2</button>
+    <button class="k" data-ball="3">3</button>
+    <button class="k four s2" data-ball="4">4<small>&nbsp;FOUR</small></button>
+    <button class="k six s2" data-ball="6">6<small>&nbsp;SIX</small></button>
+    <button class="k wkt s2" data-ball="W">WICKET</button>
+    <button class="k ext" data-ball="Wd">Wide</button>
+    <button class="k ext" data-ball="Nb">No Ball</button>
+    <button class="k ext" data-ball="B">Bye</button>
+    <button class="k ext" data-ball="LB">Leg Bye</button>
+    <button class="k" data-ball="5">5</button>
+    <button class="k ext" data-ball="OT">Over­throw</button>
+  </section>
+  <section class="pad tools">
+    <button class="k tool" id="t-undo">↩ Undo</button>
+    <button class="k tool" id="t-swap">⇅ Swap</button>
+    <button class="k tool" id="t-hl">🎬 Highlight</button>
+  </section>
+  <div class="queue" id="queue"></div>
+</main>
+
+<div class="sheet-bg" id="sheet-bg"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="grab"></div><button class="hide-x" id="sheet-hide" type="button">Hide ▾</button><div id="sheet-body"></div></div>
+<div class="toasts" id="toasts"></div>
+<div class="gate" id="gate"><div class="ic" id="gate-ic">📱</div><h2 id="gate-h">Pairing…</h2><p id="gate-p"></p><button id="gate-retry" style="display:none">Try again</button></div>
+
+<script>
+(function(){
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const SESSION_KEY = 'cricketRemoteSession';
+  const store = { get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k, v){ try{ v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); }catch(e){} } };
+  const params = new URLSearchParams(location.search);
+  let pairToken = params.get('pair');
+  let session = store.get(SESSION_KEY);
+  const label = /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'Phone';
+  function uuid(){
+    if(window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '');
+    return Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+  const vibrate = (p) => { try{ navigator.vibrate && navigator.vibrate(p); }catch(e){} };
+
+  /* ---------------- toasts ---------------- */
+  function toast(text, tone, ms){
+    if(!text) return;
+    const box = $('toasts');
+    const el = document.createElement('div');
+    el.className = 'toast' + (tone ? ' ' + tone : '');
+    el.textContent = text;
+    box.appendChild(el);
+    while(box.children.length > 3) box.removeChild(box.firstChild);
+    setTimeout(() => el.remove(), ms || 2600);
+  }
+
+  /* ---------------- connection ---------------- */
+  const sock = io('/cricket-remote');
+  let joined = false, hostOnline = false, st = null, gateErr = null;
+  function gate(show, ic, h, p, retry){
+    $('gate').classList.toggle('show', !!show);
+    if(!show) return;
+    $('gate-ic').textContent = ic; $('gate-h').textContent = h; $('gate-p').textContent = p || '';
+    $('gate-retry').style.display = retry ? 'inline-block' : 'none';
+  }
+  function join(){
+    const body = pairToken ? { pair: pairToken, label } : session ? { session, label } : null;
+    if(!body){ gateErr = true; gate(true, '📷', 'Scan the QR code', 'On the laptop panel press “📱 Phone Remote” and scan the code with this phone’s camera.'); return; }
+    sock.emit('remote:join', body, (res) => {
+      if(res && res.ok){
+        if(pairToken){ pairToken = null; try{ history.replaceState(null, '', location.pathname); }catch(e){} }
+        session = res.session; store.set(SESSION_KEY, session);
+        joined = true; hostOnline = !!res.hostOnline; gateErr = null;
+        gate(false);
+        if(res.state) applyState(res.state);
+        renderConn();
+        pump();
+        return;
+      }
+      joined = false;
+      if(pairToken && session){ pairToken = null; return join(); }   // an old QR in the address bar: the saved pairing still works
+      if(res && /^(expired|revoked|used)$/.test(res.error)){ if(!pairToken) store.set(SESSION_KEY, null); session = null; pairToken = null; }
+      gateErr = true;
+      gate(true, '🔒', 'Not paired', (res && res.message) || 'Scan the QR code on the laptop again.', !!session);
+      renderConn();
+    });
+  }
+  sock.on('connect', join);
+  sock.on('disconnect', () => { joined = false; renderConn(); });
+  sock.on('remote:host', (d) => { hostOnline = !!(d && d.online); renderConn(); });
+  sock.on('remote:state', (s) => applyState(s));
+  sock.on('remote:toast', (d) => { if(d && d.text && !/^(Connected|📋)/.test(d.text)) toast('💻 ' + d.text); });
+  sock.on('remote:revoked', () => {
+    joined = false; session = null; store.set(SESSION_KEY, null);
+    gate(true, '🔌', 'Disconnected by the laptop', 'The laptop disconnected this phone. Scan a new QR code to pair again.');
+    renderConn();
+  });
+  $('gate-retry').addEventListener('click', () => { gate(true, '📱', 'Pairing…', ''); join(); });
+  function renderConn(){
+    const el = $('conn');
+    let cls = 'bad', text = '🔴 Reconnecting…';
+    if(sock.connected && !joined) { cls = 'warn'; text = '🟡 Pairing…'; }
+    if(sock.connected && joined){
+      if(!hostOnline){ cls = 'bad'; text = '🔴 Laptop offline'; }
+      else if(st && !st.online){ cls = 'warn'; text = '🟠 Laptop not on server'; }
+      else { cls = 'ok'; text = '🟢 Live · laptop connected'; }
+    }
+    el.className = 'pill ' + cls; el.textContent = text;
+    const live = sock.connected && joined && hostOnline;
+    document.querySelectorAll('.pad .k').forEach(b => b.classList.toggle('offline', !live));
+    renderPadState();
+  }
+
+  /* ---------------- what the laptop shows ---------------- */
+  let lastModalJson = '', lastScore = '';
+  function applyState(s){
+    if(!s || typeof s !== 'object') return;
+    st = s;
+    const team = s.bat || {};
+    document.documentElement.style.setProperty('--team', /^#[0-9a-f]{3,8}$/i.test(team.color || '') ? team.color : '#ff7a1a');
+    $('bat-name').textContent = team.name || team.short || 'Batting';
+    $('inn').textContent = s.innings ? `${s.innings}${['', 'st', 'nd', 'rd', 'th'][Math.min(s.innings, 4)]} innings` : '';
+    const scoreText = `${s.runs}/${s.wkts}`;
+    if(scoreText !== lastScore){ $('runs').textContent = scoreText; if(lastScore){ $('runs').classList.remove('bump'); void $('runs').offsetWidth; $('runs').classList.add('bump'); } lastScore = scoreText; }
+    $('overs').innerHTML = `${esc(s.overs)}${s.maxOvers ? ` <small>(${esc(s.maxOvers)})</small>` : ''}`;
+    let sub = s.crr != null ? `CRR ${s.crr}` : '';
+    if(s.target){
+      const need = s.target - s.runs;
+      sub = need > 0 ? `Need ${need} off ${s.ballsLeft != null ? s.ballsLeft + ' balls' : '—'}${s.rrr ? ` · RRR ${s.rrr}` : ''}` : `Target ${s.target} reached`;
+    }
+    if(s.inningsOver) sub = (sub ? sub + ' · ' : '') + 'Innings over';
+    $('chase').textContent = sub;
+    $('freehit').classList.toggle('show', !!s.freeHit);
+    const prow = (id, p, star) => {
+      const el = $(id);
+      el.querySelector('span').textContent = p ? p.name : (star ? 'Striker — not set' : 'Non-striker — not set');
+      el.querySelector('b').textContent = p ? `${p.runs} (${p.balls})` : '';
+      el.classList.toggle('muted', !p);
+    };
+    prow('p-s', s.striker, true); prow('p-ns', s.nonStriker, false);
+    $('p-b').querySelector('span').textContent = '🎯 ' + (s.bowler ? s.bowler.name : 'Bowler — not set');
+    $('p-b').querySelector('b').textContent = s.bowler ? s.bowler.figs : '';
+    $('pips').innerHTML = (s.thisOver || []).map(p => {
+      const t = String(p);
+      // labels as the panel writes them: 4, 6, W, Wd+W, Nb+2, B2, LB, OT3…
+      const cls = t === '4' ? 'p4' : t === '6' ? 'p6' : (t === 'W' || /\+W$/.test(t)) ? 'pw' : /^(Wd|Nb|B|LB|OT)/.test(t) ? 'px' : t === '0' ? 'p0' : '';
+      return `<span class="pip ${cls}">${esc(t === '0' ? '•' : t)}</span>`;
+    }).join('') || '<span class="muted" style="font-size:13px">—</span>';
+    const hl = s.hl || {};
+    $('hl').classList.toggle('show', (hl.asks || 0) > 0);
+    $('busy').classList.toggle('show', !!s.busy);
+    $('busy').textContent = s.busy ? `💻 “${s.busy}” is open on the laptop — it has to be closed there before scoring.` : '';
+    renderSheet(s.modal);
+    renderConn();
+  }
+  function renderPadState(){
+    const off = new Set((st && st.off) || []);
+    document.querySelectorAll('#pad [data-ball]').forEach(b => { b.disabled = off.has(b.dataset.ball); });
+  }
+
+  /* ---------------- the laptop's popup, as a sheet ---------------- */
+  // The wagon wheel and "Show card?" never hold up the next ball: the phone
+  // can put them away (the next press skips the wheel on the laptop too).
+  const SOFT = new Set(['ww-overlay', 'auto-card-modal-overlay']);
+  let hiddenSig = null;
+  const sigOfModal = (m) => m ? m.id + '|' + m.title + '|' + (st && st.last ? st.last.n : '') : '';
+  function renderSheet(m){
+    const json = m ? JSON.stringify(m) + (hiddenSig === sigOfModal(m) ? '#hidden' : '') : '';
+    if(json === lastModalJson) return;
+    lastModalJson = json;
+    const sheet = $('sheet'), bg = $('sheet-bg'), body = $('sheet-body');
+    if(!m || hiddenSig === sigOfModal(m)){ sheet.classList.remove('show'); bg.classList.remove('show'); if(!m) body.innerHTML = ''; return; }
+    sheet.classList.toggle('soft', SOFT.has(m.id));
+    // keep whatever is being typed
+    const act = document.activeElement;
+    const keep = act && act.dataset && act.dataset.ref && body.contains(act) ? { ref: act.dataset.ref, value: act.value, s: act.selectionStart } : null;
+    const html = [`<h3>${esc(m.title)}</h3>`];
+    if(m.tooBig) html.push(`<div class="st warn">This window is too big for the phone — answer it on the laptop.</div>`);
+    const items = m.items || [];
+    for(let i = 0; i < items.length; i++){
+      const it = items[i];
+      if(it.k === 'h'){ if(i === 0 && it.text === m.title) continue; html.push(`<h4>${esc(it.text)}</h4>`); }
+      else if(it.k === 't') html.push(`<div class="st ${esc(it.tone || '')}">${esc(it.text)}</div>`);
+      else if(it.k === 'b'){
+        const grp = [];
+        while(i < items.length && items[i].k === 'b'){ grp.push(items[i]); i++; }
+        i--;
+        html.push(`<div class="bgrp${grp.length <= 3 ? ' few' : ''}">` + grp.map(b =>
+          `<button class="sb ${b.on ? 'on' : ''} ${esc(b.tone || '')}" data-ref="${esc(b.ref)}" data-sig="${esc(b.sig)}" data-op="click"${b.dis ? ' disabled' : ''}>${esc(b.text)}</button>`).join('') + '</div>');
+      }
+      else if(it.k === 's'){
+        html.push(`<select class="fld" data-ref="${esc(it.ref)}" data-sig="select" data-op="set"><option value="">${esc(it.ph || '— choose —')}</option>` +
+          (it.opts || []).map(o => `<option value="${esc(o.v)}"${o.v === it.value ? ' selected' : ''}>${esc(o.l)}</option>`).join('') + '</select>');
+      }
+      else if(it.k === 'i') html.push(`<input class="fld" data-ref="${esc(it.ref)}" data-sig="${esc(it.sig)}" data-op="set" ${it.num ? 'type="number" inputmode="numeric"' : 'type="text"'} placeholder="${esc(it.ph)}" value="${esc(it.value)}" autocomplete="off">`);
+      else if(it.k === 'c') html.push(`<label class="chk"><input type="${it.radio ? 'radio' : 'checkbox'}" data-ref="${esc(it.ref)}" data-sig="${esc(it.sig)}" data-op="set"${it.on ? ' checked' : ''}${it.dis ? ' disabled' : ''}><span>${esc(it.text)}</span></label>`);
+      else if(it.k === 'ww') html.push(wheelSvg(it));
+    }
+    body.innerHTML = html.join('');
+    sheet.classList.add('show'); bg.classList.add('show');
+    if(keep){
+      const el = Array.prototype.find.call(body.querySelectorAll('[data-ref]'), x => x.dataset.ref === keep.ref);
+      if(el && el.tagName === 'INPUT'){ el.value = keep.value; el.focus(); try{ el.setSelectionRange(keep.s, keep.s); }catch(e){} }
+    }
+  }
+  // the wagon wheel: same field units as the laptop (batter at the top)
+  function pt(r, deg){ const a = deg * Math.PI / 180; return [r * Math.sin(a), -r * Math.cos(a)]; }
+  const f2 = (n) => Math.round(n * 100) / 100;
+  function sector(r0, r1, a0, a1){
+    const [x0, y0] = pt(r1, a0), [x1, y1] = pt(r1, a1), [x2, y2] = pt(r0, a1), [x3, y3] = pt(r0, a0);
+    return `M${f2(x0)} ${f2(y0)}A${r1} ${r1} 0 0 1 ${f2(x1)} ${f2(y1)}L${f2(x2)} ${f2(y2)}A${r0} ${r0} 0 0 0 ${f2(x3)} ${f2(y3)}Z`;
+  }
+  function wheelSvg(it){
+    const parts = [`<circle r="108" fill="#1d5a12"/><circle r="100" fill="#3f9a26"/>`];
+    (it.zones || []).forEach(z => {
+      parts.push(`<path class="wwz" data-z="${esc(z.id)}" data-d="inner" d="${sector(16, 55, z.a0, z.a1)}"/>`);
+      parts.push(`<path class="wwz" data-z="${esc(z.id)}" data-d="deep" d="${sector(55, 100, z.a0, z.a1)}"/>`);
+    });
+    parts.push(`<circle r="55" fill="none" stroke="rgba(255,255,255,.7)" stroke-width=".7" stroke-dasharray="3 2.4" pointer-events="none"/>`);
+    parts.push(`<rect x="-4.2" y="-15" width="8.4" height="30" rx="1" fill="#d8b57a" pointer-events="none"/><circle cx="0" cy="-11.5" r="2.1" fill="#fff" pointer-events="none"/>`);
+    (it.zones || []).forEach(z => {
+      const mid = (z.a0 + z.a1) / 2, [xd, yd] = pt(80, mid), [xi, yi] = pt(36, mid);
+      parts.push(`<text class="wwl" x="${f2(xd)}" y="${f2(yd)}">${esc(z.deep)}</text><text class="wwl in" x="${f2(xi)}" y="${f2(yi)}">${esc(z.inner)}</text>`);
+    });
+    return `<div class="wwbox"><svg id="ww" viewBox="-112 -112 224 224" data-boundary="${it.boundary ? 1 : 0}">${parts.join('')}</svg></div>`;
+  }
+  function hideSoftSheet(){
+    if(!st || !st.modal || !SOFT.has(st.modal.id)) return;
+    hiddenSig = sigOfModal(st.modal);
+    lastModalJson = '';
+    renderSheet(st.modal);
+  }
+  $('sheet-hide').addEventListener('click', hideSoftSheet);
+  $('sheet-bg').addEventListener('click', hideSoftSheet);
+  $('sheet-body').addEventListener('click', (e) => {
+    const svg = e.target.closest('#ww');
+    if(svg){
+      const r = svg.getBoundingClientRect();
+      if(!r.width) return;
+      const x = ((e.clientX - r.left) / r.width) * 224 - 112, y = ((e.clientY - r.top) / r.height) * 224 - 112;
+      const z = e.target.closest('.wwz');
+      if(z){ svg.querySelectorAll('.wwz').forEach(p => p.classList.toggle('hot', p.dataset.z === z.dataset.z && (svg.dataset.boundary === '1' ? p.dataset.d === 'deep' : p === z))); }
+      send({ t: 'ww', x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }, null);
+      return;
+    }
+    const b = e.target.closest('button[data-op="click"]');
+    if(b && !b.disabled){ b.classList.add('sending'); send({ t: 'ui', op: 'click', ref: b.dataset.ref, sig: b.dataset.sig }, null); }
+  });
+  $('sheet-body').addEventListener('change', (e) => {
+    const el = e.target.closest('[data-op="set"]');
+    if(!el) return;
+    const value = el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value;
+    send({ t: 'ui', op: 'set', ref: el.dataset.ref, sig: el.dataset.sig, value }, null);
+  });
+  // typing: sent as the operator types (a moment after the last key)
+  let typeTimer = null;
+  $('sheet-body').addEventListener('input', (e) => {
+    const el = e.target.closest('input[data-op="set"]');
+    if(!el || el.type === 'checkbox' || el.type === 'radio') return;
+    clearTimeout(typeTimer);
+    typeTimer = setTimeout(() => send({ t: 'ui', op: 'set', ref: el.dataset.ref, sig: el.dataset.sig, value: el.value }, null), 350);
+  });
+
+  /* ---------------- presses: one at a time, in order, each with its own id ---------------- */
+  const queue = [];
+  let sending = false;
+  function send(cmd, btn){
+    if(!joined){ toast('Not connected to the laptop yet', 'bad'); vibrate([30, 40, 30]); return; }
+    if(queue.length >= 5){ toast('Wait — the laptop is still answering', 'bad'); return; }
+    queue.push({ cmdId: uuid(), cmd, btn, t0: Date.now() });
+    if(btn){ btn.classList.remove('ok', 'bad'); btn.classList.add('sending'); }
+    vibrate(8);
+    renderQueue();
+    pump();
+  }
+  function renderQueue(){ $('queue').textContent = queue.length ? `⏳ Sending to laptop… ${queue.length > 1 ? `(${queue.length})` : ''}` : ''; }
+  function emitAck(ev, data, ms){
+    return new Promise((resolve) => sock.timeout(ms).emit(ev, data, (err, res) => resolve(err ? null : res)));
+  }
+  function flash(btn, cls){
+    if(!btn) return;
+    btn.classList.remove('sending', 'ok', 'bad');
+    void btn.offsetWidth;
+    btn.classList.add(cls);
+    setTimeout(() => btn.classList.remove(cls), 600);
+  }
+  async function pump(){
+    if(sending || !queue.length || !joined) return;
+    sending = true;
+    const it = queue[0];
+    const res = await emitAck('remote:cmd', { cmdId: it.cmdId, cmd: it.cmd }, 9000);
+    sending = false;
+    if(!res || res.retry){
+      // no answer: the same command (same id) again — the laptop does it once
+      if(Date.now() - it.t0 < 15000){ setTimeout(pump, sock.connected ? 500 : 1000); return; }
+      queue.shift();
+      flash(it.btn, 'bad'); vibrate([30, 40, 30]);
+      toast('⚠️ No answer from the laptop — check the score before pressing again', 'bad', 4500);
+    } else {
+      queue.shift();
+      if(res.state) applyState(res.state);
+      if(res.ok){
+        flash(it.btn, 'ok'); vibrate(15);
+      } else {
+        flash(it.btn, 'bad'); vibrate([30, 40, 30]);
+        toast('❌ ' + (res.message || 'Not done on the laptop'), 'bad', 4000);
+        if(res.error === 'revoked' || res.error === 'not-paired'){ joined = false; session = null; store.set(SESSION_KEY, null); gate(true, '🔌', 'Not paired', res.message || 'Scan the QR code on the laptop again.'); }
+        if(res.error === 'stale'){ lastModalJson = ''; if(st) renderSheet(st.modal); }
+      }
+    }
+    renderQueue();
+    pump();
+  }
+  document.querySelectorAll('#pad [data-ball]').forEach(b => b.addEventListener('click', () => { if(!b.disabled) send({ t: 'ball', v: b.dataset.ball }, b); }));
+  $('t-undo').addEventListener('click', (e) => {
+    if(!st || !st.last || !st.last.n){ toast('Nothing to undo'); return; }
+    send({ t: 'undo', last: { id: st.last.id, n: st.last.n } }, e.currentTarget);
+  });
+  $('t-swap').addEventListener('click', (e) => send({ t: 'swap' }, e.currentTarget));
+  $('t-hl').addEventListener('click', (e) => send({ t: 'highlight' }, e.currentTarget));
+  $('hl-y').addEventListener('click', () => send({ t: 'hl', yes: true }, null));
+  $('hl-n').addEventListener('click', () => send({ t: 'hl', yes: false }, null));
+
+  // keep the screen on while scoring
+  let wake = null;
+  async function keepAwake(){ try{ if(navigator.wakeLock && document.visibilityState === 'visible' && !wake){ wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } }catch(e){} }
+  document.addEventListener('visibilitychange', () => { keepAwake(); if(document.visibilityState === 'visible' && !sock.connected) sock.connect(); });
+  document.addEventListener('click', keepAwake, { once: true });
+
+  if(!pairToken && !session) join();
+  renderConn();
+})();
+</script>
+</body>
+</html>
