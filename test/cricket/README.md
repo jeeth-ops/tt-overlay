@@ -41,7 +41,11 @@ node test/cricket/upcoming-match-test.js         # 📅 Upcoming Match (date onl
 node test/cricket/remote-control-test.js         # 📱 Phone Remote: real server + both panels + the phone page in jsdom — QR pairing, 4/6/W/Wide/Undo
                                                   # pressed on the phone are scored by the laptop's own buttons (overlay updated, the laptop's clipper
                                                   # asked for FOUR/SIX/WICKET), popups answered on the phone, one command id done once, stale Undo /
-                                                  # used QR / forged session refused, Disconnect all phones, laptop offline → back, locked match
+                                                  # used QR / forged session refused, Disconnect all phones, laptop offline → back, locked match;
+                                                  # GRAPHICS: every control of every graphics card on the phone, score bug / stat card / summary /
+                                                  # milestone / Match Intro on + off air (real state, second tap to take off), a laptop confirm()
+                                                  # asked on the phone; CLIPPER: "Clip Done!" only after the laptop's clipper saved it, by clip id;
+                                                  # MATCH tab, Run Out / Penalty popups, rapid taps
 node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the REAL panel: a saved team keeps its WHOLE squad with the same Player IDs
                                                   # (Save Team in the squads card; Create New Match brings it back; roster edits change only that
                                                   # team; an older laptop is asked, never saved over — rev / TEAM_CHANGED), teams saved before

@@ -32,7 +32,8 @@ const crypto = require('crypto');
 const PAIR_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const CMD_TIMEOUT_MS = 8000;
-const MAX_STATE_BYTES = 200 * 1024;
+const MAX_PART_BYTES = 200 * 1024;
+const MAX_PARTS = 64;
 
 function b64(obj) { return Buffer.from(JSON.stringify(obj)).toString('base64url'); }
 function unb64(s) { try { return JSON.parse(Buffer.from(String(s), 'base64url').toString('utf8')); } catch (e) { return null; } }
@@ -72,7 +73,7 @@ function setup({ io, safeMatchId, getMatchLock, lockTokenMatches, getSecret, whe
   const keyOf = (room, hostId) => room + '|' + hostId;
   const phoneRoom = (key) => 'ph:' + key;
   function hostOf(key) {
-    if (!hosts.has(key)) hosts.set(key, { key, sockets: new Map(), epoch: null, lockToken: null, lastState: null, phones: new Map() });
+    if (!hosts.has(key)) hosts.set(key, { key, sockets: new Map(), epoch: null, lockToken: null, parts: {}, phones: new Map() });
     return hosts.get(key);
   }
   // the panel tab that registered last answers the commands
@@ -148,14 +149,18 @@ function setup({ io, safeMatchId, getMatchLock, lockTokenMatches, getSecret, whe
       reply({ ok: true });   // the laptop re-registers with its new epoch next
     });
 
-    socket.on('remoteHost:state', (payload) => {
+    // What the phones show, in named parts (score, modal, clips, sec:bcg, …):
+    // kept here so a phone that (re)joins gets all of it at once.
+    socket.on('remoteHost:part', (d) => {
       const h = socket.data.host && hosts.get(socket.data.host);
-      if (!h || !h.sockets.has(socket.id) || !payload || typeof payload !== 'object') return;
+      if (!h || !h.sockets.has(socket.id) || !d || typeof d.k !== 'string' || !/^[a-z][a-z0-9:_-]{0,39}$/i.test(d.k)) return;
       let size = 0;
-      try { size = JSON.stringify(payload).length; } catch (e) { return; }
-      if (size > MAX_STATE_BYTES) return;
-      h.lastState = payload;
-      ns.to(phoneRoom(h.key)).emit('remote:state', payload);
+      try { size = JSON.stringify(d.v === undefined ? null : d.v).length; } catch (e) { return; }
+      if (size > MAX_PART_BYTES) return;
+      if (d.v == null) delete h.parts[d.k];
+      else if (h.parts[d.k] !== undefined || Object.keys(h.parts).length < MAX_PARTS) h.parts[d.k] = d.v;
+      else return;
+      ns.to(phoneRoom(h.key)).emit('remote:part', { k: d.k, v: d.v == null ? null : d.v });
     });
 
     socket.on('remoteHost:toast', (d) => {
@@ -195,7 +200,7 @@ function setup({ io, safeMatchId, getMatchLock, lockTokenMatches, getSecret, whe
         socket.join(phoneRoom(key));
         h.phones.set(socket.id, { sid: tok.s, label, epoch: tok.e, at: Date.now() });
         tellHost(h);
-        reply({ ok: true, session, matchId: tok.r, hostOnline: h.sockets.size > 0, state: h.lastState || null });
+        reply({ ok: true, session, matchId: tok.r, hostOnline: h.sockets.size > 0, parts: h.parts });
       } catch (e) { reply({ ok: false, error: 'server-error', message: 'Could not pair — try again.' }); }
     });
 
