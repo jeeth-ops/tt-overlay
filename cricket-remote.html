@@ -215,7 +215,7 @@
   .seg button{padding:9px 13px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--line);font-size:12.5px;font-weight:800;transition:background .2s,border-color .2s}
   .seg button.on{background:var(--acc);border-color:var(--acc);color:#1a0d00}
   .seg button[disabled]{opacity:.35}
-  .tg{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid var(--line);margin:8px 0}
+  .tg{display:flex;width:100%;text-align:left;align-items:center;gap:12px;padding:12px;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid var(--line);margin:8px 0}
   .tg span{flex:1;font-size:14px;font-weight:650;line-height:1.3}
   .tg em{font-style:normal;font-size:10px;font-weight:900;letter-spacing:.08em;color:var(--mut)}
   .tg.on em{color:#fecaca}
@@ -702,7 +702,7 @@
   /* ---------------- sections: GRAPHICS / CLIPPER / MATCH ---------------- */
   let openSecs = {};
   try{ openSecs = JSON.parse(store.get('crOpenSecs') || '{}') || {}; }catch(e){ openSecs = {}; }
-  const DEFAULT_OPEN = { scorebug: true, bcg: true, playercards: true, statcards: false, summary: true, milestones: false, tournament: false, recording: false, clipper: true, crease: false, bowler: true, newbat: false, events: true, innings: false };
+  const DEFAULT_OPEN = { scorebug: true, toss: true, tossm: false, squads: false, bcg: true, playercards: true, statcards: false, summary: true, milestones: false, tournament: false, recording: false, clipper: true, crease: false, bowler: true, newbat: false, events: true, innings: false };
   const isOpen = (id) => openSecs[id] != null ? !!openSecs[id] : !!DEFAULT_OPEN[id];
   const secJson = {};
   function renderSections(onlyTab){
@@ -730,7 +730,7 @@
         secJson[id] = j;
         el.querySelector('.acc-ic').textContent = sec.icon || '•';
         el.querySelector('.acc-t b').textContent = sec.title;
-        const air = (sec.items || []).filter(it => (it.k === 'b' && it.tile && it.on) || (it.k === 'tg' && it.on && t === 'gfx' && ON_AIR_TOGGLES.test(it.text))).length;
+        const air = t !== 'gfx' ? 0 : (sec.items || []).filter(it => (it.k === 'b' && it.tile && it.on) || (it.k === 'tg' && it.on && ON_AIR_TOGGLES.test(it.text))).length;
         el.querySelector('.acc-t small').textContent = summaryOf(sec);
         const pill = el.querySelector('.airpill');
         pill.hidden = !air; pill.textContent = air > 1 ? `${air} ON AIR` : 'ON AIR';
@@ -1048,7 +1048,10 @@
       Object.keys(res.parts || {}).forEach(k => applyPart(k, res.parts[k]));
       if(res.ok){
         flash(it.btn, 'ok'); vibrate(15);
-        if(it.meta.gfx) toast(`✓ ${it.meta.label || 'Done'} — sent to the laptop`, 'ok', 1800);
+        // what the laptop said about it, if it said anything; else a plain ✓
+        const said = res.note || (res.toasts || [])[0];
+        if(said) toast('💻 ' + said, '', 3200);
+        else if(it.meta.gfx) toast(`✓ ${it.meta.label || 'Done'} — sent to the laptop`, 'ok', 1800);
       } else if(res.error === 'confirm'){
         flash(it.btn, '');
         askConfirm(res.message || 'Are you sure?', () => send(Object.assign({}, it.cmd, { confirmed: true }), it.btn, it.meta));

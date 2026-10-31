@@ -152,7 +152,10 @@
     if(el.tagName === 'SELECT') return 'select';
     if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return 'input:' + (el.type || 'text');
     if(el.tagName === 'svg' || el.tagName === 'SVG') return 'svg';
-    return 'btn:' + textOf(el).slice(0, 60);
+    // a button is checked by its id, or its title — never by a status line under it that keeps changing
+    if(el.id) return 'btn#' + el.id;
+    const b = el.querySelector('b');
+    return 'btn:' + textOf(b || el).slice(0, 60);
   }
   function toneOf(el){
     const c = ' ' + (el.className && el.className.baseVal == null ? el.className : '') + ' ';
@@ -236,7 +239,10 @@
           if(type === 'password' || type === 'hidden' || type === 'file' || type === 'color') return;
           if(type === 'checkbox' || type === 'radio'){
             const lab = c.closest('label');
-            push({ k: 'tg', ref: R(c), sig: sigOf(c), on: !!c.checked, text: lab ? textOf(lab) : norm(c.getAttribute('aria-label') || ''), radio: type === 'radio', dis: !!c.disabled });
+            let text = lab ? textOf(lab) : norm(c.getAttribute('aria-label') || '');
+            // a bare box in a row (a squad player's XI tick): named by the row's name field and the box's own title
+            if(!text){ const nm = c.parentElement && c.parentElement.querySelector('input[type=text]'); text = [nm && norm(nm.value), norm(c.title).replace(/\s*\(.*$/, '')].filter(Boolean).join(' — '); }
+            push({ k: 'tg', ref: R(c), sig: sigOf(c), on: !!c.checked, text, radio: type === 'radio', dis: !!c.disabled });
           } else {
             push({ k: 'i', ref: R(c), sig: sigOf(c), value: String(c.value || '').slice(0, 200), ph: c.placeholder || '', num: type === 'number', dis: !!c.disabled });
           }
@@ -296,6 +302,8 @@
   const up = (el, n) => { let x = el; for(let i = 0; x && i < (n || 1); i++) x = x.parentElement; return x; };
   const SECTIONS = [
     { id: 'scorebug', tab: 'gfx', icon: '📺', title: 'Score Bug', roots: () => [up($('visible-toggle'), 2)] },
+    // the toss result itself (who won, what they chose) — the Toss graphic shows it
+    { id: 'toss', tab: 'gfx', icon: '🪙', roots: () => [$('card-toss')] },
     { id: 'bcg', tab: 'gfx', icon: '🎬', roots: () => [$('card-broadcast-graphics')] },
     { id: 'playercards', tab: 'gfx', icon: '🧑', title: 'Player & Bowler Cards', roots: () => [$('card-live-players')] },
     { id: 'statcards', tab: 'gfx', icon: '🃏', roots: () => [$('card-stat-cards')] },
@@ -310,6 +318,10 @@
         $('rec-data-root-save-btn'), $('ce-clip-jobs-list'), $('clip-jobs-list'), $('rec-resolution-select') && $('rec-resolution-select').closest('label')] },
     { id: 'clipper', tab: 'clip', icon: '✂️', roots: () => (PANEL === 'panel' ? [$('card-clipper-helper')] : []),
       exclude: () => [$('clipper-first'), $('clip-jobs-list'), $('clipper-open-btn')] },
+    { id: 'tossm', tab: 'match', icon: '🪙', roots: () => [$('card-toss')] },
+    // who is in each XI (the Playing XI graphic shows it) — removing / renaming players stays on the laptop
+    { id: 'squads', tab: 'match', icon: '🧑‍🤝‍🧑', roots: () => [$('card-team-squads')],
+      exclude: () => Array.from(document.querySelectorAll('#card-team-squads .remove-player-btn, #card-team-squads .squad-import-btn, #card-team-squads .squad-player-row input[type=text], #card-team-squads .player-id-badge')) },
     { id: 'crease', tab: 'match', icon: '👥', roots: () => [$('card-players')] },
     { id: 'bowler', tab: 'match', icon: '🎯', roots: () => [$('card-bowler')] },
     { id: 'newbat', tab: 'match', icon: '🆕', roots: () => [$('card-new-batsman')] },
@@ -679,7 +691,25 @@
     if(!el || !shownUpTo(el, ov.el)) return fail('stale', 'The screen changed — try again.');
     return applyOp(el, cmd);
   }
-  function sectionAction(cmd){
+  // A Broadcast Graphics start / stop is answered by the server: wait for
+  // that answer, and when the panel says why nothing went on air ("no
+  // Playing XI yet", "no toss result yet", …) the phone gets that reason.
+  const BCG_ACTIONS = new Set(['bcg-xi-btn', 'bcg-toss-btn', 'bcg-intro-btn', 'bcg-bat-btn', 'bcg-bowl-btn', 'bcg-toss-show', 'bcg-toss-hide',
+    'bcg-xi-stop', 'bcg-xi-skip', 'bcg-intro-stop', 'bcg-card-hide', 'show-toss-btn', 'hide-toss-btn']);
+  async function bcgAct(el, fn){
+    const c = safe(() => bcgInit(), null);
+    if(!c) return fn();
+    const gidOf = () => (c.g ? c.g.gid + ':' + c.g.mode : '');
+    const g0 = gidOf(), m0 = c.msg || '';
+    const r = fn();
+    if(!r.ok) return r;
+    await waitFor(() => !c.pending, 4000);
+    if(!BCG_ACTIONS.has(el.id)) return r;
+    const changed = gidOf() !== g0, msg = c.msg || '';
+    if(msg && (c.msgBad || !changed)) return fail('not-done', msg);
+    return msg && msg !== m0 ? { ok: true, note: msg } : r;
+  }
+  async function sectionAction(cmd){
     const sec = SEC[cmd.sec];
     if(!sec) return fail('bad-request', 'Unknown section.');
     if(sec.tab === 'match'){
@@ -693,6 +723,17 @@
     if(!el || !shownUpTo(el, root)) return fail('stale', 'The screen changed — try again.');
     const ex = secExclude(sec);
     for(let n = el; n && n !== root.parentElement; n = n.parentElement) if(ex.has(n)) return fail('bad-request', 'That control stays on the laptop.');
+    if(cmd.sig && sigOf(el) !== cmd.sig) return fail('stale', 'The screen changed — try again.');
+    // TOSS on the phone is one tap: the laptop's tile only opens its options,
+    // so the phone presses Show Toss (or Hide Toss when it is on air) too.
+    if(el.id === 'bcg-toss-btn' && cmd.op === 'click'){
+      if(el.classList.contains('on')) return bcgAct($('bcg-toss-hide'), () => press($('bcg-toss-hide')));
+      return bcgAct($('bcg-toss-show'), () => {
+        if($('bcg-toss-ctx') && $('bcg-toss-ctx').hidden) el.click();
+        return press($('bcg-toss-show'));
+      });
+    }
+    if(el.closest('#card-broadcast-graphics') || BCG_ACTIONS.has(el.id)) return bcgAct(el, () => applyOp(el, cmd));
     return applyOp(el, cmd);
   }
   async function waitFor(fn, ms){ for(let t = 0; t < (ms || 2000); t += 50){ const v = safe(fn, null); if(v) return v; await sleep(50); } return null; }
@@ -745,7 +786,7 @@
         }
         case 'highlight': r = press($('save-highlight-btn') || $('highlight-btn')); break;
         case 'hl': r = (typeof answerOldestHighlightPrompt === 'function' && answerOldestHighlightPrompt(!!cmd.yes)) ? { ok: true } : fail('stale', 'No highlight question is open.'); break;
-        case 'ui': r = cmd.sec ? sectionAction(cmd) : modalAction(cmd); break;
+        case 'ui': r = cmd.sec ? await sectionAction(cmd) : modalAction(cmd); break;
         case 'gfxoff': r = await gfxOff(String(cmd.id)); break;
         case 'ww': r = wwPick(cmd); break;
         default: r = fail('bad-request', 'Unknown command.');
@@ -818,7 +859,7 @@
   const sent = new Map();   // part -> json
   const secDirty = new Set(SECTIONS.map(s => s.id));
   const secReadAt = new Map(), secPresent = new Map();
-  const observed = new WeakSet();
+  const observed = new WeakMap();   // root -> the sections showing it
   function markDirty(){ SECTIONS.forEach(s => secDirty.add(s.id)); }
   // the laptop operator touching anything may change any card
   ['click', 'change', 'input'].forEach(ev => document.addEventListener(ev, markDirty, true));
@@ -826,9 +867,14 @@
   function armObservers(){
     if(typeof MutationObserver !== 'function') return;
     SECTIONS.forEach(sec => secRoots(sec).forEach(r => {
-      if(!r || observed.has(r)) return;
-      observed.add(r);
-      new MutationObserver(() => secDirty.add(sec.id)).observe(r, { subtree: true, childList: true, attributes: true, characterData: true });
+      if(!r) return;
+      let ids = observed.get(r);
+      if(!ids){
+        ids = new Set();
+        observed.set(r, ids);
+        new MutationObserver(() => ids.forEach(id => secDirty.add(id))).observe(r, { subtree: true, childList: true, attributes: true, characterData: true });
+      }
+      ids.add(sec.id);
     }));
   }
   function parts(full){

@@ -194,6 +194,7 @@ async function suite(file, opts){
   await until(() => P.text('#runs') === '60/2', 4000);
   eq(T('phone shows the laptop\'s match: score, overs, batters, bowler'), [P.text('#runs'), P.text('#overs'), P.text('#p-s'), P.text('#p-ns'), P.text('#p-b'), P.text('#bat-name')],
     ['60/2', '12.1 / 20 ov', 'Harsh Rane 10 (8)', 'Sahil Gode 5 (6)', '🎯 Jamshed Alam 2.1-0-12-0', 'Kanga Kings']);
+  await until(() => P.$('#ch-gfx').classList.contains('on'), 4000);
   ok(T('header: match, Match ID, laptop / clipper / graphics status'), /KK vs SS/.test(P.text('#mt-title')) && P.text('#mt-sub').includes(ROOM) && P.$('#ch-laptop').classList.contains('on') && P.$('#ch-gfx').classList.contains('on'),
     [P.text('#mt-title'), P.text('#mt-sub'), P.$('#ch-laptop').className, P.$('#ch-gfx').className].join(' | '));
   L.$('#cr-close').click();
@@ -445,6 +446,67 @@ async function suite(file, opts){
   await until(() => introTile() && !introTile().classList.contains('on') && !P.onAir().some(x => /MATCH INTRO/.test(x)), 4000);
   ok(T('…and the phone follows'), introTile() && !introTile().classList.contains('on'));
 
+  console.log('\n=== Playing XI and Toss from the phone ===');
+  // both squads, as Team Squads holds them (every player is in the XI unless unticked)
+  L.E(`(() => { const mk = (k, n) => Array.from({ length: 11 }, (_, i) => ({ id: k + '-p' + i, name: n + ' ' + (i + 1) }));
+    state.teamA.players = mk('A', 'Kanga'); state.teamB.players = mk('B', 'Shivaji'); pushState(true, true); if(typeof renderSquadUI === 'function') renderSquadUI(); bcgRender(); })()`);
+  await sleep(800);
+  const xiTile = () => P.secButton('bcg', /PLAYING XI/);
+  await until(() => xiTile() && !/Tick the XI/.test(xiTile().textContent), 4000);
+  P.tap(xiTile());
+  await until(() => L.$('#bcg-xi-btn').classList.contains('on'), 4000);
+  ok(T('PLAYING XI from the phone → on air on the laptop'), L.$('#bcg-xi-btn').classList.contains('on'), L.$('#bcg-msg').textContent);
+  await until(() => xiTile() && xiTile().classList.contains('on') && P.onAir().some(x => /PLAYING XI/.test(x)), 4000);
+  ok(T('…the phone shows PLAYING XI ON AIR'), xiTile() && xiTile().classList.contains('on'));
+  const xiOff = [...P.$$('#oa-list .oa-row')].find(r => /PLAYING XI/.test(r.textContent));
+  P.tap(xiOff.querySelector('button'));
+  await until(() => !L.$('#bcg-xi-btn').classList.contains('on'), 4000);
+  ok(T('"On air now" → TAKE OFF → Playing XI off air'), !L.$('#bcg-xi-btn').classList.contains('on'));
+  // the toss result, picked on the phone
+  const tossSec = () => P.sec('toss');
+  await until(() => tossSec(), 4000);
+  ok(T('the panel\'s Toss card is on the phone (who won, what they chose)'), !!tossSec() && !!tossSec().querySelector('select'));
+  const winSel = () => [...tossSec().querySelectorAll('select')].find(x => [...x.options].some(o => /Kanga Kings/.test(o.textContent)));
+  const sel = winSel();
+  sel.value = 'B'; sel.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  await until(() => L.E('state.toss.winner') === 'B', 4000);
+  eq(T('toss winner picked on the phone → set on the laptop'), L.E('state.toss.winner'), 'B');
+  const decSel = [...tossSec().querySelectorAll('select')].find(x => [...x.options].some(o => o.value === 'BOWL'));
+  decSel.value = 'BOWL'; decSel.dispatchEvent(new P.w.Event('change', { bubbles: true }));
+  await until(() => L.E('state.toss.decision') === 'BOWL', 4000);
+  eq(T('…and the decision (Bowl first)'), L.E('state.toss.decision'), 'BOWL');
+  const tossTile = () => P.secButton('bcg', /^🪙\s*TOSS|TOSS/);
+  await until(() => tossTile() && /Shivaji Strikers won/.test(tossTile().textContent), 4000);
+  ok(T('the TOSS tile on the phone now reads the result'), tossTile() && /Shivaji Strikers won/.test(tossTile().textContent), tossTile() && tossTile().textContent);
+  P.tap(tossTile());
+  await until(() => !L.$('#bcg-toss-btn').classList.contains('on') && L.$('#bcg-toss-btn').classList.contains('on') || L.$('#bcg-toss-btn').classList.contains('on'), 4000);
+  ok(T('TOSS tile from the phone → the toss graphic goes on air (one tap)'), L.$('#bcg-toss-btn').classList.contains('on'), L.$('#bcg-msg').textContent + ' | ctx hidden: ' + L.$('#bcg-toss-ctx').hidden);
+  await until(() => tossTile() && tossTile().classList.contains('on'), 4000);
+  ok(T('…phone shows TOSS ON AIR'), tossTile() && tossTile().classList.contains('on'));
+  const tossOff = [...P.$$('#oa-list .oa-row')].find(r => /TOSS/.test(r.textContent));
+  if(tossOff) P.tap(tossOff.querySelector('button'));
+  await until(() => !L.$('#bcg-toss-btn').classList.contains('on'), 4000);
+  ok(T('…and off again from "On air now"'), !L.$('#bcg-toss-btn').classList.contains('on'));
+  // who is in the XI, ticked on the phone (the Team Squads card, Match tab)
+  await until(() => P.sec('squads') && P.secButton('squads', /Kanga 11 — Playing XI/), 4000);
+  ok(T('Team Squads on the phone: an XI switch per player, named'), !!P.secButton('squads', /Kanga 11 — Playing XI/) && !/✕/.test(P.sec('squads').textContent), P.sec('squads') ? P.sec('squads').textContent.slice(0, 160) : 'no squads card');
+  // (the squad list is drawn from the state the panel settled on — as after a reload)
+  L.E(`renderSquadUI()`);
+  await sleep(600);
+  await until(() => P.secButton('squads', /Kanga 11 — Playing XI/), 4000);
+  P.tap(P.secButton('squads', /Kanga 11 — Playing XI/));
+  await until(() => L.E("state.teamA.players.find(p => p.name === 'Kanga 11').isXI") === false, 4000);
+  eq(T('unticking Kanga 11 on the phone benches him on the laptop'), L.E("state.teamA.players.find(p => p.name === 'Kanga 11').isXI"), false);
+  await until(() => xiTile() && /KK 10/.test(xiTile().textContent), 4000);
+  ok(T('…and the PLAYING XI tile now counts 10 for Kanga Kings'), xiTile() && /KK 10/.test(xiTile().textContent), xiTile() && xiTile().textContent);
+  // a graphic the laptop cannot start says why — on the phone, not "sent ✓"
+  L.E(`state.teamA.players = []; pushState(true, true); if(typeof renderSquadUI === 'function') renderSquadUI(); bcgRender();`);
+  await sleep(700);
+  P.tap(xiTile());
+  await until(() => P.$$('#toasts .toast').some(t => /no Playing XI yet/.test(t.textContent)), 4000);
+  ok(T('Playing XI with an empty squad → the phone says the laptop\'s reason (not "sent ✓")'), P.$$('#toasts .toast').some(t => /no Playing XI yet/.test(t.textContent)), P.$$('#toasts .toast').map(t => t.textContent).join(' | '));
+  L.E(`state.teamA.players = []; state.teamB.players = []; pushState(true, true); if(typeof renderSquadUI === 'function') renderSquadUI(); bcgRender();`);
+
   console.log('\n=== A control added to a panel card later + a laptop confirm() ===');
   L.E(`(() => { const b = document.createElement('button'); b.className = 'full small'; b.id = 'test-confirm-btn'; b.textContent = 'Test Confirm Graphic';
     b.addEventListener('click', () => { if(confirm('Really put the test graphic on air?')) window.__confirmed = (window.__confirmed || 0) + 1; });
@@ -619,9 +681,9 @@ async function lockSuite(mem){
   ioClientJs = await get(port, '/socket.io/socket.io.js');
   ok('server serves the phone page at /cricket-remote', /Scorvix Remote/.test(await get(port, '/cricket-remote')));
   ok('…and the laptop script', /PHONE REMOTE/.test(await get(port, '/cricket-remote-host.js')));
-  await suite('cricket-panel3.html');
-  await suite('cricket-panel.html');
-  await lockSuite(mem);
+  if(!process.env.ONLY || process.env.ONLY === 'P3') await suite('cricket-panel3.html');
+  if(!process.env.ONLY || process.env.ONLY === 'P1') await suite('cricket-panel.html');
+  if(!process.env.ONLY) await lockSuite(mem);
   console.log(`\n================  ${pass} passed, ${fail} failed  ================`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
