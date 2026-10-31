@@ -45,7 +45,8 @@ node test/cricket/remote-control-test.js         # 📱 Phone Remote: real serve
                                                   # GRAPHICS: every control of every graphics card on the phone, score bug / stat card / summary /
                                                   # milestone / Match Intro on + off air (real state, second tap to take off), a laptop confirm()
                                                   # asked on the phone; CLIPPER: "Clip Done!" only after the laptop's clipper saved it, by clip id;
-                                                  # MATCH tab, Run Out / Penalty popups, rapid taps
+                                                  # MATCH tab, Run Out / Penalty popups, rapid taps; Playing XI on/off, the toss picked on the phone
+                                                  # and TOSS on air in one tap, XI ticks in Team Squads, the laptop's reason when a graphic cannot start
 node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the REAL panel: a saved team keeps its WHOLE squad with the same Player IDs
                                                   # (Save Team in the squads card; Create New Match brings it back; roster edits change only that
                                                   # team; an older laptop is asked, never saved over — rev / TEAM_CHANGED), teams saved before
