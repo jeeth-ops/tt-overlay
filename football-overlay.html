@@ -9,15 +9,15 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: transparent; overflow: hidden; font-family: 'Inter', sans-serif; }
 
-        :root { --sb-scale: 1; }
+        :root { --sb-scale: 1; --sb-top: 30px; --sb-x: 0px; }
 
         .overlay-wrapper {
             position: absolute;
             transform-origin: top center;
             will-change: transform, opacity;
-            top: 30px;
+            top: var(--sb-top);
             left: 50%;
-            transform: translateX(-50%) scale(var(--sb-scale));
+            transform: translateX(calc(-50% + var(--sb-x))) scale(var(--sb-scale));
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -26,7 +26,7 @@
         }
 
         .hidden-scoreboard {
-            transform: translateX(-50%) translateY(calc(-100% * var(--sb-scale) - 60px)) scale(var(--sb-scale));
+            transform: translateX(calc(-50% + var(--sb-x))) translateY(calc(-100% * var(--sb-scale) - var(--sb-top) - 20px)) scale(var(--sb-scale));
             opacity: 0;
         }
 
@@ -147,10 +147,10 @@
         /* Goal Banner Notification */
         .goal-banner {
             position: fixed;
-            top: calc(30px + 80px * var(--sb-scale));
+            top: calc(var(--sb-top) + 80px * var(--sb-scale));
             left: 50%;
             transform-origin: top center;
-            transform: translateX(-50%) translateY(-30px) scale(var(--sb-scale));
+            transform: translateX(calc(-50% + var(--sb-x))) translateY(-30px) scale(var(--sb-scale));
             background: linear-gradient(135deg, #ca8a04, #eab308);
             color: #000;
             font-family: 'Teko', sans-serif;
@@ -167,7 +167,7 @@
         }
         .goal-banner.active {
             opacity: 1;
-            transform: translateX(-50%) translateY(0) scale(var(--sb-scale));
+            transform: translateX(calc(-50% + var(--sb-x))) translateY(0) scale(var(--sb-scale));
         }
 
         .modal-overlay {
@@ -319,10 +319,15 @@
 
         // Scoreboard size = (screen size / 1080p) x (Size slider from panel).
         // Only the scoreboard + goal banner use this; the HT/FT modal is always full-screen.
-        let userScale = 1;
+        // Position (X offset from center, Y from top) is also in 1080p units and only
+        // moves the scoreboard — the HT/FT modal never moves.
+        let userScale = 1, userX = 0, userY = 30;
         function applyScale() {
             const base = Math.min(window.innerWidth / 1920, window.innerHeight / 1080) || 1;
-            document.documentElement.style.setProperty('--sb-scale', (base * userScale).toFixed(3));
+            const st = document.documentElement.style;
+            st.setProperty('--sb-scale', (base * userScale).toFixed(3));
+            st.setProperty('--sb-x', (userX * base).toFixed(1) + 'px');
+            st.setProperty('--sb-top', (userY * base).toFixed(1) + 'px');
         }
         window.addEventListener('resize', applyScale);
         applyScale();
@@ -511,10 +516,11 @@
             }
 
             // 4b. Scoreboard size (from panel slider)
-            if (typeof data.scoreScale === 'number' && data.scoreScale > 0 && data.scoreScale !== userScale) {
-                userScale = data.scoreScale;
-                applyScale();
-            }
+            let moved = false;
+            if (typeof data.scoreScale === 'number' && data.scoreScale > 0 && data.scoreScale !== userScale) { userScale = data.scoreScale; moved = true; }
+            if (typeof data.scoreX === 'number' && data.scoreX !== userX) { userX = data.scoreX; moved = true; }
+            if (typeof data.scoreY === 'number' && data.scoreY !== userY) { userY = data.scoreY; moved = true; }
+            if (moved) applyScale();
 
             // 5. Timer
             syncClock(data);
