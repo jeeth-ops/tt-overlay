@@ -758,7 +758,11 @@ async function uploadClipPosterToR2(clipId, matchId, posterPath) {
 }
 
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
+    cors: { origin: "*", methods: ["GET", "POST"] },
+    // Notice a dead connection (slow / dropped internet) in ~20s instead of ~45s,
+    // so the overlay reconnects and re-syncs quickly.
+    pingInterval: 10000,
+    pingTimeout: 10000
 });
 
 app.use(express.static(__dirname, {
@@ -13226,7 +13230,17 @@ io.on('connection', async (socket) => {
 
         // Broadcast updated football data to overlay and panels IMMEDIATELY —
         // this is what makes the overlay feel instant.
-        io.to(room).emit('liveFootballScore', state.footballState);
+        // Lean broadcast: the panel only includes the (big, base64) logos when they
+        // changed, so don't re-send the stored copies on every score / HT / FT click.
+        // The overlay keeps its last logos; fresh joins get the full state (see
+        // footballStateForJoin). The sender is skipped — the panel doesn't use the echo.
+        let outState = state.footballState;
+        if (!('logoA' in data) || !('logoB' in data)) {
+            outState = { ...state.footballState };
+            if (!('logoA' in data)) delete outState.logoA;
+            if (!('logoB' in data)) delete outState.logoB;
+        }
+        socket.to(room).emit('liveFootballScore', outState);
 
         // Save to Firestore, but debounced (max once per 700ms per room).
         // Without this, rapid updates (e.g. dragging a color picker) queue up
