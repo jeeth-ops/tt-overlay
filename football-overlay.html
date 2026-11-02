@@ -311,7 +311,7 @@
 
         const socket = io("https://tt-overlay-lph4.onrender.com", {
             query: { room: roomId },
-            transports: ['polling', 'websocket'],
+            transports: ['websocket', 'polling'], // websocket first = no slow polling start
             upgrade: true
         });
 
@@ -328,6 +328,60 @@
             const b = parseInt(hex.substring(4, 6), 16);
             
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        // ===== LOCAL SMOOTH CLOCK =====
+        // Overlay apna clock khud chalata hai (performance.now se).
+        // Panel sirf start/stop/sync bhejta hai, har second network pe depend nahi.
+        let clockRunning = false;
+        let clockBaseMs = 0;      // elapsed ms jab last sync hua
+        let clockAnchor = 0;      // performance.now() us waqt
+        let lastShownTimer = '';
+        let activeModalTitle = '';
+        const dispTimerEl = document.getElementById('dispTimer');
+        const modalFooterEl = document.getElementById('modalTimerFooter');
+
+        function fmtClock(totalSec) {
+            const m = Math.floor(totalSec / 60);
+            const sec = totalSec % 60;
+            return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+        }
+        function currentClockMs() {
+            return clockRunning ? clockBaseMs + (performance.now() - clockAnchor) : clockBaseMs;
+        }
+        function renderClock() {
+            const str = fmtClock(Math.floor(currentClockMs() / 1000));
+            if (str !== lastShownTimer) {
+                lastShownTimer = str;
+                dispTimerEl.textContent = str;
+                if (activeModalTitle) modalFooterEl.textContent = activeModalTitle + ' • ' + str;
+            }
+            requestAnimationFrame(renderClock);
+        }
+        requestAnimationFrame(renderClock);
+
+        function syncClock(data) {
+            let ms, running;
+            if (typeof data.timerMs === 'number') {
+                ms = data.timerMs;
+                running = !!data.timerRunning;
+            } else {
+                // purana panel: sirf "MM:SS" string
+                const parts = String(data.timer || '00:00').split(':');
+                ms = ((parseInt(parts[0]) || 0) * 60 + (parseInt(parts[1]) || 0)) * 1000;
+                running = false;
+            }
+            if (running) {
+                // sirf tab resync jab abhi start hua ho ya >1.2s ka farak ho
+                if (!clockRunning || Math.abs(currentClockMs() - ms) > 1200) {
+                    clockBaseMs = ms;
+                    clockAnchor = performance.now();
+                }
+                clockRunning = true;
+            } else {
+                clockRunning = false;
+                clockBaseMs = ms;
+            }
         }
 
         let lastGoalTimestamp = 0;
@@ -413,8 +467,11 @@
             const modalImgLogoA = document.getElementById('modalImgLogoA');
 
             if (hasLogoA) { 
-                imgA.src = data.logoA; 
-                modalImgLogoA.src = data.logoA;
+                if (imgA.dataset.src !== data.logoA) {
+                    imgA.dataset.src = data.logoA;
+                    imgA.src = data.logoA;
+                    modalImgLogoA.src = data.logoA;
+                }
                 boxA.classList.add('active'); 
                 modalBoxLogoA.classList.add('active');
             } else { 
@@ -429,8 +486,11 @@
             const modalImgLogoB = document.getElementById('modalImgLogoB');
 
             if (hasLogoB) { 
-                imgB.src = data.logoB; 
-                modalImgLogoB.src = data.logoB;
+                if (imgB.dataset.src !== data.logoB) {
+                    imgB.dataset.src = data.logoB;
+                    imgB.src = data.logoB;
+                    modalImgLogoB.src = data.logoB;
+                }
                 boxB.classList.add('active'); 
                 modalBoxLogoB.classList.add('active');
             } else { 
@@ -439,8 +499,8 @@
             }
 
             // 5. Timer
-            let timerVal = data.timer || "00:00";
-            document.getElementById('dispTimer').innerText = timerVal;
+            syncClock(data);
+            lastShownTimer = ''; // force repaint on next frame
 
             // 6. Penalties Shootout Bar
             const penaltyBar = document.getElementById('penaltyBar');
@@ -457,9 +517,10 @@
             if (data.activeModal && data.activeModal.trim() !== "") {
                 modalOverlay.classList.add('active');
                 document.getElementById('modalTitleText').innerText = data.activeModal;
-                document.getElementById('modalTimerFooter').innerText = `${data.activeModal} • ${timerVal}`;
+                activeModalTitle = data.activeModal;
             } else {
                 modalOverlay.classList.remove('active');
+                activeModalTitle = '';
             }
 
             // 8. Action Replay Badge
