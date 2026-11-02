@@ -463,6 +463,12 @@
                     </div>
                 </div>
                 <div class="row">
+                    <div class="col">
+                        <label>Scoreboard Size: <span id="scaleLabel">100%</span> <span style="color:#94a3b8;font-weight:400;">(HT/FT screen pe asar nahi)</span></label>
+                        <input type="range" id="scoreScale" min="50" max="300" step="5" value="100" oninput="onScaleInput()" onchange="saveData()">
+                    </div>
+                </div>
+                <div class="row">
                     <button class="btn-success" onclick="startTimer()">▶ Start</button>
                     <button class="btn-warning" onclick="stopTimer()" style="color: #fff;">⏸ Stop</button>
                     <button class="btn-danger" onclick="resetTimer()" style="flex:1;">⏹ Reset</button>
@@ -604,14 +610,49 @@
             }
         });
 
+        // Logos are big (base64) — send them only when they actually changed,
+        // so score / HT / FT updates stay tiny and arrive instantly.
+        function getScoreScale() {
+            return (parseInt(document.getElementById('scoreScale').value) || 100) / 100;
+        }
+        function onScaleInput() {
+            const v = document.getElementById('scoreScale').value;
+            document.getElementById('scaleLabel').textContent = v + '%';
+            try { localStorage.setItem('scorvix_sb_scale', v); } catch (e) {}
+            saveDataThrottled();
+        }
+        (function restoreScale() {
+            try {
+                const v = localStorage.getItem('scorvix_sb_scale');
+                if (v) {
+                    document.getElementById('scoreScale').value = v;
+                    document.getElementById('scaleLabel').textContent = v + '%';
+                }
+            } catch (e) {}
+        })();
+
+        var sentLogoA = null, sentLogoB = null;
+        function logoPayload() {
+            const a = document.getElementById('logoA').value;
+            const b = document.getElementById('logoB').value;
+            const out = {};
+            if (a !== sentLogoA) { out.logoA = a; sentLogoA = a; }
+            if (b !== sentLogoB) { out.logoB = b; sentLogoB = b; }
+            return out;
+        }
+
         const socket = io("https://tt-overlay-lph4.onrender.com", {
             transports: ['websocket', 'polling'],
-            upgrade: true
+            upgrade: true,
+            reconnectionDelay: 250,
+            reconnectionDelayMax: 1500,
+            timeout: 8000
         });
         
         socket.on('connect', () => {
             document.getElementById('connectionStatus').textContent = '● Live Connected';
             document.getElementById('connectionStatus').style.color = '#10b981';
+            sentLogoA = null; sentLogoB = null; // (re)connect = send logos again, server may have restarted
             saveData();
         });
 
@@ -788,8 +829,7 @@
                 showScoreboard: document.getElementById('masterToggle').checked,
                 nameA: document.getElementById('nameA').value,
                 nameB: document.getElementById('nameB').value,
-                logoA: document.getElementById('logoA').value,
-                logoB: document.getElementById('logoB').value,
+                ...logoPayload(),
                 showLogoA: document.getElementById('showLogoA').checked,
                 showLogoB: document.getElementById('showLogoB').checked,
                 scoreA: parseInt(document.getElementById('scoreA').value) || 0,
@@ -801,6 +841,7 @@
                 penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
                 penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
                 ...getTimerPayload(),
+                scoreScale: getScoreScale(),
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked
@@ -843,8 +884,7 @@
                 showScoreboard: document.getElementById('masterToggle').checked,
                 nameA: document.getElementById('nameA').value,
                 nameB: document.getElementById('nameB').value,
-                logoA: document.getElementById('logoA').value,
-                logoB: document.getElementById('logoB').value,
+                ...logoPayload(),
                 showLogoA: document.getElementById('showLogoA').checked,
                 showLogoB: document.getElementById('showLogoB').checked,
                 scoreA: parseInt(document.getElementById('scoreA').value) || 0,
@@ -856,6 +896,7 @@
                 penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
                 penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
                 ...getTimerPayload(),
+                scoreScale: getScoreScale(),
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked,
@@ -893,18 +934,18 @@
             }, 50); 
         }
 
-        function stopTimer() {
+        function stopTimer(silent) {
             if (!isTimerRunning) return;
             isTimerRunning = false;
             clearInterval(timerInterval);
             timerInterval = null;
             let currentStr = document.getElementById('timerInput').value;
             elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
-            saveData(); // overlay ko bhi stop batao
+            if (!silent) saveData(); // overlay ko bhi stop batao (silent = caller khud emit karega)
         }
 
         function resetTimer() {
-            stopTimer();
+            stopTimer(true);
             elapsedSecondsWhenPaused = 0;
             lastSecond = -1;
             document.getElementById('timerInput').value = "00:00";
@@ -912,7 +953,7 @@
         }
 
         function setTimerPreset(type) {
-            stopTimer();
+            stopTimer(true);
             let duration = parseInt(document.getElementById('matchDuration').value) || 90;
             let targetMins = (type === 'Halfway') ? Math.floor(duration / 2) : duration;
             let timeStr = `${String(targetMins).padStart(2, '0')}:00`;
@@ -922,7 +963,7 @@
         }
 
         function manualTimerEdit() {
-            stopTimer();
+            stopTimer(true);
             let currentStr = document.getElementById('timerInput').value;
             elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
             saveData();
