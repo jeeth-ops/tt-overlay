@@ -469,6 +469,16 @@
                     </div>
                 </div>
                 <div class="row">
+                    <div class="col">
+                        <label>Scoreboard Left/Right: <span id="posXLabel">0</span></label>
+                        <input type="range" id="scoreX" min="-900" max="900" step="5" value="0" oninput="onScaleInput()" onchange="saveData()">
+                    </div>
+                    <div class="col">
+                        <label>Scoreboard Up/Down: <span id="posYLabel">30</span></label>
+                        <input type="range" id="scoreY" min="0" max="1000" step="5" value="30" oninput="onScaleInput()" onchange="saveData()">
+                    </div>
+                </div>
+                <div class="row">
                     <button class="btn-success" onclick="startTimer()">▶ Start</button>
                     <button class="btn-warning" onclick="stopTimer()" style="color: #fff;">⏸ Stop</button>
                     <button class="btn-danger" onclick="resetTimer()" style="flex:1;">⏹ Reset</button>
@@ -615,19 +625,32 @@
         function getScoreScale() {
             return (parseInt(document.getElementById('scoreScale').value) || 100) / 100;
         }
+        function getScorePos() {
+            return {
+                scoreX: parseInt(document.getElementById('scoreX').value) || 0,
+                scoreY: parseInt(document.getElementById('scoreY').value) || 0
+            };
+        }
+        const SB_FIELDS = [['scoreScale', 'scaleLabel', '%', 'scorvix_sb_scale'],
+                           ['scoreX', 'posXLabel', '', 'scorvix_sb_x'],
+                           ['scoreY', 'posYLabel', '', 'scorvix_sb_y']];
         function onScaleInput() {
-            const v = document.getElementById('scoreScale').value;
-            document.getElementById('scaleLabel').textContent = v + '%';
-            try { localStorage.setItem('scorvix_sb_scale', v); } catch (e) {}
+            SB_FIELDS.forEach(([id, lbl, unit, key]) => {
+                const v = document.getElementById(id).value;
+                document.getElementById(lbl).textContent = v + unit;
+                try { localStorage.setItem(key, v); } catch (e) {}
+            });
             saveDataThrottled();
         }
         (function restoreScale() {
             try {
-                const v = localStorage.getItem('scorvix_sb_scale');
-                if (v) {
-                    document.getElementById('scoreScale').value = v;
-                    document.getElementById('scaleLabel').textContent = v + '%';
-                }
+                SB_FIELDS.forEach(([id, lbl, unit, key]) => {
+                    const v = localStorage.getItem(key);
+                    if (v !== null) {
+                        document.getElementById(id).value = v;
+                        document.getElementById(lbl).textContent = v + unit;
+                    }
+                });
             } catch (e) {}
         })();
 
@@ -842,6 +865,7 @@
                 penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
                 ...getTimerPayload(),
                 scoreScale: getScoreScale(),
+                ...getScorePos(),
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked
@@ -897,6 +921,7 @@
                 penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
                 ...getTimerPayload(),
                 scoreScale: getScoreScale(),
+                ...getScorePos(),
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked,
