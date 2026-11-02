@@ -13049,6 +13049,20 @@ app.get('/api/matchintro-data', async (req, res) => {
     res.json(state.matchIntroState);
 });
 
+// ⏱ A football room's state as handed to a socket that has JUST connected.
+// While the match clock is running, the stored timerMs is only as fresh as the
+// panel's last update (every few seconds) — add the time that passed since, so
+// the overlay starts on the right second instead of a few seconds behind.
+// If the panel has been silent for over a minute (closed / crashed / server
+// restarted), the clock is shown stopped at its last value rather than
+// running on forever.
+function footballStateForJoin(fs) {
+    if (!fs || !fs.timerRunning || typeof fs.timerMs !== 'number' || !fs.timerStampedAt) return fs;
+    const age = Date.now() - fs.timerStampedAt;
+    if (age < 0 || age > 60000) return { ...fs, timerRunning: false };
+    return { ...fs, timerMs: fs.timerMs + age };
+}
+
 io.on('connection', async (socket) => {
     let currentRoom = 'scorvix-master-room';
     socket.activeRoom = currentRoom;
@@ -13118,7 +13132,7 @@ io.on('connection', async (socket) => {
         });
     }
     if (roomState.ttState) socket.emit('liveScore', roomState.ttState);
-    if (roomState.footballState) socket.emit('liveFootballScore', roomState.footballState);
+    if (roomState.footballState) socket.emit('liveFootballScore', footballStateForJoin(roomState.footballState));
     if (roomState.cricketState) socket.emit('liveCricketScore', roomState.cricketState);
     if (roomState.footballMatchIntroState) socket.emit('liveFootballMatchIntro', { config: roomState.footballMatchIntroState, triggerReplay: false });
     // 🎬 the broadcast graphic on air in this room (or none) — see BROADCAST GRAPHICS
@@ -13204,6 +13218,11 @@ io.on('connection', async (socket) => {
 
         const state = await getRoomState(room);
         state.footballState = { ...state.footballState, ...data };
+        // ⏱ The overlay runs its own local clock (see football-overlay.html).
+        // Remember WHEN the panel last told us the timer, so an overlay that
+        // joins/reloads mid-match (vMix refresh, reconnect) can be handed a
+        // timer that is already caught up — see footballStateForJoin().
+        if (typeof data.timerMs === 'number') state.footballState.timerStampedAt = Date.now();
 
         // Broadcast updated football data to overlay and panels IMMEDIATELY —
         // this is what makes the overlay feel instant.
