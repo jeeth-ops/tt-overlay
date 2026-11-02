@@ -605,7 +605,7 @@
         });
 
         const socket = io("https://tt-overlay-lph4.onrender.com", {
-            transports: ['polling', 'websocket'],
+            transports: ['websocket', 'polling'],
             upgrade: true
         });
         
@@ -767,6 +767,18 @@
             saveData();
         }
 
+        // Timer state jo overlay apne local clock ke liye use karta hai
+        function getTimerPayload() {
+            const ms = isTimerRunning
+                ? Math.max(0, Date.now() - startTime)
+                : timeStrToSeconds(document.getElementById('timerInput').value) * 1000;
+            return {
+                timer: document.getElementById('timerInput').value,
+                timerMs: ms,
+                timerRunning: isTimerRunning
+            };
+        }
+
         function saveData() {
             const roomName = window.currentRoomName || (localStorage.getItem('scorvix_uid') ? `room-${localStorage.getItem('scorvix_uid')}` : 'default-room');
             const duration = parseInt(document.getElementById('matchDuration').value) || 90;
@@ -788,7 +800,7 @@
                 colorModal: document.getElementById('colorModal').value,
                 penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
                 penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
-                timer: document.getElementById('timerInput').value,
+                ...getTimerPayload(),
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked
@@ -843,7 +855,7 @@
                 colorModal: document.getElementById('colorModal').value,
                 penA: document.getElementById('penToggle').checked ? (document.getElementById('penA').value || "0") : "",
                 penB: document.getElementById('penToggle').checked ? (document.getElementById('penB').value || "0") : "",
-                timer: document.getElementById('timerInput').value,
+                ...getTimerPayload(),
                 matchDuration: duration,
                 activeModal: document.getElementById('modalToggle').checked ? window.currentModalTitle : "",
                 showActionReplay: document.getElementById('arToggle').checked,
@@ -862,7 +874,8 @@
             let currentStr = document.getElementById('timerInput').value;
             elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
             startTime = Date.now() - (elapsedSecondsWhenPaused * 1000);
-            lastSecond = -1;
+            lastSecond = elapsedSecondsWhenPaused;
+            saveData(); // turant overlay ko start signal (1 second wait nahi)
 
             timerInterval = setInterval(() => {
                 if (!isTimerRunning) return;
@@ -874,7 +887,8 @@
                 
                 if (totalSec !== lastSecond) {
                     lastSecond = totalSec;
-                    saveData();
+                    // overlay local clock chalata hai, sirf har 5 sec pe sync heartbeat
+                    if (totalSec % 5 === 0) saveData();
                 }
             }, 50); 
         }
@@ -886,6 +900,7 @@
             timerInterval = null;
             let currentStr = document.getElementById('timerInput').value;
             elapsedSecondsWhenPaused = timeStrToSeconds(currentStr);
+            saveData(); // overlay ko bhi stop batao
         }
 
         function resetTimer() {
