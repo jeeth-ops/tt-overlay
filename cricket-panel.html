@@ -12418,7 +12418,8 @@ function isAwaitingNextInnings(){
   return isInningsOver() && !state.target && !state.milestonesHit['match-result'];
 }
 function updateBallButtonsState(){
-  const over = isInningsOver();
+  // A result (incl. a Test DRAW, called with the innings still open) locks the ball keys too.
+  const over = isInningsOver() || (!!state.milestonesHit['match-result'] && !inSuperOver());
   document.querySelectorAll('[data-ball]').forEach(btn => { btn.disabled = over; });
   const nextBtn = document.getElementById('next-innings-btn');
   // The regulation innings-transition button is meaningless — and actively
@@ -15357,6 +15358,16 @@ function recordBall(kind, meta){
   // that's already been saved as finished, which is exactly what made the
   // tournament portal keep showing a finished match under "Live Now".
   if(!state.milestonesHit['match-result']) pingTournamentLiveStatus(true);
+  // 🏁 A result is locked in (won, tied, or a Test called a DRAW) — no more
+  // balls. A draw ends the match with the innings still open, so the
+  // isInningsOver() check below never caught it: a stray tap after "Match
+  // Drawn" changed the score and sent it to the overlay. Undo still works if
+  // the result was called by mistake.
+  if(state.milestonesHit['match-result'] && !inSuperOver()){
+    toast(`🏁 Match is over${state.matchResultText ? ' — ' + state.matchResultText : ''}. No more balls can be recorded (use Undo if the result was a mistake).`);
+    updateBallButtonsState();
+    return false;
+  }
   autoSyncMatchSnapshot();
   if(isInningsOver()){
     let msg = '🚫 Overs complete for this innings';
