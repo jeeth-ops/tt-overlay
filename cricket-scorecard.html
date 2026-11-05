@@ -591,6 +591,18 @@
     overflow:hidden; background:#000; border-radius:13px;
   }
   .sb-foot{ padding:12px 12px 13px; }
+  /* 📺 Test: one stream per day — only the days that have a link */
+  .sb-days{ display:grid; grid-template-columns:repeat(var(--n, 4), minmax(0, 1fr)); gap:6px; margin:0 12px 10px; }
+  .sb-days[hidden]{ display:none; }
+  .sb-day{
+    position:relative; display:flex; align-items:center; justify-content:center; gap:6px; min-width:0;
+    padding:8px 6px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2);
+    color:var(--text-dim); font-family:var(--font-body); font-weight:800; font-size:12px; letter-spacing:.6px;
+    cursor:pointer; white-space:nowrap; transition:background .15s, color .15s, border-color .15s;
+  }
+  .sb-day:hover{ color:var(--text); border-color:var(--text-faint); }
+  .sb-day.on{ background:var(--text); color:var(--panel); border-color:var(--text); }
+  .sb-day .sb-live{ width:6px; height:6px; border-radius:50%; background:var(--live); flex:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--live) 25%, transparent); }
   /* Full-width so it is unmistakably the thing to press on a phone, where the
      card sits under the score and the player is the reason people scrolled. */
   #stream-youtube-btn{
@@ -3166,6 +3178,7 @@
       <div class="section-title"><span class="dash"></span>Live Stream</div>
       <span class="chip live" id="stream-badge"><span class="lv-dot"></span>Live</span>
     </div>
+    <div class="sb-days" id="stream-days" role="tablist" aria-label="Stream by day" hidden></div>
     <div id="stream-embed-wrap">
       <iframe id="stream-iframe" src="" title="Match live stream" frameborder="0"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -3896,9 +3909,9 @@ function matchStatusText(state){
   // never overrides an already-decided result or an innings break) and
   // never treated as COMPLETED anywhere in this file.
   if(state.format === 'Test' && state.dayStatus === 'STUMPS'){
-    return { badge:'STUMPS', text:`Stumps — Day ${state.dayNumber || 1}` };
+    return { badge:'STUMPS', text:`Stumps — Day ${scDayNumber(state)}` };
   }
-  return { badge:'LIVE', text: state.format === 'Test' ? `Live — Day ${state.dayNumber || 1}` : 'Live' };
+  return { badge:'LIVE', text: state.format === 'Test' ? `Live — Day ${scDayNumber(state)}` : 'Live' };
 }
 
 /* Which team was batting in a given (possibly already-finished) innings
@@ -4958,7 +4971,7 @@ function renderFinalSnapshot(match, displayName){
   const hasResult = !!(match.winningTeam || resultLineOf(match));
   // Below the declaration on purpose: hasResult is a const, so calling this
   // any earlier reads it inside its temporal dead zone and throws.
-  renderStreamBox(match.streamUrl, hasResult);
+  renderStreamBox(match, hasResult);
   document.getElementById('hero').classList.toggle('hero-final', hasResult);
   const statusChip = document.getElementById('chip-status');
   statusChip.classList.toggle('result', hasResult);
@@ -6526,22 +6539,86 @@ function extractYouTubeId(url){
   return '';
 }
 let lastStreamId = null;
-function renderStreamBox(streamUrl, isFinished){
+// The day the panel says is being played: its typed DAY text (cricket-panel's
+// "Day on the overlay", e.g. "DAY 2"), else dayNumber (cricket-panel3).
+function scDayNumber(s){
+  const m = String((s && s.dayLabel) || '').match(/(\d+)/);
+  const n = m ? Number(m[1]) : Number(s && s.dayNumber) || 1;
+  return n >= 1 && n <= 99 ? n : 1;
+}
+// A Test's streams, one per day that has a playable link: Day 1 = streamUrl,
+// Days 2–4 = streamMoreDays. Any other format: just streamUrl.
+function streamDaysOf(s){
+  if(typeof s === 'string') return [{ day: 1, id: extractYouTubeId(s) }].filter(d => d.id);
+  const out = [{ day: 1, id: extractYouTubeId(s && s.streamUrl) }];
+  if(s && s.format === 'Test'){
+    const more = Array.isArray(s.streamMoreDays) ? s.streamMoreDays : [];
+    for(let i = 0; i < 3; i++) out.push({ day: i + 2, id: extractYouTubeId(more[i]) });
+  }
+  return out.filter(d => d.id);
+}
+let streamDayPicked = null; // a day the viewer chose; null = follow the match
+let streamDayFollowed = null; // the day the match was on at the last render
+let streamDayCtx = null;
+function renderStreamBox(src, isFinished){
   const box = document.getElementById('stream-box');
   const iframe = document.getElementById('stream-iframe');
   if(!box || !iframe) return;
-  const id = extractYouTubeId(streamUrl);
-  if(!id){
+  const isTest = !!(src && typeof src === 'object' && src.format === 'Test');
+  const days = streamDaysOf(src);
+  if(!days.length){
     box.style.display = 'none';
     if(lastStreamId !== null){ iframe.src = ''; lastStreamId = null; }
     return;
   }
   box.style.display = '';
+  // Which day plays: the viewer's pick while that day still has a link;
+  // otherwise the day being played now (panel DAY), else the latest one.
+  const today = isTest ? scDayNumber(src) : 1;
+  // Today's stream if it has one; else the latest day up to today; else the latest.
+  const upToToday = days.filter(d => d.day <= today);
+  const followDay = (upToToday.length ? upToToday[upToToday.length - 1] : days[days.length - 1]).day;
+  // The panel moving to another day brings every viewer to that day's stream.
+  if(streamDayFollowed !== null && streamDayFollowed !== followDay) streamDayPicked = null;
+  streamDayFollowed = followDay;
+  if(streamDayPicked != null && !days.some(d => d.day === streamDayPicked)) streamDayPicked = null;
+  const active = days.find(d => d.day === (streamDayPicked != null ? streamDayPicked : followDay)) || days[0];
+  const id = active.id;
+  const liveDay = isFinished || followDay !== today ? null : today;
+  // Day tabs — Test only, only the days that have a link.
+  const tabs = document.getElementById('stream-days');
+  if(tabs){
+    if(isTest){
+      tabs.hidden = false;
+      tabs.style.setProperty('--n', String(days.length));
+      const sig = days.map(d => d.day + ':' + d.id).join(',') + '|' + active.day + '|' + liveDay;
+      if(tabs.dataset.sig !== sig){
+        tabs.dataset.sig = sig;
+        tabs.innerHTML = days.map(d => `<button type="button" role="tab" class="sb-day${d.day === active.day ? ' on' : ''}" data-stream-day="${d.day}" aria-selected="${d.day === active.day}">${d.day === liveDay ? '<span class="sb-live" aria-hidden="true"></span>' : ''}DAY ${d.day}</button>`).join('');
+      }
+      streamDayCtx = { src, isFinished };
+      tabs.onclick = (e) => {
+        const b = e.target.closest('[data-stream-day]');
+        if(!b || !streamDayCtx) return;
+        const d = Number(b.dataset.streamDay);
+        streamDayPicked = d === followDay ? null : d; // back on today = follow the match again
+        renderStreamBox(streamDayCtx.src, streamDayCtx.isFinished);
+      };
+    } else {
+      tabs.hidden = true; tabs.innerHTML = ''; tabs.dataset.sig = '';
+    }
+  }
   // The stream URL outlives the result, so this card also appears over a
   // finished match's recording — the Live pill is hidden there rather than
   // relabelled, since "Replay" only restated what the result already says.
+  // In a Test it says which day is live, and only over that day's stream.
   const badge = document.getElementById('stream-badge');
-  if(badge) badge.style.display = isFinished ? 'none' : '';
+  if(badge){
+    const showLive = !isFinished && (!isTest || active.day === today);
+    badge.style.display = showLive ? '' : 'none';
+    const want = isTest ? `Live — Day ${today}` : 'Live';
+    if(badge.dataset.txt !== want){ badge.dataset.txt = want; badge.innerHTML = `<span class="lv-dot"></span>${want}`; }
+  }
   // Opens the video on YouTube itself — full screen, comments, the channel.
   // Deliberately a button rather than a link: it is an action on this card,
   // and this way it can never be dragged, middle-clicked into a broken tab, or
@@ -6578,7 +6655,7 @@ function renderHero(s){
   // makes the LIVE page switch over to the same finished look the moment
   // a result exists, instead of only a live page reload doing that.
   const isFinished = status.badge === 'RESULT';
-  renderStreamBox(s.streamUrl, isFinished);
+  renderStreamBox(s, isFinished);
   document.getElementById('hero').classList.toggle('hero-final', isFinished);
   const statusChip = document.getElementById('chip-status');
   const statusText = document.getElementById('chip-status-text');
@@ -10939,7 +11016,7 @@ startWatching();
       return `<div class="k">${E(k)}</div><div class="v${v ? '' : ' muted'}">${v ? (k === 'Score' ? v : E(v)) : E(missing)}</div>`;
     }).join('');
     const head = `<div class="sct-vs"><div class="t">${logo(A, 'A')}<span>${E(tName(A, 'A'))}</span></div><div class="x">VS</div><div class="t r">${logo(B, 'B')}<span>${E(tName(B, 'B'))}</span></div></div>`;
-    const stream = (s.streamUrl && typeof extractYouTubeId === 'function' && extractYouTubeId(s.streamUrl)) ? `<p class="sct-note" style="margin-top:12px">Live stream: shown under the score at the top of every tab.</p>` : '';
+    const stream = (typeof streamDaysOf === 'function' && streamDaysOf(s).length) ? `<p class="sct-note" style="margin-top:12px">Live stream: shown under the score at the top of every tab.</p>` : '';
     return card(`Match info ${statusPill(m)}`, head + `<div class="sct-kv" style="margin-top:10px">${kv}</div>` + stream);
   }
 

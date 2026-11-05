@@ -2299,6 +2299,9 @@ function panelStateFromSavedMatch(rec, balls, prevRev) {
         format: rec.format || 'T20',
         venue: rec.venue || '',
         streamUrl: rec.streamUrl || '',
+        streamMoreDays: cleanStreamMoreDays(rec.streamMoreDays),
+        dayLabel: String(rec.dayLabel || '').slice(0, 24),
+        dayNumber: rec.dayNumber || 1,
         teamA: squadOf('A'),
         teamB: squadOf('B'),
         battingTeam,
@@ -4015,6 +4018,22 @@ function youTubeVideoId(url) {
     const m = String(url || '').trim().match(/(?:youtube\.com\/watch\?(?:.*&)?v=|youtube\.com\/live\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);
     return m ? m[1] : '';
 }
+// 📺 A Test match can carry a YouTube link per day: streamUrl is Day 1,
+// streamMoreDays holds Day 2, Day 3, Day 4 (cricket panel, Test only).
+function cleanStreamMoreDays(list) {
+    const a = Array.isArray(list) ? list.slice(0, 3) : [];
+    while (a.length < 3) a.push('');
+    return a.map(u => String(u || '').trim().slice(0, 300));
+}
+// The stream to show for a match right now: in a Test, the latest day with a
+// playable link; otherwise (or when no later day has one) streamUrl.
+function currentStreamUrlOf(m) {
+    if (m && /test/i.test(m.format || '')) {
+        const days = cleanStreamMoreDays(m.streamMoreDays);
+        for (let i = days.length - 1; i >= 0; i--) if (youTubeVideoId(days[i])) return days[i];
+    }
+    return (m && m.streamUrl) || '';
+}
 function tournamentStreams(matches, liveMatches, max = 3, hidden = null, now = Date.now()) {
     const live = new Set((liveMatches || [])
         .filter(m => m && m.matchId && Number(m.startedAt) > now - LIVE_STREAM_FRESH_MS)
@@ -4022,7 +4041,7 @@ function tournamentStreams(matches, liveMatches, max = 3, hidden = null, now = D
     const seen = new Set();
     const streams = [];
     (matches || []).forEach(m => {
-        const videoId = youTubeVideoId(m && m.streamUrl);
+        const videoId = youTubeVideoId(currentStreamUrlOf(m));
         if (!videoId || seen.has(videoId) || (hidden && hidden.has(videoId))) return;
         const isLive = !!(m.matchId && live.has(m.matchId));
         if (isUpcomingRecord(m) && !isLive) return;
@@ -12332,6 +12351,8 @@ function matchRecordFromPanelState(st, base) {
         savedAt: new Date().toISOString(),
         venue: st.venue || '',
         streamUrl: st.streamUrl || '',
+        streamMoreDays: cleanStreamMoreDays(st.streamMoreDays),
+        dayLabel: String(st.dayLabel || '').slice(0, 24),
         format: st.format || 'T20',
         teamA: { name: (st.teamA && st.teamA.name) || 'Team A', short: (st.teamA && st.teamA.short) || '', color: (st.teamA && st.teamA.color) || '', logoUrl: (st.teamA && st.teamA.logoUrl) || '' },
         teamB: { name: (st.teamB && st.teamB.name) || 'Team B', short: (st.teamB && st.teamB.short) || '', color: (st.teamB && st.teamB.color) || '', logoUrl: (st.teamB && st.teamB.logoUrl) || '' },
@@ -12524,6 +12545,8 @@ function panelStateFromMatchRecord(rec, balls, previous) {
         format: rec.format || (previous && previous.format) || 'T20',
         venue: rec.venue || '',
         streamUrl: rec.streamUrl || '',
+        streamMoreDays: cleanStreamMoreDays(rec.streamMoreDays),
+        dayLabel: String(rec.dayLabel || '').slice(0, 24),
         teamA: { ...((previous && previous.teamA) || {}), ...(rec.teamA || {}) },
         teamB: { ...((previous && previous.teamB) || {}), ...(rec.teamB || {}) },
         battingTeam,
