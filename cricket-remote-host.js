@@ -205,7 +205,8 @@
         if(c.classList && c.classList.contains('pro-dd')) return;      // shown above, as its select
         if(/^(SCRIPT|STYLE|TEMPLATE|DATALIST|A)$/.test(c.tagName) || !shown(c)) return;
         if(c.id === 'ww-svg'){
-          push({ k: 'ww', ref: R(c), zones: wwZones(), boundary: c.classList.contains('boundary') });
+          // id: the delivery this wheel is for — a pick for any other ball is refused
+          push({ k: 'ww', ref: R(c), zones: wwZones(), boundary: c.classList.contains('boundary'), id: safe(() => (ww && ww.id) || null, null), hand: safe(() => (ww && ww.hand) || 'R', 'R') });
           return;
         }
         if(c.tagName === 'svg' || c.tagName === 'SVG') return;
@@ -401,6 +402,8 @@
     SP.__crWrapped = true;
     SP.emit = function(ev, data){
       try{
+        // the overlay just got the new state — the phones get theirs in the same breath
+        if(this !== rs && (ev === 'updateCricketScore' || GFX_EVENTS[ev])) schedulePublish();
         if(this !== rs && GFX_EVENTS[ev]){
           let label = GFX_EVENTS[ev];
           if(ev === 'cricketEvent'){ const e = (data && data.event) || data || {}; label = '⚡ ' + (norm(e.text || e.kind) || 'Animation'); }
@@ -757,8 +760,36 @@
     await waitFor(() => !state[spec.flag], 2500);
     return state[spec.flag] ? fail('not-done', 'The laptop did not take it off air.') : { ok: true };
   }
+  // A run pressed on the phone a while ago (it was offline, or the line was
+  // slow): the ball — and its clip — keep the moment it was pressed, not the
+  // moment it got here. cmd.age = ms between the press and this send (the
+  // phone's own clock difference, so the two clocks never need to agree).
+  const EVENT_AGE_MIN = 1500, EVENT_AGE_MAX = 15 * 60 * 1000;
+  function eventTimeOf(cmd){
+    const age = Number(cmd && cmd.age);
+    return Number.isFinite(age) && age >= EVENT_AGE_MIN && age <= EVENT_AGE_MAX ? Date.now() - Math.round(age) : null;
+  }
+  const RUN_KINDS = new Set(['0', '1', '2', '3', '4', '5', '6']);
+  // The phone says how many balls it saw when it pressed: if the laptop's
+  // ball log is not there any more (someone scored or undid in between), the
+  // press is not applied blindly — the phone asks the operator.
+  function scoreChanged(cmd){
+    if(cmd.confirmed || !cmd.expect || !Number.isSafeInteger(cmd.expect.n)) return null;
+    const n = (state.ballLog || []).length;
+    if(n === cmd.expect.n) return null;
+    const sc = state.score || {};
+    const now = `${sc.runs || 0}/${sc.wickets || 0} in ${safe(() => fmtOvers(sc.overs || 0, sc.balls || 0), (sc.overs || 0) + '.' + (sc.balls || 0))} ov`;
+    const what = describe(cmd) || 'this';
+    const diff = n - cmd.expect.n;
+    const why = diff > 0 ? `${diff} ball${diff === 1 ? ' was' : 's were'} scored on the laptop after you pressed it` : 'the score was changed on the laptop (undo / edit) after you pressed it';
+    return { ok: false, error: 'confirm', conflict: true, message: `“${what}” was not scored yet: ${why}. The score is now ${now}. Score “${what}” anyway?` };
+  }
   async function run(cmd){
     if(!mid()) return fail('no-match', 'No match is connected on the laptop.');
+    if(cmd && cmd.t === 'ball' && RUN_KINDS.has(String(cmd.v))){
+      const c = scoreChanged(cmd);
+      if(c) return Object.assign(c, { recorded: false, toasts: [] });
+    }
     const n0 = (state.ballLog || []).length;
     const toasts = [];
     capturing = toasts;
@@ -770,9 +801,20 @@
     window.alert = (msg) => { const t = norm(msg); if(t){ toasts.push(t); safe(() => origToast && origToast.call(window, t, 5000)); } };
     window.prompt = (msg) => { if(asked == null) asked = norm(msg); return null; };
     let r;
+    // (a press the operator confirmed after the score changed is out of its
+    // original order: it is scored at the current moment, so the ball log
+    // stays in order — its clip may then need a check)
+    const evAt = cmd && cmd.t === 'ball' && !cmd.confirmed ? eventTimeOf(cmd) : null;
+    const lateConfirmed = cmd && cmd.t === 'ball' && cmd.confirmed && eventTimeOf(cmd) != null;
     try{
       switch(cmd && cmd.t){
-        case 'ball': r = pressBall(String(cmd.v), cmd.pick == null ? null : String(cmd.pick)); break;
+        case 'ball':
+          window.__crRemoteEventTime = evAt;   // read by the panel's recordBall() (see remoteBallTime there)
+          try{ r = pressBall(String(cmd.v), cmd.pick == null ? null : String(cmd.pick)); }
+          finally{ window.__crRemoteEventTime = null; }
+          if(r.ok && evAt) r.eventAgeMs = Date.now() - evAt;
+          if(r.ok && lateConfirmed) r.note = 'Scored now, after the laptop’s balls — its clip is cut from this moment, not from when you pressed it. Check that clip.';
+          break;
         case 'undo': r = await pressUndo(cmd); break;
         case 'swap': {
           const block = blockingOverlay();
@@ -791,8 +833,10 @@
         case 'ww': r = wwPick(cmd); break;
         default: r = fail('bad-request', 'Unknown command.');
       }
-      // let what the press schedules (the wagon wheel, the next popup) open
-      await sleep(40);
+      // let what the press schedules right away (the wagon wheel opens on a
+      // 0 ms timer) open, so the reply already carries it — anything later goes
+      // out by itself (schedulePublish), never on a fixed wait here
+      await sleep(0);
     } finally {
       capturing = null;
       window.confirm = c0; window.alert = a0; window.prompt = p0;
@@ -809,6 +853,9 @@
     if(typeof wwPickAt !== 'function') return fail('missing', 'No wagon wheel on this panel.');
     const wheel = $('ww-overlay');
     if(!wheel || !wheel.classList.contains('show')) return fail('stale', 'The wagon wheel is already closed.');
+    const openFor = safe(() => (ww && ww.id) || null, null);
+    if(cmd.id && openFor && cmd.id !== openFor) return fail('stale', 'That wagon wheel was for an earlier ball — nothing was saved. Pick again on the new wheel.');
+    if(safe(() => ww && ww.picked, false)) return fail('stale', 'The shot for this ball is already saved.');
     return wwPickAt(x, y) ? { ok: true } : fail('stale', 'Tap inside the field.');
   }
 
@@ -829,7 +876,10 @@
   let chain = Promise.resolve();
   let lastAction = null;
   function onCmd(msg, ack){
-    const reply = typeof ack === 'function' ? ack : () => {};
+    const t0 = performance.now();
+    const reply0 = typeof ack === 'function' ? ack : () => {};
+    // tm.host: ms this laptop took, from the command arriving to the answer (queue wait included)
+    const reply = (res) => reply0(Object.assign({}, res, { tm: Object.assign({}, res && res.tm, { host: Math.round(performance.now() - t0) }) }));
     if(!msg || typeof msg.cmdId !== 'string') return reply(fail('bad-request'));
     loadDone();
     if(done.has(msg.cmdId)) return reply(Object.assign({}, done.get(msg.cmdId), { duplicate: true, parts: freshParts() }));
@@ -862,7 +912,7 @@
   const observed = new WeakMap();   // root -> the sections showing it
   function markDirty(){ SECTIONS.forEach(s => secDirty.add(s.id)); }
   // the laptop operator touching anything may change any card
-  ['click', 'change', 'input'].forEach(ev => document.addEventListener(ev, markDirty, true));
+  ['click', 'change', 'input'].forEach(ev => document.addEventListener(ev, () => { markDirty(); schedulePublish(); }, true));
   // each card is watched on its own: a card is re-read only when it moved
   function armObservers(){
     if(typeof MutationObserver !== 'function') return;
@@ -905,6 +955,19 @@
     Object.keys(changed).forEach(k => { if(rs && rs.connected) rs.emit('remoteHost:part', { k, v: changed[k] }); });
     return changed;
   }
+  // Event-driven: a new state for the overlay, a popup opening or closing, a
+  // click on the laptop — the phones get it within a frame or two, instead
+  // of waiting for the next 350 ms tick (which stays as the safety net).
+  let pubTimer = null;
+  function schedulePublish(){
+    if(pubTimer) return;
+    pubTimer = setTimeout(() => { pubTimer = null; publish(); }, 24);
+  }
+  (function watchPopups(){
+    if(typeof MutationObserver !== 'function') return;
+    const mo = new MutationObserver(() => schedulePublish());
+    document.querySelectorAll('[id$="overlay"]').forEach(el => { if(el.id !== 'cr-remote-overlay') mo.observe(el, { attributes: true, attributeFilter: ['class'] }); });
+  })();
   function publish(){
     if(!rs || !rs.connected || !registeredFor || !phones.length) return;   // nobody to show it to
     const p = parts(false);
@@ -1123,7 +1186,7 @@
   }, true);
 
   // For tests / support: what the phone would see right now.
-  window.__crRemote = { summary, parts: () => parts(true), onAirList, readSection: (id) => readSection(SEC[id]), clipJobs, run, hostRec,
+  window.__crRemote = { summary, parts: () => parts(true), onAirList, readSection: (id) => readSection(SEC[id]), clipJobs, run, onCmd, hostRec,
     sectionRoots: (id) => secRoots(SEC[id]), sectionExclude: (id) => [...secExclude(SEC[id])], sections: SECTIONS.map(x => ({ id: x.id, tab: x.tab })),
     get registeredFor(){ return registeredFor; }, get phones(){ return phones; } };
 })();

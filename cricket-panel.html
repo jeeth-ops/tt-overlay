@@ -15426,6 +15426,15 @@ function resendMatchSnapshotNow(){
 // wickets conceded during the over currently in progress; reset to 0 the
 // instant that over's summary has been emitted (see recordBall() below).
 let overRunsAcc = 0, overWicketsAcc = 0;
+// 📱 When the Phone Remote delivers a run that was pressed a while ago (the
+// phone was offline, or the line was slow), the ball — its log time and its
+// clip's place in the recording — is the moment it was PRESSED, not the
+// moment it reached this laptop. cricket-remote-host.js sets this only
+// while it presses that one ball; at any other time it is Date.now().
+function remoteBallTime(){
+  const t = window.__crRemoteEventTime;
+  return (typeof t === 'number' && t > 0 && t <= Date.now() && Date.now() - t < 15 * 60 * 1000) ? t : Date.now();
+}
 function recordBall(kind, meta){
   inningsSummaryJustFired = false;
   // Tell the public page (tournament portal's "Live Now" card, or a
@@ -15499,7 +15508,7 @@ function recordBall(kind, meta){
   // gets clipped too, not just a plain-kind '4'/'6' ball.
   let extraBoundaryEventType = null;
   let extraDetail = null; // { boundary, nbRunsAs } of a Wide / No Ball — stored with the delivery
-  const ballTimestamp = Date.now();
+  const ballTimestamp = remoteBallTime(); // = Date.now(), unless a phone remote pressed this ball a while ago (see below)
   const runsBefore = state.score.runs;
   // Captured BEFORE the switch below mutates state — the log entry should
   // reflect who was actually facing/bowling this ball, not whoever ends up
@@ -17268,7 +17277,7 @@ function captureWicketDelivery(){
     over: pos.over, ballInOver: pos.ballInOver, legal: pos.legal,
     battingTeam: state.battingTeam,
     striker: state.striker, nonStriker: state.nonStriker, bowler: state.bowler,
-    timestamp: Date.now()
+    timestamp: remoteBallTime()
   });
 }
 // A Cancel and a re-press this soon is the operator correcting the
