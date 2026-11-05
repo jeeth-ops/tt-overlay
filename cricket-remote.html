@@ -325,6 +325,49 @@
   .gate button{margin-top:6px;padding:13px 22px;border-radius:14px;background:#262f48;font-weight:800}
 
   @media (max-height:760px){ .k{min-height:50px} .k.four,.k.six{min-height:56px} #runs{font-size:40px} .pips{margin-top:7px} }
+  /* ---------- wagon wheel dock: above the pad, never over it ---------- */
+  .wwdock{position:fixed;left:0;right:0;top:0;z-index:35;display:flex;flex-direction:column;gap:6px;padding:calc(var(--safe-t) + 8px) 12px 8px;background:rgba(9,12,20,.97);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--line2);box-shadow:0 14px 40px rgba(0,0,0,.45);transform:translateY(-104%);transition:transform .2s var(--ease);max-width:620px;margin:0 auto}
+  .wwdock.show{transform:none}
+  .wwd-top{display:flex;align-items:center;gap:8px;min-height:34px}
+  .wwd-t{flex:1;min-width:0;display:flex;flex-direction:column}
+  .wwd-t b{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wwd-t small{font-size:11.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wwd-hand{display:flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden;flex:none}
+  .wwd-hand button{padding:7px 10px;font-size:12px;font-weight:800;color:var(--mut)}
+  .wwd-hand button.on{background:rgba(255,122,0,.18);color:#ffd2a6}
+  .wwd-skip{flex:none;padding:8px 13px;border-radius:10px;background:#2a3350;font-weight:800;font-size:13px}
+  .wwd-field{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+  .wwd-field .wwbox{height:100%;width:auto;aspect-ratio:1;max-width:100%;margin:0}
+  .wwd-field svg{width:100%;height:100%;display:block}
+  .wwd-foot{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);min-height:20px}
+  .wwd-foot #wwd-lbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wwd-foot #wwd-lbl.done{color:#86efac;font-weight:800}
+  .wwd-foot #wwd-lbl.bad{color:#fca5a5;font-weight:700}
+  .wwd-off{flex:none;padding:5px 9px;border-radius:8px;border:1px solid var(--line2);font-size:11.5px;font-weight:700;color:var(--mut)}
+  svg#ww{touch-action:none}
+  svg#ww .aim-l{fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round;filter:drop-shadow(0 0 2px rgba(0,0,0,.6))}
+  svg#ww .aim-l.six{stroke:#c4b5fd} svg#ww .aim-l.four{stroke:#93c5fd}
+  svg#ww .aim-b{fill:#fff;stroke:#0b1220;stroke-width:.7}
+  svg#ww.done .wwz:not(.hot){opacity:.55}
+  /* ---------- presses: instant feedback, saved-on-phone state ---------- */
+  .k.press{transform:scale(.94);filter:brightness(1.25)}
+  .k.saved{box-shadow:0 0 0 2px rgba(245,158,11,.75) inset}
+  .pend{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:2px}
+  .pend:empty{display:none}
+  .pend .pl{font-size:12px;font-weight:700;color:#fde68a;flex-basis:100%}
+  .pend .pc{display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 10px;border-radius:999px;background:rgba(245,158,11,.13);border:1px solid rgba(245,158,11,.35);font-size:12.5px;font-weight:800;color:#fde68a}
+  .pend .pc.sending{background:rgba(56,189,248,.13);border-color:rgba(56,189,248,.35);color:#bae6fd}
+  .pend .pc.blocked{background:rgba(239,68,68,.13);border-color:rgba(239,68,68,.4);color:#fecaca}
+  .pend .pc small{font-weight:600;opacity:.8}
+  .pend .pc button{width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.1);font-size:12px;line-height:22px;text-align:center}
+  .pend .retry{padding:6px 12px;border-radius:999px;background:#2a3350;font-size:12.5px;font-weight:800}
+  /* ---------- connection & sync diagnostics ---------- */
+  .diag .dg{display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:13px;margin-top:8px}
+  .diag .dg > span:nth-child(odd){color:var(--mut)}
+  .diag .dg > span:nth-child(even){font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+  .diag .dg .ok{color:#86efac} .diag .dg .warn{color:#fcd34d} .diag .dg .bad{color:#fca5a5}
+  .diag .dnote{font-size:11.5px;color:var(--dim);margin-top:8px;line-height:1.4}
+  .conn{cursor:pointer}
   @media (prefers-reduced-motion:reduce){ *{animation:none!important;transition:none!important} }
 </style>
 </head>
@@ -342,6 +385,7 @@
   </div>
 </header>
 <div class="netbar" id="netbar"></div>
+<div class="wwdock" id="wwdock" role="dialog" aria-label="Wagon wheel"></div>
 <div class="notes" id="notes"></div>
 
 <main class="views">
@@ -389,6 +433,7 @@
         <button class="k tool" id="t-hl">🎬 Clip</button>
       </section>
       <div class="queue" id="queue"></div>
+      <div class="pend" id="pend"></div>
     </div>
   </section>
 
@@ -419,6 +464,7 @@
   <section class="view" id="v-match" data-tab="match">
     <div class="wrap">
       <div class="card" id="minfo"></div>
+      <div class="card diag" id="diag"><div class="lbl">Connection &amp; sync</div><div class="dg" id="dg"></div><div class="dnote">Measured on this phone: every press is timed from the tap to the laptop’s answer, split by the server and the laptop. The overlay is updated by the laptop the moment it scores — before this phone hears back.</div></div>
       <div class="card"><div class="lbl" style="margin-bottom:4px">Batting</div><div id="bat-tbl"></div></div>
       <div class="card"><div class="lbl" style="margin-bottom:4px">Bowling</div><div id="bowl-tbl"></div></div>
       <div id="match-secs"></div>
@@ -488,7 +534,7 @@
     });
     document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.go === t));
     placeInd();
-    if(from !== to) vibrate(5);
+    if(from !== to){ vibrate(5); lastModalJson = ''; if(typeof renderModal === 'function') renderModal(P.modal); }
   }
   function placeInd(){
     const b = document.querySelector(`.tab[data-go="${tab}"]`), ind = $('tabind');
@@ -523,8 +569,12 @@
         Object.keys(res.parts || {}).forEach(k => applyPart(k, res.parts[k], true));
         markOldClips();
         synced = !!P.score;
+        store.set(QKEY + ':m', res.matchId || null);
+        restoreQueue(res.matchId);
         renderAll();
+        renderQueue();
         pump();
+        setTimeout(pingLoop, 50);
         return;
       }
       joined = false;
@@ -536,8 +586,8 @@
   }
   let downTimer = null, downSince = 0;
   sock.on('connect', () => { everConnected = true; downSince = 0; clearTimeout(downTimer); join(); renderConn(); });
-  sock.on('disconnect', () => { joined = false; synced = false; downSince = Date.now(); clearTimeout(downTimer); downTimer = setTimeout(renderConn, 12000); renderConn(); });
-  sock.on('remote:host', (d) => { hostOnline = !!(d && d.online); renderConn(); });
+  sock.on('disconnect', () => { joined = false; synced = false; downSince = Date.now(); clearTimeout(downTimer); downTimer = setTimeout(() => { renderConn(); renderQueue(); }, 12000); renderQueue(); });
+  sock.on('remote:host', (d) => { hostOnline = !!(d && d.online); renderQueue(); if(hostOnline) pump(); });
   sock.on('remote:part', (d) => { if(d && typeof d.k === 'string'){ applyPart(d.k, d.v); } });
   sock.on('remote:toast', (d) => { if(d && d.text && !/^(Connected|📋|📱)/.test(d.text) && !/clip/i.test(d.text)) toast('💻 ' + d.text); });
   sock.on('remote:revoked', () => {
@@ -546,12 +596,25 @@
     renderConn();
   });
   $('gate-retry').addEventListener('click', () => { gate(true, '📱', 'Pairing…', ''); join(); });
+  // What the pill says — only what this phone actually knows.
+  function med(a){ const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; }
+  function p95(a){ const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)] : null; }
+  function isWeak(){
+    const last = diag.pings.slice(-3);
+    // the network part only: a laptop that is slow to answer is not a weak line
+    const c = diag.cmds[diag.cmds.length - 1];
+    const netMs = c ? (c.srv != null ? c.rtt - c.srv : c.rtt) : 0;
+    return diag.pingFails > 0 || (last.length && med(last) > 600) || (c && netMs > 1500 && Date.now() - c.at < 20000);
+  }
   function connState(){
-    if(!sock.connected) return !everConnected ? ['warn', 'Connecting'] : (downSince && Date.now() - downSince > 11000 ? ['bad', 'Disconnected'] : ['warn', 'Reconnecting']);
+    const runs = queue.filter(it => it.durable).length;
+    if(!sock.connected) return !everConnected ? ['warn', 'Connecting'] : (downSince && Date.now() - downSince > 11000 ? ['bad', runs ? `Offline · ${runs} saved` : 'Offline'] : ['warn', 'Reconnecting']);
     if(!joined) return ['warn', 'Pairing'];
-    if(!hostOnline) return ['bad', 'Laptop offline'];
-    if(!synced || queue.length) return ['warn', 'Syncing'];
-    return ['ok', 'Connected'];
+    if(!hostOnline) return ['bad', runs ? `Laptop offline · ${runs} saved` : 'Laptop offline'];
+    if(!synced) return ['warn', 'Syncing'];
+    if(queue.length) return ['warn', runs ? `Syncing ${runs}` : 'Sending'];
+    if(isWeak()) return ['warn', 'Weak connection'];
+    return ['ok', 'Synced'];
   }
   function renderConn(){
     const [cls, text] = connState();
@@ -564,12 +627,13 @@
     chip('ch-rec', c ? !!c.rec.on : null, c && c.rec.on ? 'Recording' : 'Rec');
     chip('ch-gfx', live && P.sections ? true : null, live && P.sections ? 'Graphics synced' : 'Graphics');
     let bar = '';
-    if(!sock.connected && everConnected) bar = downSince && Date.now() - downSince > 11000 ? '⚠️ No connection — check this phone’s internet. The laptop keeps running.' : '↻ Reconnecting… the laptop keeps running; nothing is lost.';
-    else if(joined && !hostOnline) bar = '💻 The laptop panel is offline — open it (or check its internet). Presses are not sent.';
+    if(!sock.connected && everConnected) bar = downSince && Date.now() - downSince > 11000 ? '⚠️ No connection — runs (0–6) you press are saved on this phone and sent the moment it is back. The laptop keeps running.' : '↻ Reconnecting… the laptop keeps running; runs you press are saved here.';
+    else if(joined && !hostOnline) bar = '💻 The laptop panel is offline — open it (or check its internet). Runs (0–6) are saved on this phone until it is back; nothing else is sent.';
     else if(joined && s && !s.online) bar = '💻 The laptop has lost the server — the overlay is not updating until it is back.';
     $('netbar').textContent = bar;
     $('netbar').classList.toggle('show', !!bar && !gateUp);
-    document.querySelectorAll('.pad .k').forEach(b => b.style.opacity = live ? '' : '.55');
+    // offline: only the runs can be pressed (they are saved here); the rest waits for the laptop
+    document.querySelectorAll('.pad .k').forEach(b => b.style.opacity = live || RUNS.has(b.dataset.ball || '') ? '' : '.55');
   }
   setInterval(renderConn, 3000);
 
@@ -688,15 +752,39 @@
     }
     return out.join('');
   }
-  // re-draws a box but keeps what is being typed
-  function setHtml(box, html){
-    const act = document.activeElement;
-    const keep = act && act.dataset && act.dataset.ref && box.contains(act) && act.tagName === 'INPUT' ? { ref: act.dataset.ref, sec: act.dataset.sec, value: act.value, s: act.selectionStart } : null;
-    box.innerHTML = html;
-    if(keep){
-      const el = Array.prototype.find.call(box.querySelectorAll('input[data-ref]'), x => x.dataset.ref === keep.ref && x.dataset.sec === keep.sec);
-      if(el){ el.value = keep.value; el.focus(); try{ el.setSelectionRange(keep.s, keep.s); }catch(e){} }
+  // Re-draws a box IN PLACE: the new markup is patched onto the nodes that
+  // are already there (text, attributes, added / removed children), so a
+  // button being pressed, a field being typed in or an open dropdown is the
+  // same element before and after an update from the laptop — never torn
+  // out from under the operator's finger.
+  function morphChildren(from, to){
+    const a = Array.prototype.slice.call(from.childNodes), b = Array.prototype.slice.call(to.childNodes);
+    for(let i = 0; i < b.length; i++){
+      const x = a[i], y = b[i];
+      if(!x){ from.appendChild(y); continue; }
+      if(x.nodeType !== y.nodeType || x.nodeName !== y.nodeName){ from.replaceChild(y, x); continue; }
+      if(x.nodeType !== 1){ if(x.nodeValue !== y.nodeValue) x.nodeValue = y.nodeValue; continue; }
+      morphEl(x, y);
     }
+    for(let i = b.length; i < a.length; i++) if(a[i].parentNode === from) from.removeChild(a[i]);
+  }
+  function morphEl(x, y){
+    // the wagon wheel's own drawing (aim line) is not in the markup: keep the
+    // wheel as it is when it is still the same ball's wheel
+    if(x.tagName === 'svg' && x.id === 'ww' && x.getAttribute('data-id') === y.getAttribute('data-id') && x.getAttribute('data-sig') === y.getAttribute('data-sig')) return;
+    for(const at of Array.prototype.slice.call(x.attributes)) if(!y.hasAttribute(at.name)) x.removeAttribute(at.name);
+    for(const at of Array.prototype.slice.call(y.attributes)) if(x.getAttribute(at.name) !== at.value) x.setAttribute(at.name, at.value);
+    const active = x === document.activeElement;
+    morphChildren(x, y);
+    if(x.tagName === 'INPUT' && !active && x.value !== y.value) x.value = y.value;
+    if(x.tagName === 'SELECT' && !active){ const o = y.querySelector('option[selected]'); const v = o ? o.value : ''; if(x.value !== v) x.value = v; }
+    if(x.tagName === 'BUTTON' && y.disabled !== x.disabled) x.disabled = y.disabled;
+  }
+  function setHtml(box, html){
+    const t = document.createElement('div');
+    t.innerHTML = html;
+    morphChildren(box, t);
+    armWheels(box);
   }
 
   /* ---------------- sections: GRAPHICS / CLIPPER / MATCH ---------------- */
@@ -899,10 +987,46 @@
     sheet.classList.add('show'); $('sheet-bg').classList.add('show');
   }
   function closeSheet(){ sheetMode = null; $('sheet').classList.remove('show'); $('sheet-bg').classList.remove('show'); }
+  /* The wagon wheel sits ABOVE the scoring pad (over the score card), never on
+     top of it: the next ball is always one tap away, and a tap meant for a
+     run can never land on the wheel. Too little room (landscape, a small
+     phone scrolled down): it falls back to the sheet, which ignores taps in
+     its first 300 ms. Only on the Scoring screen. */
+  function padTop(){ const p = $('pad'); return p ? p.getBoundingClientRect().top : 0; }
+  function dockFits(){ return tab === 'score' && padTop() - 6 >= 250; }
+  function hideDock(){ const d = $('wwdock'); if(d.classList.contains('show')) d.classList.remove('show'); }
+  function showDock(m){
+    const d = $('wwdock'), items = m.items || [];
+    const it = items.find(x => x.k === 'ww');
+    const kicker = items.find(x => x.k === 't');
+    const hands = items.filter(x => x.k === 'b' && /^btn:(Right|Left)-hander/.test(x.sig || ''));
+    const skip = items.find(x => x.sig === 'btn#ww-skip'), off = items.find(x => x.sig === 'btn#ww-off');
+    const ds = (b) => `data-op="click" data-ref="${esc(b.ref)}" data-sig="${esc(b.sig)}" data-txt="${esc(b.text)}"`;
+    const html = `<div class="wwd-top"><div class="wwd-t"><b>${esc(m.title)}</b><small>${esc(kicker ? kicker.text : '')}</small></div>`
+      + (hands.length ? `<div class="wwd-hand">${hands.map(h => `<button class="${h.on ? 'on' : ''}" ${ds(h)}>${/^btn:Right/.test(h.sig) ? 'Right' : 'Left'}</button>`).join('')}</div>` : '')
+      + (skip ? `<button class="wwd-skip" ${ds(skip)}>Skip</button>` : '') + `</div>`
+      + `<div class="wwd-field">${it ? wheelSvg(it) : ''}</div>`
+      + `<div class="wwd-foot"><span id="wwd-lbl">${it && it.boundary ? 'Tap the boundary it went to' : 'Tap where the ball went'} · or just score the next ball</span>${off ? `<button class="wwd-off" ${ds(off)}>Turn off</button>` : ''}</div>`;
+    d.style.height = Math.round(padTop() - 6) + 'px';
+    setHtml(d, html);
+    d.classList.add('show');
+  }
+  let dockRaf = 0;
+  function redockSoon(){ if(dockRaf) return; dockRaf = requestAnimationFrame(() => { dockRaf = 0; if(P.modal && P.modal.id === 'ww-overlay'){ lastModalJson = ''; renderModal(P.modal); } }); }
+  window.addEventListener('resize', redockSoon);
+  $('v-score').addEventListener('scroll', redockSoon, { passive: true });
   function renderModal(m){
-    const json = m ? JSON.stringify(m) + (hiddenSig === sigOfModal(m) ? '#hidden' : '') : '';
+    const json = m ? JSON.stringify(m) + (hiddenSig === sigOfModal(m) ? '#hidden' : '') + '|' + tab + '|' + (dockFits() ? 1 : 0) : '';
     if(json === lastModalJson) return;
     lastModalJson = json;
+    const isWw = !!(m && m.id === 'ww-overlay');
+    wwItem = isWw ? (m.items || []).find(x => x.k === 'ww') || null : null;
+    if(!m || hiddenSig === sigOfModal(m)) hideDock();
+    else if(isWw){
+      if(tab !== 'score'){ hideDock(); if(sheetMode === 'modal') closeSheet(); return; }
+      if(dockFits()){ if(sheetMode === 'modal') closeSheet(); showDock(m); return; }
+      hideDock();
+    } else hideDock();
     if(!m || hiddenSig === sigOfModal(m)){
       if(sheetMode === 'modal') closeSheet();
       if(m) return;
@@ -914,29 +1038,42 @@
     openSheet(html, 'modal', { soft: SOFT.has(m.id) });
   }
   // a card of the panel in a sheet (Bowler from the scoring screen)
-  function renderSecSheet(){
+  let secSheetJson = '';
+  function renderSecSheet(force){
     const id = sheetMode && sheetMode.slice(4), sec = P['sec:' + id];
     if(!sec){ closeSheet(); return; }
+    const j = id + JSON.stringify(sec);
+    if(!force && j === secSheetJson && $('sheet').classList.contains('show')) return;
+    secSheetJson = j;
     openSheet(`<h3>${esc(sec.icon || '')} ${esc(sec.title)}</h3>` + itemsHtml(sec.items || [], { sec: id, tab: sec.tab, title: sec.title }), 'sec:' + id, { closable: true });
   }
   const _renderSections = renderSections;
   renderSections = function(t){ _renderSections(t); if(sheetMode && sheetMode.startsWith('sec:')) renderSecSheet(); };
   function hideSheet(){
     if(sheetMode === 'modal' && P.modal && SOFT.has(P.modal.id)){ hiddenSig = sigOfModal(P.modal); lastModalJson = ''; renderModal(P.modal); return; }
-    if(sheetMode && (sheetMode.startsWith('sec:') || sheetMode === 'confirm')){ closeSheet(); if(P.modal){ lastModalJson = ''; renderModal(P.modal); } }
+    if(sheetMode && (sheetMode.startsWith('sec:') || sheetMode === 'confirm')){
+      const no = sheetMode === 'confirm' ? confirmNo : null;
+      confirmNo = null; $('sheet-body').onclick = null;
+      closeSheet(); if(P.modal){ lastModalJson = ''; renderModal(P.modal); }
+      if(no) no();
+    }
   }
   $('sheet-hide').addEventListener('click', hideSheet);
   $('sheet-bg').addEventListener('click', hideSheet);
   // the phone asks the laptop's question (a confirm() on the panel)
-  function askConfirm(message, onYes){
+  let confirmNo = null;   // what "Cancel" (or closing the sheet) does for the open question
+  function askConfirm(message, onYes, onNo){
+    if(confirmNo){ const f = confirmNo; confirmNo = null; f(); }   // an older question is answered "no"
+    confirmNo = onNo || null;
     openSheet(`<h3>Are you sure?</h3><div class="it-t" style="font-size:15px">${esc(message)}</div><div class="qrow"><button class="sb ghost" data-q="no">Cancel</button><button class="sb primary" data-q="yes">Confirm</button></div>`, 'confirm');
     $('sheet-body').onclick = (e) => {
       const b = e.target.closest('[data-q]');
       if(!b) return;
       $('sheet-body').onclick = null;
+      const no = confirmNo; confirmNo = null;
       closeSheet();
       if(P.modal){ lastModalJson = ''; renderModal(P.modal); }
-      if(b.dataset.q === 'yes') onYes();
+      if(b.dataset.q === 'yes') onYes(); else if(no) no();
     };
   }
 
@@ -959,22 +1096,111 @@
       const m = (z.a0 + z.a1) / 2, [xd, yd] = pt(80, m), [xi, yi] = pt(36, m);
       parts.push(`<text class="wwl" x="${f2(xd)}" y="${f2(yd)}">${esc(z.deep)}</text><text class="wwl in" x="${f2(xi)}" y="${f2(yi)}">${esc(z.inner)}</text>`);
     });
-    return `<div class="wwbox"><svg id="ww" viewBox="-112 -112 224 224" data-boundary="${it.boundary ? 1 : 0}">${parts.join('')}</svg></div>`;
+    parts.push(`<g class="aim" pointer-events="none"></g>`);
+    const sig = (it.zones || []).map(z => z.a0).join(',') + '|' + (it.boundary ? 1 : 0);
+    return `<div class="wwbox"><svg id="ww" viewBox="-112 -112 224 224" data-boundary="${it.boundary ? 1 : 0}" data-id="${esc(it.id || '')}" data-sig="${esc(sig)}">${parts.join('')}</svg></div>`;
   }
 
-  /* ---------------- taps on any of the laptop's controls ---------------- */
   const armed = new Map();   // an ON AIR graphic is taken off with a second tap
-  document.addEventListener('click', (e) => {
-    const svg = e.target.closest && e.target.closest('#ww');
-    if(svg){
-      const r = svg.getBoundingClientRect();
-      if(!r.width) return;
-      const x = ((e.clientX - r.left) / r.width) * 224 - 112, y = ((e.clientY - r.top) / r.height) * 224 - 112;
-      const z = e.target.closest('.wwz');
-      if(z) svg.querySelectorAll('.wwz').forEach(p => p.classList.toggle('hot', p.dataset.z === z.dataset.z && (svg.dataset.boundary === '1' ? p.dataset.d === 'deep' : p === z)));
-      send({ t: 'ww', x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }, null);
+  /* ---------------- the wagon wheel: aim with the finger, saved on release ----------------
+     Pointer events (touch, pen, mouse alike — one handler, so a tap is never
+     counted twice): finger down shows the shot at once, moving it re-aims,
+     lifting it inside the field saves that ONE shot for the ball the wheel
+     belongs to (its delivery id goes with it; the laptop refuses it for any
+     other ball). Lifting outside the field cancels. */
+  const WW_RIN = 55, WW_ROUT = 100, WW_BAT = [0, -11.5];
+  let wwItem = null;          // the wheel item being shown (zones, boundary, id)
+  let aim = null;             // { svg, pid, x, y, hit }
+  const r1 = (n) => Math.round(n * 10) / 10;
+  function armWheels(root){
+    (root || document).querySelectorAll('svg#ww').forEach(svg => {
+      if(svg.dataset.armedFor === (svg.dataset.id || '-')) return;
+      svg.dataset.armedFor = svg.dataset.id || '-';
+      svg.dataset.openAt = String(performance.now());
+      svg.classList.remove('done');
+      const g = svg.querySelector('.aim'); if(g) g.innerHTML = '';
+      svg.querySelectorAll('.wwz.hot').forEach(p => p.classList.remove('hot'));
+    });
+  }
+  function wwHit(x, y){
+    const it = wwItem; if(!it) return null;
+    const r = Math.hypot(x, y);
+    if(r > WW_ROUT + 6 || r < 3) return null;
+    const deg = (Math.atan2(x, -y) * 180 / Math.PI + 360) % 360;
+    const z = (it.zones || []).find(q => deg >= q.a0 && deg < q.a1) || (it.zones || [])[0];
+    if(!z) return null;
+    const depth = it.boundary ? 'deep' : (r > WW_RIN ? 'deep' : 'inner');
+    return { z, depth, label: depth === 'deep' ? z.deep : z.inner };
+  }
+  function wwDraw(svg, x, y, hit, final){
+    const g = svg.querySelector('.aim');
+    svg.querySelectorAll('.wwz').forEach(p => p.classList.toggle('hot', !!hit && p.dataset.z === hit.z.id && p.dataset.d === hit.depth));
+    if(!g) return;
+    if(!hit){ g.innerHTML = ''; return; }
+    const boundary = svg.dataset.boundary === '1';
+    const ang = Math.atan2(x, -y);
+    const end = boundary ? [WW_ROUT * Math.sin(ang), -WW_ROUT * Math.cos(ang)] : [x, y];
+    const six = /\bSIX\b/i.test((P.modal && P.modal.title) || '');
+    const [bx, by] = WW_BAT;
+    const d = six ? `M${bx} ${by}Q${r1((bx + end[0]) / 2 + (end[1] - by) * 0.18)} ${r1((by + end[1]) / 2 - (end[0] - bx) * 0.18)} ${r1(end[0])} ${r1(end[1])}` : `M${bx} ${by}L${r1(end[0])} ${r1(end[1])}`;
+    g.innerHTML = `<path class="aim-l${boundary ? ' four' : ''}" d="${d}"/><circle class="aim-b" cx="${r1(end[0])}" cy="${r1(end[1])}" r="${final ? 3 : 2.6}"/>`;
+    const lbl = $('wwd-lbl');
+    if(lbl && svg.closest('#wwdock')){ lbl.className = ''; lbl.textContent = (final ? '📍 ' : '') + hit.label + (final ? ' — saving…' : ' · lift to save'); }
+  }
+  function wwPoint(svg, e){
+    const r = svg.getBoundingClientRect();
+    if(!r.width || !r.height) return null;
+    return [((e.clientX - r.left) / r.width) * 224 - 112, ((e.clientY - r.top) / r.height) * 224 - 112];
+  }
+  document.addEventListener('pointerdown', (e) => {
+    const svg = e.target.closest && e.target.closest('svg#ww');
+    if(!svg || svg.classList.contains('done')) return;
+    // a wheel that only just appeared never takes a tap that was meant for
+    // what was on the screen a moment before
+    if(performance.now() - Number(svg.dataset.openAt || 0) < 300) return;
+    e.preventDefault();
+    try{ svg.setPointerCapture(e.pointerId); }catch(err){}
+    const p = wwPoint(svg, e); if(!p) return;
+    aim = { svg, pid: e.pointerId, x: p[0], y: p[1], hit: wwHit(p[0], p[1]) };
+    wwDraw(svg, aim.x, aim.y, aim.hit, false);
+  }, { passive: false });
+  document.addEventListener('pointermove', (e) => {
+    if(!aim || e.pointerId !== aim.pid) return;
+    const p = wwPoint(aim.svg, e); if(!p) return;
+    aim.x = p[0]; aim.y = p[1]; aim.hit = wwHit(p[0], p[1]);
+    wwDraw(aim.svg, aim.x, aim.y, aim.hit, false);
+  });
+  document.addEventListener('pointercancel', (e) => { if(aim && e.pointerId === aim.pid){ wwDraw(aim.svg, 0, 0, null); aim = null; } });
+  document.addEventListener('pointerup', (e) => {
+    if(!aim || e.pointerId !== aim.pid) return;
+    const a = aim; aim = null;
+    const p = wwPoint(a.svg, e); if(p){ a.x = p[0]; a.y = p[1]; a.hit = wwHit(p[0], p[1]); }
+    if(!a.hit){
+      wwDraw(a.svg, 0, 0, null);
+      const lbl = $('wwd-lbl'); if(lbl){ lbl.className = 'bad'; lbl.textContent = 'Outside the field — nothing saved. Tap inside the ground.'; }
       return;
     }
+    a.svg.classList.add('done');
+    wwDraw(a.svg, a.x, a.y, a.hit, true);
+    const label = a.hit.label;
+    send({ t: 'ww', x: r1(a.x), y: r1(a.y), id: a.svg.dataset.id || undefined }, null, { done: (res) => {
+      const lbl = $('wwd-lbl');
+      if(res && res.ok){
+        if(lbl){ lbl.className = 'done'; lbl.textContent = `📍 ${label} — saved ✓`; }
+        // the laptop closes its wheel a moment later; the phone does not wait for it
+        const sig = sigOfModal(P.modal);
+        setTimeout(() => { if(P.modal && P.modal.id === 'ww-overlay' && sigOfModal(P.modal) === sig){ hiddenSig = sig; lastModalJson = ''; renderModal(P.modal); } }, 450);
+      } else {
+        a.svg.classList.remove('done'); wwDraw(a.svg, 0, 0, null);
+        if(lbl){ lbl.className = 'bad'; lbl.textContent = (res && res.message) || 'Not saved — tap again'; }
+      }
+    } });
+  });
+  // no long-press menu / zoom gesture on the field
+  document.addEventListener('contextmenu', (e) => { if(e.target.closest && e.target.closest('svg#ww')) e.preventDefault(); });
+
+  /* ---------------- taps on any of the laptop's controls ---------------- */
+  document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('button[data-op]');
     if(!b || b.disabled) return;
     const key = (b.dataset.sec || '') + '|' + b.dataset.ref;
@@ -1007,70 +1233,194 @@
     typeTimer = setTimeout(() => { const cmd = { t: 'ui', op: 'set', ref: el.dataset.ref, sig: el.dataset.sig, value: el.value }; if(el.dataset.sec) cmd.sec = el.dataset.sec; send(cmd, null); }, 350);
   });
 
-  /* ---------------- presses: one at a time, in order, each with its own id ---------------- */
+  /* ---------------- presses: one at a time, in order, each with its own id ----------------
+     Every press is a command with its own id, sent in order and answered by
+     the laptop; a repeat of the same id (a retry after a lost answer) is done
+     there once. RUNS (0–6) are also kept ON THIS PHONE (localStorage) until
+     the laptop has answered: with no connection, or the laptop offline, they
+     wait here — in order, never twice — and go as soon as it is back, with
+     how long ago they were pressed (the laptop gives the ball and its clip
+     that moment). Each carries the ball count the phone saw: if the laptop
+     scored in between, the operator is asked instead of it being applied
+     blindly. Everything else (graphics, popups, clips) only goes live — a
+     graphic is never replayed late. */
+  const RUNS = new Set(['0', '1', '2', '3', '4', '5', '6']);
+  const QKEY = 'cricketRemoteQueue';
   const queue = [];
-  let sending = false;
+  let sending = false, paused = false;
+  const isRun = (cmd) => !!(cmd && cmd.t === 'ball' && RUNS.has(String(cmd.v)) && !cmd.pick);
+  const canReach = () => sock.connected && joined && hostOnline;
+  const curMatch = () => (P.score && P.score.matchId) || (P.match && P.match.matchId) || store.get(QKEY + ':m') || '';
+  function saveQueue(){
+    const items = queue.filter(it => it.durable).map(it => ({ cmdId: it.cmdId, cmd: it.cmd, t0: it.t0, offline: !!it.offline }));
+    store.set(QKEY, items.length ? JSON.stringify({ matchId: curMatch(), items }) : null);
+  }
+  function restoreQueue(matchId){
+    let saved = null;
+    try{ saved = JSON.parse(store.get(QKEY) || 'null'); }catch(e){ saved = null; }
+    if(!saved || !Array.isArray(saved.items) || !saved.items.length) return;
+    if(saved.matchId && matchId && saved.matchId !== matchId){
+      toast(`⚠️ ${saved.items.length} run${saved.items.length === 1 ? '' : 's'} saved on this phone belonged to another match — not sent`, 'bad', 6000);
+      store.set(QKEY, null); return;
+    }
+    const have = new Set(queue.map(it => it.cmdId));
+    saved.items.filter(x => x && x.cmdId && x.cmd && !have.has(x.cmdId)).reverse()
+      .forEach(x => queue.unshift({ cmdId: x.cmdId, cmd: x.cmd, t0: Number(x.t0) || Date.now(), durable: true, offline: true, meta: {}, btn: null, state: 'saved' }));
+  }
+  const DESC = { W: 'Wicket', Wd: 'Wide', Nb: 'No ball', B: 'Bye', LB: 'Leg bye', OT: 'Overthrow' };
   function send(cmd, btn, meta){
-    if(!joined){ toast('Not connected to the laptop yet', 'bad'); vibrate([30, 40, 30]); return; }
-    if(queue.length >= 6){ toast('Wait — the laptop is still answering', 'bad'); return; }
-    queue.push({ cmdId: uuid(), cmd, btn, meta: meta || {}, t0: Date.now() });
-    if(btn){ btn.classList.remove('ok', 'bad'); btn.classList.add('sending'); }
+    meta = meta || {};
+    const durable = isRun(cmd);
+    if(!canReach() && !durable){
+      const why = !sock.connected ? 'No connection' : !joined ? 'Not paired yet' : 'The laptop is offline';
+      toast(`${why} — ${cmd.t === 'ball' ? 'only runs (0–6) can be saved on the phone until it is back' : 'this needs the laptop, nothing was sent'}`, 'bad', 3800);
+      vibrate([30, 40, 30]); flash(btn, 'bad'); return;
+    }
+    const live = queue.filter(it => !it.durable).length;
+    if((!durable && live >= 6) || queue.length >= 30){ toast('Wait — the laptop is still answering the last presses', 'bad'); return; }
+    if(durable){
+      // the ball count this press expects to find on the laptop: what the phone
+      // shows, plus the runs still waiting ahead of it
+      const n = P.score && P.score.last ? P.score.last.n : null;
+      if(n != null && !cmd.confirmed) cmd = Object.assign({}, cmd, { expect: { n: n + queue.filter(it => it.durable).length } });
+    }
+    const it = { cmdId: uuid(), cmd, btn, meta, t0: Date.now(), durable, offline: !canReach(), state: 'saved' };
+    queue.push(it);
+    if(durable) saveQueue();
+    if(btn){ btn.classList.remove('ok', 'bad', 'saved'); btn.classList.add(it.offline ? 'saved' : 'sending'); }
     vibrate(8);
+    if(it.offline) toast(`📥 ${cmd.v} saved on this phone — it goes to the laptop as soon as it is back`, '', 2600);
     renderQueue();
     pump();
   }
-  function renderQueue(){ $('queue').textContent = queue.length ? `⏳ Sending to the laptop… ${queue.length > 1 ? `(${queue.length})` : ''}` : ''; renderConn(); }
+  function renderQueue(){
+    const sendingNow = queue.length && queue[0].state === 'sending';
+    $('queue').textContent = sendingNow && !queue[0].durable ? `⏳ Sending to the laptop…${queue.length > 1 ? ` (${queue.length})` : ''}` : '';
+    const runs = queue.filter(it => it.durable);
+    const box = $('pend');
+    if(!runs.length){ box.innerHTML = ''; renderConn(); return; }
+    const head = queue[0];
+    const blocked = head && head.durable && head.state === 'blocked';
+    const why = blocked ? `⛔ ${esc(head.error || 'The laptop could not score it yet')}`
+      : !sock.connected ? `📥 ${runs.length} run${runs.length === 1 ? '' : 's'} saved on this phone — no connection yet, nothing is lost`
+      : !hostOnline ? `📥 ${runs.length} run${runs.length === 1 ? '' : 's'} saved on this phone — waiting for the laptop`
+      : `⏳ Sending ${runs.length} run${runs.length === 1 ? '' : 's'} to the laptop, in order…`;
+    box.innerHTML = `<span class="pl">${why}</span>` + runs.map(it => {
+      const ago = Math.max(0, Math.round((Date.now() - it.t0) / 1000));
+      return `<span class="pc ${it.state === 'sending' ? 'sending' : it.state === 'blocked' ? 'blocked' : ''}">${esc(it.cmd.v)} <small>${ago < 60 ? ago + 's' : Math.round(ago / 60) + 'm'} ago</small><button data-drop="${esc(it.cmdId)}" aria-label="Discard">✕</button></span>`;
+    }).join('') + (blocked ? `<button class="retry" data-retry="1">Try again</button>` : '');
+    renderConn();
+  }
+  $('pend').addEventListener('click', (e) => {
+    const d = e.target.closest('[data-drop]');
+    if(d){
+      const i = queue.findIndex(it => it.cmdId === d.dataset.drop);
+      if(i < 0) return;
+      if(queue[i].state === 'sending'){ toast('That one is being sent right now — wait for the answer'); return; }
+      askConfirm(`Discard the “${queue[i].cmd.v}” saved on this phone? It will not be scored.`, () => { const j = queue.findIndex(it => it.cmdId === d.dataset.drop); if(j >= 0){ queue.splice(j, 1); saveQueue(); renderQueue(); pump(); } });
+      return;
+    }
+    if(e.target.closest('[data-retry]') && queue[0]){ queue[0].state = 'saved'; queue[0].error = ''; renderQueue(); pump(); }
+  });
+  setInterval(() => { if(queue.some(it => it.durable)) renderQueue(); }, 5000);
   function emitAck(ev, data, ms){
     return new Promise((resolve) => sock.timeout(ms).emit(ev, data, (err, res) => resolve(err ? null : res)));
   }
   function flash(btn, cls){
     if(!btn || !btn.isConnected) return;
-    btn.classList.remove('sending', 'ok', 'bad');
+    btn.classList.remove('sending', 'ok', 'bad', 'saved');
     if(!cls) return;
     void btn.offsetWidth;
     btn.classList.add(cls);
     setTimeout(() => btn.classList.remove(cls), 650);
   }
+  // measured round trips: [{ rtt, srv, host, at }]
+  const diag = { cmds: [], pings: [], pingFails: 0, failed: 0, lastOkAt: 0, lastCmdId: '', lastErr: '' };
+  function note(arr, v, max){ arr.push(v); while(arr.length > (max || 60)) arr.shift(); }
+  let retryTimer = null;
+  function retrySoon(ms){ clearTimeout(retryTimer); retryTimer = setTimeout(pump, ms); }
   async function pump(){
-    if(sending || !queue.length || !joined) return;
-    sending = true;
+    if(sending || paused || !queue.length || !sock.connected || !joined) { renderQueue(); return; }
     const it = queue[0];
-    const res = await emitAck('remote:cmd', { cmdId: it.cmdId, cmd: it.cmd }, 10000);
-    sending = false;
-    if(!res || res.retry){
-      // no answer: the same command (same id) again — the laptop does it once
-      if(Date.now() - it.t0 < 15000){ setTimeout(pump, sock.connected ? 500 : 1000); return; }
-      queue.shift();
-      flash(it.btn, 'bad'); vibrate([30, 40, 30]);
-      toast('⚠️ No answer from the laptop — check before pressing again', 'bad', 4500);
-    } else {
-      queue.shift();
-      Object.keys(res.parts || {}).forEach(k => applyPart(k, res.parts[k]));
-      if(res.ok){
-        flash(it.btn, 'ok'); vibrate(15);
-        // what the laptop said about it, if it said anything; else a plain ✓
-        const said = res.note || (res.toasts || [])[0];
-        if(said) toast('💻 ' + said, '', 3200);
-        else if(it.meta.gfx) toast(`✓ ${it.meta.label || 'Done'} — sent to the laptop`, 'ok', 1800);
-      } else if(res.error === 'confirm'){
-        flash(it.btn, '');
-        askConfirm(res.message || 'Are you sure?', () => send(Object.assign({}, it.cmd, { confirmed: true }), it.btn, it.meta));
-      } else {
-        flash(it.btn, 'bad'); vibrate([30, 40, 30]);
-        toast('❌ ' + (res.message || 'Not done on the laptop'), 'bad', 4000);
-        if(res.error === 'revoked' || res.error === 'not-paired'){ joined = false; session = null; store.set(SESSION_KEY, null); gate(true, '🔌', 'Not paired', res.message || 'Scan the QR code on the laptop again.'); }
-        if(res.error === 'stale'){ lastModalJson = ''; Object.keys(secJson).forEach(k => { secJson[k] = ''; }); renderAll(); }
-      }
+    if(it.state === 'blocked'){ renderQueue(); return; }   // the operator decides (Try again / ✕)
+    if(!hostOnline){
+      // nothing live waits for an offline laptop; runs stay saved here
+      if(!it.durable){ queue.shift(); flash(it.btn, 'bad'); toast('💻 The laptop is offline — that was not done', 'bad', 3500); return pump(); }
+      renderQueue(); return;
     }
+    sending = true;
+    it.state = 'sending';
+    if(Date.now() - it.t0 > 2000) it.offline = true;   // it waited: treat it as a saved press
     renderQueue();
+    const wire = Object.assign({}, it.cmd, { age: Date.now() - it.t0 });
+    const tSend = performance.now();
+    const res = await emitAck('remote:cmd', { cmdId: it.cmdId, cmd: wire }, 10000);
+    const rtt = performance.now() - tSend;
+    sending = false;
+    if(!queue.includes(it)){ return pump(); }   // discarded meanwhile
+    if(res && res.tm) note(diag.cmds, { rtt: Math.round(rtt), srv: res.tm.srv, host: res.tm.host, at: Date.now() });
+    diag.lastCmdId = it.cmdId;
+    if(!res || res.retry || res.error === 'laptop-offline'){
+      if(res && res.error === 'laptop-offline'){ hostOnline = false; }
+      if(it.durable){ it.state = 'saved'; retrySoon(!res ? 400 : res.error === 'slow-down' ? 1200 : 1500); renderQueue(); return; }
+      if(res && res.error === 'slow-down'){ it.state = 'saved'; retrySoon(1200); return; }
+      if(!res && Date.now() - it.t0 < 6000){ it.state = 'saved'; retrySoon(sock.connected ? 400 : 1000); return; }
+      queue.shift(); diag.failed++;
+      flash(it.btn, 'bad'); vibrate([30, 40, 30]);
+      toast(res && res.error === 'laptop-offline' ? '💻 The laptop is offline — that was not done' : '⚠️ No answer from the laptop — check before pressing again', 'bad', 4500);
+      if(it.meta.done) it.meta.done(res);
+      return pump();
+    }
+    queue.shift();
+    if(it.durable) saveQueue();
+    Object.keys(res.parts || {}).forEach(k => applyPart(k, res.parts[k]));
+    if(res.ok){
+      diag.lastOkAt = Date.now();
+      flash(it.btn, 'ok'); vibrate(15);
+      const said = res.note || (res.toasts || [])[0];
+      if(said) toast('💻 ' + said, '', 3200);
+      else if(it.offline || res.eventAgeMs) toast(`✓ ${it.cmd.v} scored on the laptop${res.eventAgeMs ? ` — ball & clip timed ${Math.round(res.eventAgeMs / 1000)} s back, when you pressed it` : ''}`, 'ok', 2600);
+      else if(it.meta.gfx) toast(`✓ ${it.meta.label || 'Done'} — sent to the laptop`, 'ok', 1800);
+    } else if(res.error === 'confirm'){
+      flash(it.btn, '');
+      paused = true;
+      askConfirm(res.message || 'Are you sure?', () => {
+        paused = false;
+        const again = Object.assign({}, it.cmd, { confirmed: true });
+        delete again.expect;
+        if(it.durable){ queue.unshift({ cmdId: uuid(), cmd: again, btn: it.btn, meta: it.meta, t0: it.t0, durable: true, offline: it.offline, state: 'saved' }); saveQueue(); renderQueue(); pump(); }
+        else send(again, it.btn, it.meta);
+      }, () => { paused = false; if(it.durable) toast(`“${it.cmd.v}” discarded — not scored`, '', 2600); pump(); });
+    } else if(it.durable && it.offline && res.error === 'modal-open'){
+      // a saved run meets a popup on the laptop: it stays first in line
+      queue.unshift(it); it.state = 'blocked'; it.error = res.message || 'A window is open on the laptop';
+      saveQueue();
+    } else {
+      diag.failed++; diag.lastErr = res.message || res.error || '';
+      flash(it.btn, 'bad'); vibrate([30, 40, 30]);
+      toast('❌ ' + (res.message || 'Not done on the laptop'), 'bad', 4000);
+      if(res.error === 'revoked' || res.error === 'not-paired'){ joined = false; session = null; store.set(SESSION_KEY, null); gate(true, '🔌', 'Not paired', res.message || 'Scan the QR code on the laptop again.'); }
+      if(res.error === 'stale'){ lastModalJson = ''; Object.keys(secJson).forEach(k => { secJson[k] = ''; }); renderAll(); }
+    }
+    if(it.meta.done) it.meta.done(res);
+    renderQueue();
+    renderDiag();
     pump();
   }
-  document.querySelectorAll('#pad [data-ball]').forEach(b => b.addEventListener('click', () => { if(!b.disabled) send({ t: 'ball', v: b.dataset.ball }, b); }));
+  document.querySelectorAll('#pad [data-ball]').forEach(b => b.addEventListener('click', () => {
+    if(b.disabled) return;
+    // a new ball: the last ball's wheel is skipped (the laptop does the same)
+    if(P.modal && P.modal.id === 'ww-overlay'){ hiddenSig = sigOfModal(P.modal); lastModalJson = ''; renderModal(P.modal); }
+    send({ t: 'ball', v: b.dataset.ball }, b);
+  }));
+  // pressed look the moment the finger lands (not on release)
+  document.addEventListener('pointerdown', (e) => { const k = e.target.closest && e.target.closest('.k'); if(k && !k.disabled) k.classList.add('press'); }, { passive: true });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => document.addEventListener(ev, () => { document.querySelectorAll('.k.press').forEach(k => k.classList.remove('press')); }, { passive: true }));
   $('a-runout').addEventListener('click', (e) => send({ t: 'ball', v: 'W', pick: 'Run Out' }, e.currentTarget));
   document.querySelectorAll('[data-quick]').forEach(b => b.addEventListener('click', () => { if(!b.disabled) send({ t: 'quick', id: b.dataset.quick }, b); }));
   $('a-bowler').addEventListener('click', () => {
     if(!P['sec:bowler']){ toast('The bowler card is not on the laptop panel'); return; }
-    sheetMode = 'sec:bowler'; renderSecSheet();
+    sheetMode = 'sec:bowler'; renderSecSheet(true);
   });
   $('t-undo').addEventListener('click', (e) => {
     const s = P.score;
@@ -1082,6 +1432,57 @@
   $('clip-now').addEventListener('click', (e) => send({ t: 'highlight' }, e.currentTarget));
   $('hl-y').addEventListener('click', () => send({ t: 'hl', yes: true }, null));
   $('hl-n').addEventListener('click', () => send({ t: 'hl', yes: false }, null));
+
+  /* ---------------- line check + diagnostics ---------------- */
+  let pingTimer = null;
+  async function pingLoop(){
+    clearTimeout(pingTimer);
+    if(document.visibilityState === 'visible' && sock.connected && joined){
+      const t = performance.now(), on = sock.id;
+      const r = await emitAck('remote:ping', {}, 4000);
+      if(sock.id !== on){ pingTimer = setTimeout(pingLoop, 1000); return; }   // an answer (or miss) from an older connection
+      if(r){
+        note(diag.pings, Math.round(performance.now() - t), 30); diag.pingFails = 0;
+        if(typeof r.hostOnline === 'boolean' && r.hostOnline !== hostOnline){ hostOnline = r.hostOnline; renderQueue(); if(hostOnline) pump(); }
+      } else diag.pingFails++;
+      renderConn(); renderDiag();
+    }
+    pingTimer = setTimeout(pingLoop, 5000);
+  }
+  pingTimer = setTimeout(pingLoop, 1500);
+  // a fresh connection starts with a clean line check (misses from while it was down do not count)
+  sock.on('connect', () => { diag.pingFails = 0; diag.pings.length = 0; });
+  function renderDiag(){
+    const box = $('dg'); if(!box) return;
+    const c = diag.cmds.slice(-50);
+    const rtts = c.map(x => x.rtt), net = c.filter(x => x.srv != null).map(x => Math.max(0, x.rtt - x.srv)),
+      lap = c.filter(x => x.srv != null && x.host != null).map(x => Math.max(0, x.srv - x.host)), host = c.filter(x => x.host != null).map(x => x.host);
+    const ms = (v) => v == null ? '—' : v + ' ms';
+    const avg = (a) => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null;
+    const [cls, txt] = connState();
+    const s = P.score, cl = P.clips && P.clips.status;
+    const rows = [
+      ['Status', `<span class="${cls === 'ok' ? 'ok' : cls === 'bad' ? 'bad' : 'warn'}">${esc(txt)}</span>`],
+      ['Phone ↔ server (ping)', ms(diag.pings.length ? diag.pings[diag.pings.length - 1] : null) + (diag.pings.length > 2 ? ` · median ${ms(med(diag.pings))}` : '')],
+      ['Laptop', !sock.connected ? '—' : hostOnline ? (s && !s.online ? '<span class="warn">Connected · lost the server</span>' : '<span class="ok">Connected</span>') : '<span class="bad">Offline</span>'],
+      ['Press → laptop’s answer', rtts.length ? `${ms(avg(rtts))} avg · ${ms(p95(rtts))} p95` : '—'],
+      ['  network (phone↔server)', net.length ? `${ms(avg(net))} avg · ${ms(p95(net))} p95` : '—'],
+      ['  server ↔ laptop', lap.length ? `${ms(avg(lap))} avg · ${ms(p95(lap))} p95` : '—'],
+      ['  laptop working', host.length ? `${ms(avg(host))} avg · ${ms(p95(host))} p95` : '—'],
+      ['Presses measured', String(c.length)],
+      ['Saved on phone, not sent', String(queue.filter(it => it.durable).length)],
+      ['Failed presses', diag.failed ? `<span class="bad">${diag.failed}</span>${diag.lastErr ? ' · ' + esc(diag.lastErr.slice(0, 40)) : ''}` : '0'],
+      ['Last answered', diag.lastOkAt ? esc(timeOf(diag.lastOkAt)) : '—'],
+      ['Last press id', diag.lastCmdId ? esc(diag.lastCmdId.slice(0, 10)) + '…' : '—'],
+      ['Clipper / recording', cl ? `${esc(cl.engine && cl.engine.name || 'Clipper')} ${cl.engine && cl.engine.on ? '<span class="ok">on</span>' : '<span class="bad">off</span>'} · rec ${cl.rec && cl.rec.on ? '<span class="ok">on</span>' : '<span class="bad">off</span>'}` : '—'],
+      ['Match · version', s ? `${esc(s.matchId)} · v${esc(s.rev)} · ${esc(s.last ? s.last.n : 0)} balls` : '—']
+    ];
+    box.innerHTML = rows.map(r => `<span>${esc(r[0]).replace(/^ {2}/, '&nbsp;&nbsp;↳ ')}</span><span>${r[1]}</span>`).join('');
+  }
+  // for support / tests: what this phone measured and holds
+  window.__crPhone = { diag, queue, state: () => connState() };
+  $('conn').addEventListener('click', () => { go('match'); setTimeout(() => { const d = $('diag'); if(d) d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); });
+  setInterval(() => { if(tab === 'match') renderDiag(); }, 3000);
 
   // keep the screen on while scoring
   let wake = null;

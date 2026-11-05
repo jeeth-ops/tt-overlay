@@ -204,8 +204,22 @@ function setup({ io, safeMatchId, getMatchLock, lockTokenMatches, getSecret, whe
       } catch (e) { reply({ ok: false, error: 'server-error', message: 'Could not pair — try again.' }); }
     });
 
+    // A phone measuring its own line (round trip to the server) and whether
+    // the laptop is there — tiny, no match data.
+    socket.on('remote:ping', (d, ack) => {
+      if (typeof ack !== 'function') return;
+      const ph = socket.data.phone;
+      const h = ph && hosts.get(ph.key);
+      ack({ ok: true, paired: !!ph, hostOnline: !!(h && h.sockets.size) });
+    });
+
     socket.on('remote:cmd', async (d, ack) => {
-      const reply = typeof ack === 'function' ? ack : () => {};
+      // tm.srv: ms from the command reaching the server to the laptop's answer
+      // leaving it (monotonic clock) — the phone splits its round trip with it
+      const t0 = process.hrtime.bigint();
+      const srvMs = () => Number((process.hrtime.bigint() - t0) / 1000000n);
+      const ack0 = typeof ack === 'function' ? ack : () => {};
+      const reply = (res) => ack0(Object.assign({}, res, { tm: Object.assign({}, res && res.tm, { srv: srvMs() }) }));
       const ph = socket.data.phone;
       if (!ph) return reply({ ok: false, error: 'not-paired', message: 'This phone is not paired — scan the QR code on the laptop.' });
       if (!d || !okId(d.cmdId, 6, 64) || !d.cmd || typeof d.cmd !== 'object') return reply({ ok: false, error: 'bad-request' });
@@ -215,13 +229,13 @@ function setup({ io, safeMatchId, getMatchLock, lockTokenMatches, getSecret, whe
       // flood guard: 15 commands in any 3 seconds
       const now = Date.now();
       ph.recent = ph.recent.filter(t => now - t < 3000);
-      if (ph.recent.length >= 15) return reply({ ok: false, error: 'slow-down', message: 'Too many taps — wait a moment.' });
+      if (ph.recent.length >= 15) return reply({ ok: false, error: 'slow-down', retry: true, message: 'Too many taps — wait a moment.' });
       ph.recent.push(now);
       const h = hosts.get(ph.key);
-      if (!h || h.epoch == null || !h.sockets.size) return reply({ ok: false, error: 'laptop-offline', message: 'Laptop is offline — nothing was scored.' });
+      if (!h || h.epoch == null || !h.sockets.size) return reply({ ok: false, error: 'laptop-offline', message: 'Laptop is offline — nothing was scored yet.' });
       if (h.epoch !== ph.epoch) { socket.data.phone = null; return reply({ ok: false, error: 'revoked', message: 'The laptop disconnected this phone. Scan the QR code again.' }); }
       const hs = liveHostSocket(h);
-      if (!hs) return reply({ ok: false, error: 'laptop-offline', message: 'Laptop is offline — nothing was scored.' });
+      if (!hs) return reply({ ok: false, error: 'laptop-offline', message: 'Laptop is offline — nothing was scored yet.' });
       if (!(await lockStillHeld(h.room, h.lockToken))) return reply({ ok: false, error: 'match-locked', message: 'This match moved to another laptop — nothing was scored.' });
       hs.timeout(CMD_TIMEOUT_MS).emit('remote:cmd', { cmdId: d.cmdId, cmd: d.cmd, from: { sid: ph.sid, label: ph.label } }, (err, res) => {
         if (err) return reply({ ok: false, error: 'timeout', retry: true, message: 'The laptop did not answer in time.' });
