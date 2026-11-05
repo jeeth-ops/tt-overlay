@@ -157,6 +157,15 @@
   .ms-stream-note{ margin-top:4px; font-size:11.5px; font-weight:700; color:#4ade80; }
   .ms-stream-note.wait{ color:#fbbf24; }
   .ms-stream-note.bad{ color:#f87171; }
+  /* 📺 Test: one YouTube link per day (Day 2–4 under the Day 1 link) */
+  .ms-days{ margin-top:8px; display:grid; gap:6px; }
+  .ms-days[hidden]{ display:none; }
+  .ms-day-row{ display:grid; grid-template-columns:58px 1fr; align-items:center; gap:8px; }
+  .ms-day-tag{ font-size:11px; font-weight:800; letter-spacing:.6px; text-align:center; padding:7px 0; border-radius:8px;
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); }
+  .ms-day-row.on .ms-day-tag{ color:#4ade80; border-color:rgba(74,222,128,.45); }
+  .ms-day-row.bad .ms-day-tag{ color:#f87171; border-color:rgba(248,113,113,.45); }
+  .ms-day-hint{ font-size:11px; color:var(--text-dim); }
   .ms-date{ width:100%; box-sizing:border-box; padding:8px 10px; border-radius:7px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font:inherit; font-size:13px; color-scheme:dark; }
   .ms-hidden{ display:none !important; }
   .ms-formats{ display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:6px; }
@@ -3004,6 +3013,12 @@
           <span class="ms-stream-tick" id="stream-url-tick" hidden>✓</span>
         </div>
         <div class="ms-stream-note" id="stream-url-status" hidden></div>
+        <div class="ms-days" id="stream-days" hidden>
+          <div class="ms-day-hint">Test match — the link above is <b>Day 1</b>. Add the other days' streams; only the days you fill show on the scorecard.</div>
+          <div class="ms-day-row" data-day-row="2"><span class="ms-day-tag">DAY 2</span><input type="text" id="stream-url-d2" data-stream-day="2" placeholder="Day 2 YouTube link (optional)"></div>
+          <div class="ms-day-row" data-day-row="3"><span class="ms-day-tag">DAY 3</span><input type="text" id="stream-url-d3" data-stream-day="3" placeholder="Day 3 YouTube link (optional)"></div>
+          <div class="ms-day-row" data-day-row="4"><span class="ms-day-tag">DAY 4</span><input type="text" id="stream-url-d4" data-stream-day="4" placeholder="Day 4 YouTube link (optional)"></div>
+        </div>
         <label for="day-label">Day on the overlay <span class="ms-opt">Test match — type e.g. DAY 2; empty = DAY 1</span></label>
         <div style="display:flex; gap:6px; align-items:center;">
           <input type="text" id="day-label" maxlength="24" placeholder="DAY 1" autocomplete="off" style="flex:1;">
@@ -7345,6 +7360,8 @@ function defaultState(){
     oversPerInnings: 20,
     venue: '',
     streamUrl: '',
+    // 📺 Test only: the Day 2, Day 3, Day 4 YouTube links (Day 1 = streamUrl).
+    streamMoreDays: ['', '', ''],
     // 📅 The day text on the overlay's DAY badge (Test). '' = "DAY 1".
     dayLabel: '',
     teamA: { name:'Mumbai Indians', short:'MI', color:'#17337a', logoUrl:'', players: [], captainId: null, wkId: null },
@@ -9273,6 +9290,8 @@ function renderPanel(){
   renderRosterControls();
   maybeSet('venue', state.venue);
   maybeSet('stream-url', state.streamUrl || '');
+  [2, 3, 4].forEach(d => maybeSet('stream-url-d' + d, (state.streamMoreDays || [])[d - 2] || ''));
+  renderStreamDaysUI();
   maybeSet('day-label', state.dayLabel || '');
   maybeSet('league-name', state.leagueName || '');
   maybeSet('teamA-name', state.teamA.name);
@@ -9365,7 +9384,37 @@ function bindLive(id, apply){
   el.addEventListener(evt, () => { apply(el); pushState(); autoSyncMatchSnapshot(); });
 }
 bindLive('venue', el => { state.venue = el.value; });
-bindLive('stream-url', el => { state.streamUrl = el.value.trim(); renderStreamUrlStatus(); });
+bindLive('stream-url', el => { state.streamUrl = el.value.trim(); renderStreamUrlStatus(); setTimeout(pushDayLabelDuringBreak, 0); });
+// 📺 Day 2–4 links (Test). Shown only in Test; a link left in another format
+// is kept but not sent to the scorecard (see the scorecard's streamDaysOf).
+[2, 3, 4].forEach(d => bindLive('stream-url-d' + d, el => {
+  const list = Array.isArray(state.streamMoreDays) ? state.streamMoreDays.slice(0, 3) : [];
+  while(list.length < 3) list.push('');
+  list[d - 2] = el.value.trim().slice(0, 300);
+  state.streamMoreDays = list;
+  renderStreamDaysUI();
+  setTimeout(pushDayLabelDuringBreak, 0);
+}));
+function renderStreamDaysUI(){
+  const box = document.getElementById('stream-days');
+  if(!box) return;
+  const isTest = state.format === 'Test';
+  box.hidden = !isTest;
+  const lbl = document.querySelector('label[for="stream-url"]');
+  if(lbl){
+    const want = isTest ? 'YouTube live link — <b>Day 1</b> <span class="ms-opt">optional — shown on the public scorecard</span>'
+      : 'YouTube live link <span class="ms-opt">optional — shown on the public scorecard</span>';
+    if(lbl.dataset.mode !== (isTest ? 't' : 'n')){ lbl.innerHTML = want; lbl.dataset.mode = isTest ? 't' : 'n'; }
+  }
+  [2, 3, 4].forEach(d => {
+    const row = box.querySelector(`[data-day-row="${d}"]`);
+    const url = ((state.streamMoreDays || [])[d - 2] || '').trim();
+    if(!row) return;
+    row.classList.toggle('on', !!url && !!streamYouTubeId(url));
+    row.classList.toggle('bad', !!url && !streamYouTubeId(url));
+  });
+}
+document.getElementById('format').addEventListener('change', () => setTimeout(renderStreamDaysUI, 0));
 // 📅 DAY on the overlay — typed as the operator wants it ("DAY 2", "Day 3 · Session 2").
 bindLive('day-label', el => { state.dayLabel = el.value.replace(/\s+/g, ' ').slice(0, 24); setTimeout(pushDayLabelDuringBreak, 0); });
 // At an innings break pushState() holds the overlay on the finished innings
@@ -9373,7 +9422,7 @@ bindLive('day-label', el => { state.dayLabel = el.value.replace(/\s+/g, ' ').sli
 // last-shown state, so the next day can start before the next innings does.
 function pushDayLabelDuringBreak(){
   if(!isAwaitingNextInnings() || !lastBroadcastState) return;
-  send({ ...lastBroadcastState, dayLabel: state.dayLabel || '' });
+  send({ ...lastBroadcastState, dayLabel: state.dayLabel || '', streamUrl: state.streamUrl || '', streamMoreDays: (state.streamMoreDays || []).slice(0, 3) });
 }
 function dayLabelNumber(){
   const m = String(state.dayLabel || '').match(/(\d+)/);
@@ -13179,6 +13228,8 @@ function buildMatchRecordForLeague(){
     savedAt: new Date().toISOString(),
     venue: state.venue,
     streamUrl: state.streamUrl || '',
+    streamMoreDays: (state.streamMoreDays || []).slice(0, 3),
+    dayLabel: state.dayLabel || '',
     format: state.format,
     customOvers: state.format === 'Custom' ? (Number(state.customOvers) || null) : null,
     matchStage: state.matchStage || '',
