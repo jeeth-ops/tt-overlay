@@ -3004,6 +3004,12 @@
           <span class="ms-stream-tick" id="stream-url-tick" hidden>✓</span>
         </div>
         <div class="ms-stream-note" id="stream-url-status" hidden></div>
+        <label for="day-label">Day on the overlay <span class="ms-opt">Test match — type e.g. DAY 2; empty = DAY 1</span></label>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="text" id="day-label" maxlength="24" placeholder="DAY 1" autocomplete="off" style="flex:1;">
+          <button type="button" class="small ghost" id="day-label-prev" title="Previous day" style="flex:none;">−</button>
+          <button type="button" class="small" id="day-label-next" title="Next day" style="flex:none;">＋ Day</button>
+        </div>
       </section>
 
       <section class="ms-sec">
@@ -7339,6 +7345,8 @@ function defaultState(){
     oversPerInnings: 20,
     venue: '',
     streamUrl: '',
+    // 📅 The day text on the overlay's DAY badge (Test). '' = "DAY 1".
+    dayLabel: '',
     teamA: { name:'Mumbai Indians', short:'MI', color:'#17337a', logoUrl:'', players: [], captainId: null, wkId: null },
     teamB: { name:'Royal Challengers Bengaluru', short:'RCB', color:'#7a1620', logoUrl:'', players: [], captainId: null, wkId: null },
     // 🌟 TEAM/PLAYER MANAGEMENT — per-innings-scoped bookkeeping so the
@@ -9265,6 +9273,7 @@ function renderPanel(){
   renderRosterControls();
   maybeSet('venue', state.venue);
   maybeSet('stream-url', state.streamUrl || '');
+  maybeSet('day-label', state.dayLabel || '');
   maybeSet('league-name', state.leagueName || '');
   maybeSet('teamA-name', state.teamA.name);
   maybeSet('teamA-short', state.teamA.short);
@@ -9357,6 +9366,30 @@ function bindLive(id, apply){
 }
 bindLive('venue', el => { state.venue = el.value; });
 bindLive('stream-url', el => { state.streamUrl = el.value.trim(); renderStreamUrlStatus(); });
+// 📅 DAY on the overlay — typed as the operator wants it ("DAY 2", "Day 3 · Session 2").
+bindLive('day-label', el => { state.dayLabel = el.value.replace(/\s+/g, ' ').slice(0, 24); setTimeout(pushDayLabelDuringBreak, 0); });
+// At an innings break pushState() holds the overlay on the finished innings
+// (see isAwaitingNextInnings) — the day change still goes out, on that same
+// last-shown state, so the next day can start before the next innings does.
+function pushDayLabelDuringBreak(){
+  if(!isAwaitingNextInnings() || !lastBroadcastState) return;
+  send({ ...lastBroadcastState, dayLabel: state.dayLabel || '' });
+}
+function dayLabelNumber(){
+  const m = String(state.dayLabel || '').match(/(\d+)/);
+  return m ? Number(m[1]) : 1;
+}
+function stepDayLabel(delta){
+  const n = Math.max(1, Math.min(99, dayLabelNumber() + delta));
+  state.dayLabel = `DAY ${n}`;
+  document.getElementById('day-label').value = state.dayLabel;
+  pushState(true);
+  pushDayLabelDuringBreak();
+  autoSyncMatchSnapshot();
+  toast(`📅 Overlay now shows ${state.dayLabel}`);
+}
+document.getElementById('day-label-next').addEventListener('click', () => stepDayLabel(1));
+document.getElementById('day-label-prev').addEventListener('click', () => stepDayLabel(-1));
 // The same rule the public scorecard uses to find the video in a link.
 function streamYouTubeId(url){
   const m = String(url || '').trim().match(/(?:youtube\.com\/watch\?(?:.*&)?v=|youtube\.com\/live\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);

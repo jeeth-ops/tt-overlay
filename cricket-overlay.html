@@ -3523,9 +3523,13 @@ function renderState(s){
   // state, never hardcoded (see stumps-btn/resume-day-btn in the panel).
   {
     const dayBadge = document.getElementById('test-day-badge');
-    if(s.format === 'Test'){
+    // The panel's typed day text (cricket-panel: "Day on the overlay") wins;
+    // otherwise DAY <dayNumber> (cricket-panel3's Stumps / Next Day buttons).
+    const typedDay = String(s.dayLabel || '').replace(/\s+/g, ' ').trim().slice(0, 24).toUpperCase();
+    if(s.format === 'Test' || typedDay){
       const onStumps = s.dayStatus === 'STUMPS';
-      dayBadge.textContent = onStumps ? `STUMPS — DAY ${s.dayNumber || 1}` : `DAY ${s.dayNumber || 1}`;
+      const dayText = typedDay || `DAY ${s.dayNumber || 1}`;
+      dayBadge.textContent = onStumps ? `STUMPS — ${dayText}` : dayText;
       dayBadge.classList.toggle('stumps', onStumps);
       dayBadge.style.display = 'flex';
     } else {
