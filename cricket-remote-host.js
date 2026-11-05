@@ -37,7 +37,9 @@
   const MIRROR = new Set(['wd-overlay', 'wicket-modal-overlay', 'caught-modal-overlay', 'stumped-modal-overlay', 'runout-modal-overlay',
     'retired-modal-overlay', 'extras-modal-overlay', 'overthrow-modal-overlay', 'newbat-modal-overlay', 'newover-modal-overlay',
     'midover-bowler-overlay', 'ww-overlay', 'penalty-modal-overlay', 'auto-card-modal-overlay', 'correct-batsman-modal-overlay',
-    'ba-overlay', 'ip-overlay']);
+    'ba-overlay', 'ip-overlay',
+    // ✏️ Edit Scorecard (owner accounts only — its button shows only there): delete from the end, transfer an over
+    'ball-edit-modal-overlay']);
   // Open, but never in the way of the next delivery (it answers itself).
   const NONBLOCKING = new Set(['auto-card-modal-overlay']);
   const BALL_KINDS = ['0', '1', '2', '3', '4', '5', '6', 'W', 'Wd', 'Nb', 'B', 'LB', 'OT'];
@@ -113,6 +115,10 @@
     if(el.style && (el.style.display === 'none' || el.style.visibility === 'hidden')) return false;
     const cs = window.getComputedStyle ? getComputedStyle(el) : null;
     return !(cs && (cs.display === 'none' || cs.visibility === 'hidden'));
+  }
+  function shownChain(el){
+    for(let n = el; n && n !== document.body; n = n.parentElement) if(!(n.tagName === 'SELECT' && n._proDD) && !shown(n)) return false;
+    return true;
   }
   function shownUpTo(el, root){
     for(let n = el; n; n = n.parentElement){
@@ -193,7 +199,9 @@
     const push = (it) => { if(items.length >= 260){ tooBig = true; return; } items.push(it); };
     const ex = exclude || new Set();
     roots.forEach((root, ri) => {
-      if(!root) return;
+      // a root the laptop does not show (its card or a parent is hidden — e.g.
+      // tournament controls in Single Match mode) is not on the phone either
+      if(!root || !shownChain(root)) return;
       const R = (el) => ri + '|' + refIn(el, root);
       function visit(c){
         if(tooBig || ex.has(c)) return;
@@ -326,7 +334,17 @@
     { id: 'crease', tab: 'match', icon: '👥', roots: () => [$('card-players')] },
     { id: 'bowler', tab: 'match', icon: '🎯', roots: () => [$('card-bowler')] },
     { id: 'newbat', tab: 'match', icon: '🆕', roots: () => [$('card-new-batsman')] },
-    { id: 'events', tab: 'match', icon: '🩹', title: 'Match Events', roots: () => [$('lc-retired-btn'), $('lc-penalty-btn'), $('lc-impact-btn'), $('freehit-banner'), $('so-bar')] },
+    { id: 'events', tab: 'match', icon: '🩹', title: 'Match Events', roots: () => [$('lc-retired-btn'), $('lc-penalty-btn'), $('lc-impact-btn'), $('freehit-banner'), $('so-bar'), $('edit-scorecard-btn')] },
+    // ▶ the end of Match Setup: its review and Start Match (teams, logos, format stay on the laptop)
+    { id: 'start', tab: 'match', icon: '▶️', title: 'Start Match', roots: () => [up($('ms-start'))] },
+    // 📅 what changes during a match: the venue, the YouTube link(s) — one per day in a Test — and the DAY on the overlay
+    { id: 'daystream', tab: 'match', icon: '📅', title: 'Day, Venue & Stream', roots: () => [document.querySelector('label[for="venue"]'), $('venue'),
+      document.querySelector('label[for="stream-url"]'), up($('stream-url')), $('stream-days'), document.querySelector('label[for="day-label"]'), $('day-label') ? up($('day-label')) : null] },
+    // 💾 saving to the tournament, the innings check, the reports (made and saved on this laptop) — Reset stays on the laptop
+    { id: 'reports', tab: 'match', icon: '📄', title: 'Save, Reports & Checks', roots: () => [$('save-match-league-btn'), $('reconcile-btn'), $('reconcile-out'),
+      $('download-match-excel-btn'), $('mr-pdf-btn'), $('mr-both-btn'), $('mr-auto') ? $('mr-auto').closest('.toggle-row') || $('mr-auto') : null, $('download-tournament-excel-btn')] },
+    // 🔴 Panel 3's YouTube live: health, GO LIVE / STOP / lower quality — the stream key, URL and devices stay on the laptop
+    { id: 'live', tab: 'clip', icon: '🔴', title: 'Live Stream (YouTube)', roots: () => (PANEL === 'panel3' ? [$('ls-health-grid'), $('ls-cannot-start'), $('start-live-btn'), $('stop-live-btn'), $('ls-stream-health')] : []) },
     { id: 'innings', tab: 'match', icon: '🔁', title: 'Innings', roots: () => ['next-innings-btn', 'declare-btn', 'stumps-btn', 'resume-day-btn', 'draw-btn'].map($) }
   ];
   const SEC = Object.fromEntries(SECTIONS.map(s => [s.id, s]));
@@ -334,7 +352,7 @@
   function secExclude(sec){ return new Set((safe(() => (sec.exclude ? sec.exclude() : []), []) || []).filter(Boolean)); }
   function readSection(sec){
     const roots = secRoots(sec);
-    if(!roots.some(r => r && shown(r))) return null;
+    if(!roots.some(r => r && shownChain(r))) return null;
     const s = serialize(roots, secExclude(sec));
     if(!s.items.length) return null;
     const first = roots.find(r => r && r.classList && r.classList.contains('card'));
@@ -605,7 +623,10 @@
       archive: (s.inningsArchive || []).map(a => ({ no: a.no, team: a.team, score: `${a.runs}/${a.wickets}`, overs: a.overs })),
       batting: bat, bowling: bowl,
       extras: s.extras && s.extras[bk] ? s.extras[bk] : null,
-      partnership: { runs: s.partnershipRuns || 0, balls: s.partnershipBalls || 0 }
+      partnership: { runs: s.partnershipRuns || 0, balls: s.partnershipBalls || 0 },
+      // the links the laptop shows (overlay for vMix/OBS, public scorecard, LED) — copied / shared on the phone
+      links: ['overlay', 'scorecard', 'led'].map(k => ({ k, url: norm($(k + '-link') && $(k + '-link').value) })).filter(x => /^https?:\/\//.test(x.url)),
+      lastBall: (() => { const l = s.ballLog || []; const e = l[l.length - 1]; return e ? { over: e.over || '', kind: e.ballType || '', runs: e.runs || 0, wicket: !!e.isWicket, striker: e.striker || '', bowler: e.bowler || '' } : null; })()
     };
   }
 

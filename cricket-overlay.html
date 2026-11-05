@@ -2308,6 +2308,8 @@
   }
   .ar-panel > *{ position:absolute; }
   .ar-p-bg{ inset:0; background:linear-gradient(112deg, var(--ar-a-deep) 0%, var(--ar-mid) 50%, var(--ar-b-deep) 100%); }
+  /* ?layers=1 (see perfMeter): the intro's big fading layers composited instead of repainted */
+  .gfx-layers .ar-scrim, .gfx-layers .ar-env, .gfx-layers .ar-p-glow, .gfx-layers .ar-p-lines{ will-change:opacity; }
   .ar-p-glow{ inset:0; pointer-events:none; }
   .ar-p-glow.a{ background:radial-gradient(75% 90% at 6% 0%, var(--ar-a-glow) 0%, rgba(0,0,0,0) 72%); }
   .ar-p-glow.b{ background:radial-gradient(65% 80% at 100% 100%, var(--ar-b-glow) 0%, rgba(0,0,0,0) 70%); }
@@ -3007,6 +3009,40 @@ connStatus.textContent = 'Connecting…';
 connStatus.classList.add('visible');
 
 const socket = io({ query: { room: matchId } });
+/* ⏱ Checking the overlay on the vMix machine itself:
+     ?perf=1    a small meter (top left): frames per second, dropped and long
+                frames, and how long a score took from the panel to here
+                (the panel's own time on the state — exact when the panel and
+                this overlay run on the same PC, as they usually do).
+     ?layers=1  the match intro's big fading layers (scrim, strands, panel
+                glow and lines) each get their own compositor layer: about
+                half the paint work per frame. Opt-in: with GPU rendering that
+                is the cheaper path; with software rendering it measured a
+                little slower, so try both on the vMix PC with ?perf=1.
+   Neither changes what is shown on air (the meter only when asked for). */
+if(params.get('layers') === '1') document.documentElement.classList.add('gfx-layers');
+(function perfMeter(){
+  if(params.get('perf') !== '1') return;
+  const box = document.createElement('div');
+  box.id = 'perf-meter';
+  box.style.cssText = 'position:fixed;left:8px;top:8px;z-index:2147483647;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.72);color:#e5f0ff;'
+    + 'font:600 13px/1.35 ui-monospace,Menlo,Consolas,monospace;pointer-events:none;white-space:pre';
+  document.addEventListener('DOMContentLoaded', () => document.body.appendChild(box));
+  if(document.body) document.body.appendChild(box);
+  let frames = 0, drops = 0, long = 0, last = performance.now(), lag = null, lagMax = 0, worst = 0;
+  const tick = (t) => { const gap = t - last; last = t; frames++; if(gap > 25) drops++; if(gap > worst) worst = gap; requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+  try{ new PerformanceObserver(l => { long += l.getEntries().length; }).observe({ type: 'long-animation-frame' }); }catch(e){}
+  // the first state after (re)connecting is the room's stored one, not a live push — not timed
+  let replay = true;
+  socket.on('connect', () => { replay = true; });
+  socket.on('liveCricketScore', (d) => { if(replay){ replay = false; return; } const at = Number(d && d.localRevAt); if(at > 0){ lag = Date.now() - at; if(lag > lagMax) lagMax = lag; } });
+  setInterval(() => {
+    box.textContent = `FPS ${frames}  dropped ${drops}  long ${long}  worst ${Math.round(worst)} ms\n`
+      + `panel → overlay ${lag == null ? '—' : lag + ' ms'}${lag == null ? '' : '  (max ' + lagMax + ')'}${document.documentElement.classList.contains('gfx-layers') ? '\nlayers=1' : ''}`;
+    frames = 0; drops = 0; long = 0; worst = 0;
+  }, 1000);
+})();
 socket.on('connect', () => connStatus.classList.remove('visible'));
 socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
