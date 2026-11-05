@@ -56,6 +56,7 @@
   .chip.on{color:#d1fae5} .chip.on i{background:var(--ok)}
   .chip.off{color:#fecaca} .chip.off i{background:var(--air)}
   .chip.rec.on i{background:var(--air);animation:blink 1.2s infinite} .chip.rec.on{color:#fecaca}
+  .chip.air{color:#fecaca;border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.1)} .chip.air i{background:var(--air)}
   .netbar{position:fixed;left:12px;right:12px;top:calc(var(--hdr) + var(--safe-t) + 6px);z-index:29;padding:8px 12px;border-radius:12px;background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.35);color:#fde68a;font-size:12.5px;font-weight:600;transform:translateY(-12px);opacity:0;pointer-events:none;transition:transform .25s var(--ease),opacity .25s}
   .netbar.show{transform:none;opacity:1}
 
@@ -91,20 +92,38 @@
   .hrow{display:flex;align-items:center;gap:10px}
   .logo{width:30px;height:30px;border-radius:9px;object-fit:cover;background:var(--team);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#fff;flex:none;overflow:hidden}
   .logo img{width:100%;height:100%;object-fit:cover}
-  .tname{font-weight:800;font-size:15px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tname{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.15}
+  .tname b{font-weight:800;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tname small{font-size:11.5px;font-weight:600;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tname small:empty{display:none}
   .live{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:900;letter-spacing:.1em;color:#fecaca;background:rgba(239,68,68,.16);padding:3px 8px;border-radius:999px}
   .live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--air);animation:blink 1.4s infinite}
-  .big{display:flex;align-items:baseline;gap:12px;margin:8px 0 2px}
+  .big{display:flex;align-items:baseline;gap:12px;margin:8px 0 2px;flex-wrap:wrap}
+  .tgt{margin-left:auto;align-self:center;font-size:11.5px;font-weight:800;letter-spacing:.04em;padding:4px 9px;border-radius:999px;background:rgba(255,255,255,.07);color:#dbe3ff}
+  .tgt[hidden]{display:none}
+  /* the numbers an operator glances at: run rates, partnership, extras */
+  .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}
+  .stats:empty{display:none}
+  .stats .st2{padding:6px 8px;border-radius:11px;background:rgba(255,255,255,.045);border:1px solid var(--line);min-width:0}
+  .stats .st2 i{display:block;font-style:normal;font-size:9.5px;font-weight:800;letter-spacing:.09em;color:var(--mut);text-transform:uppercase}
+  .stats .st2 b{display:block;font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stats .st2.hot b{color:#fcd34d}
+  .ovrow{display:flex;align-items:center;gap:10px;margin-top:10px}
+  .ovrow .pips{flex:1;min-width:0;margin-top:0}
+  .lastb{flex:none;max-width:44%;font-size:11.5px;font-weight:700;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+  .lastb b{color:var(--tx)}
   #runs{font-size:48px;font-weight:900;letter-spacing:-2px;line-height:1}
   #overs{font-size:20px;font-weight:800;color:#dbe3ff}
   #overs small{font-size:13px;color:var(--mut);font-weight:700}
-  .sub{font-size:13px;color:#b6bfd3;min-height:18px}
+  .sub{font-size:13px;color:#b6bfd3;min-height:0}
+  .sub:empty{display:none}
   .fh{display:none;position:absolute;right:14px;top:46px;font-size:10.5px;font-weight:900;letter-spacing:.1em;padding:5px 9px;border-radius:9px;background:#facc15;color:#221800}
   .fh.show{display:block;animation:breathe 1.3s infinite}
   @keyframes breathe{50%{transform:scale(1.06)}}
   .bump{animation:bump .4s var(--ease)}
   @keyframes bump{40%{transform:scale(1.07);color:#fff}}
-  .crease{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);display:grid;gap:5px}
+  .crease{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:5px 14px}
+  #p-b{grid-column:1/-1}
   .prow{display:flex;align-items:center;gap:8px;font-size:15px}
   .prow .pn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .prow b{font-weight:800}
@@ -324,10 +343,40 @@
   .gate p{margin:0;color:var(--mut);font-size:15px;line-height:1.5;max-width:340px}
   .gate button{margin-top:6px;padding:13px 22px;border-radius:14px;background:#262f48;font-weight:800}
 
-  @media (max-height:760px){ .k{min-height:50px} .k.four,.k.six{min-height:56px} #runs{font-size:40px} .pips{margin-top:7px} }
+  /* shorter screens: the whole pad (and Undo / Swap / Clip) fits without scrolling */
+  @media (max-height:760px){
+    :root{--hdr:68px}
+    .mt-sub{display:none}
+    .hdr{padding-top:calc(var(--safe-t) + 8px);padding-bottom:8px}
+    .chips{margin-top:6px} .chip{padding:3px 8px;font-size:10.5px}
+    .hero{padding:10px 12px}
+    .logo{width:26px;height:26px;border-radius:8px}
+    .big{margin:4px 0 0} #runs{font-size:38px} #overs{font-size:17px}
+    .stats{margin-top:6px;gap:5px} .stats .st2{padding:4px 7px} .stats .st2 b{font-size:13px}
+    .crease{margin-top:7px;padding-top:6px;gap:3px 12px} .prow{font-size:14px}
+    .ovrow{margin-top:7px} .pip{min-width:26px;height:26px;font-size:12px}
+    .wrap{gap:8px}
+    .k{min-height:48px} .k.four,.k.six{min-height:54px;font-size:28px} .k.act{min-height:44px} .k.tool{min-height:42px}
+  }
+  @media (max-height:690px){
+    /* run rates, partnership, extras as one line */
+    .stats{display:flex;flex-wrap:nowrap;gap:10px;overflow:hidden}
+    .stats .st2{padding:0;border:0;background:none;display:flex;gap:4px;align-items:baseline;flex:none}
+    .stats .st2 i{font-size:9.5px} .stats .st2 b{font-size:12.5px}
+    .k{min-height:43px;font-size:22px} .k.four,.k.six{min-height:47px;font-size:26px} .k.act{min-height:38px} .k.tool{min-height:36px}
+    .pad{gap:6px} .view{padding-top:8px}
+    .crease{margin-top:5px;padding-top:5px} .prow{font-size:13.5px}
+  }
+  @media (max-height:600px){
+    :root{--hdr:46px}
+    .chips{display:none} .stats{display:none}
+    .k{min-height:40px} .k.four,.k.six{min-height:44px}
+  }
   /* ---------- wagon wheel dock: above the pad, never over it ---------- */
   .wwdock{position:fixed;left:0;right:0;top:0;z-index:35;display:flex;flex-direction:column;gap:6px;padding:calc(var(--safe-t) + 8px) 12px 8px;background:rgba(9,12,20,.97);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--line2);box-shadow:0 14px 40px rgba(0,0,0,.45);transform:translateY(-104%);transition:transform .2s var(--ease);max-width:620px;margin:0 auto}
   .wwdock.show{transform:none}
+  .wwdock.side{transform:translateX(-104%);border-bottom:0;border-right:1px solid var(--line2)}
+  .wwdock.side.show{transform:none}
   .wwd-top{display:flex;align-items:center;gap:8px;min-height:34px}
   .wwd-t{flex:1;min-width:0;display:flex;flex-direction:column}
   .wwd-t b{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -368,6 +417,41 @@
   .diag .dg .ok{color:#86efac} .diag .dg .warn{color:#fcd34d} .diag .dg .bad{color:#fca5a5}
   .diag .dnote{font-size:11.5px;color:var(--dim);margin-top:8px;line-height:1.4}
   .conn{cursor:pointer}
+  .links .lk{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+  .links .lk:first-of-type{border-top:0}
+  .links .lk span{flex:1;min-width:0;display:flex;flex-direction:column}
+  .links .lk b{font-size:13.5px}
+  .links .lk small{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .links .lk button{flex:none;padding:8px 12px;border-radius:10px;background:#232c44;font-size:12.5px;font-weight:800}
+  /* ---------- landscape (a phone on its side, a tablet): score left, pad right ---------- */
+  @media (orientation:landscape) and (min-width:640px){
+    :root{--hdr:84px}
+    #v-score .view, #v-score{padding-top:8px}
+    /* the score card spans the pad's three rows, so a taller card never pushes a key down */
+    #v-score .wrap{max-width:1100px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:start;column-gap:14px}
+    #hero{grid-column:1;grid-row:1 / span 3} #pad{grid-column:2;grid-row:1} .pad.acts{grid-column:2;grid-row:2} .pad.tools{grid-column:2;grid-row:3}
+    #hl{grid-column:1;grid-row:4} #busy{grid-column:1;grid-row:5} #pend{grid-column:1;grid-row:6} #queue{grid-column:2;grid-row:4}
+    #v-score .k{min-height:48px} #v-score .k.four,#v-score .k.six{min-height:54px}
+    .chips{margin-top:6px}
+  }
+  /* a phone on its side: little height — slim header and tab bar, compact keys */
+  @media (orientation:landscape) and (max-height:500px){
+    :root{--hdr:50px;--nav:50px}
+    .hdr{padding:calc(var(--safe-t) + 6px) 14px 6px}
+    .hdr-top{gap:10px} .mt-sub{display:none}
+    .chips{position:absolute;right:150px;top:calc(var(--safe-t) + 9px);margin:0;max-width:calc(100% - 380px)}
+    .tab{flex-direction:row;gap:6px;font-size:11.5px} .tab svg{width:20px;height:20px}
+    #v-score .k{min-height:35px;font-size:19px;border-radius:12px} #v-score .k.four,#v-score .k.six{min-height:39px;font-size:22px}
+    #v-score .k small{display:none}
+    #v-score .k.act{min-height:32px;font-size:11px} #v-score .k.tool{min-height:31px;font-size:12px}
+    #v-score .pad{gap:5px} #v-score .wrap{gap:5px} .view{padding-top:6px}
+    .hero{padding:9px 12px} #runs{font-size:34px} .stats .st2 b{font-size:12.5px}
+    /* the score column has the room: status chips and the numbers stay */
+    .chips{display:flex} .stats{display:flex}
+    .tab .bd{position:static;margin-left:2px}
+  }
+  /* small phones (iPhone SE / 360 × 640 Android) */
+  @media (max-width:360px){ .k{font-size:22px} .k.ext{font-size:13px} .k.act{font-size:11px} #runs{font-size:42px} .stats .st2 b{font-size:13px} }
   @media (prefers-reduced-motion:reduce){ *{animation:none!important;transition:none!important} }
 </style>
 </head>
@@ -393,16 +477,17 @@
   <section class="view on" id="v-score" data-tab="score">
     <div class="wrap">
       <div class="card hero" id="hero">
-        <div class="hrow"><div class="logo" id="bat-logo"></div><div class="tname" id="bat-name">—</div><span class="live" id="inn">LIVE</span></div>
-        <div class="big"><span id="runs" class="num">0/0</span><span id="overs" class="num">0.0</span></div>
+        <div class="hrow"><div class="logo" id="bat-logo"></div><div class="tname"><b id="bat-name">—</b><small id="vs-name"></small></div><span class="live" id="inn">LIVE</span></div>
+        <div class="big"><span id="runs" class="num">0/0</span><span id="overs" class="num">0.0</span><span class="tgt num" id="tgt" hidden></span></div>
         <div class="sub num" id="chase"></div>
+        <div class="stats num" id="stats"></div>
         <div class="fh" id="freehit">FREE HIT</div>
         <div class="crease">
           <div class="prow on" id="p-s"><i class="st"></i><span class="pn">—</span><b class="num"></b></div>
           <div class="prow" id="p-ns"><i class="st"></i><span class="pn">—</span><b class="num"></b></div>
           <div class="prow bw" id="p-b"><span>🎯</span><span class="pn">—</span><b class="num"></b></div>
         </div>
-        <div class="pips" id="pips"></div>
+        <div class="ovrow"><div class="pips" id="pips"></div><span class="lastb" id="lastball"></span></div>
       </div>
       <div class="banner hl" id="hl"><span class="sp">🎬 Was that a highlight?</span><button class="y" id="hl-y">Yes</button><button id="hl-n">No</button></div>
       <div class="banner busy" id="busy"></div>
@@ -464,6 +549,7 @@
   <section class="view" id="v-match" data-tab="match">
     <div class="wrap">
       <div class="card" id="minfo"></div>
+      <div class="card links" id="links" hidden><div class="lbl">Links</div><div id="links-list"></div></div>
       <div class="card diag" id="diag"><div class="lbl">Connection &amp; sync</div><div class="dg" id="dg"></div><div class="dnote">Measured on this phone: every press is timed from the tap to the laptop’s answer, split by the server and the laptop. The overlay is updated by the laptop the moment it scores — before this phone hears back.</div></div>
       <div class="card"><div class="lbl" style="margin-bottom:4px">Batting</div><div id="bat-tbl"></div></div>
       <div class="card"><div class="lbl" style="margin-bottom:4px">Bowling</div><div id="bowl-tbl"></div></div>
@@ -473,9 +559,9 @@
 </main>
 
 <nav class="tabbar" id="tabbar">
-  <button class="tab on" data-go="score"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.2 4.8c2 2.2 2 12.2 0 14.4M15.8 4.8c-2 2.2-2 12.2 0 14.4"/></svg>Scoring</button>
+  <button class="tab on" data-go="score"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.2 4.8c2 2.2 2 12.2 0 14.4M15.8 4.8c-2 2.2-2 12.2 0 14.4"/></svg>Score</button>
   <button class="tab" data-go="gfx"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2.5"/><path d="M8 21h8M12 17v4"/><path d="M10 9.2v3.6l3.2-1.8z" fill="currentColor"/></svg>Graphics<span class="bd" id="bd-gfx"></span></button>
-  <button class="tab" data-go="clip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg>Clipper<span class="bd" id="bd-clip"></span></button>
+  <button class="tab" data-go="clip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg>Clips<span class="bd" id="bd-clip"></span></button>
   <button class="tab" data-go="match"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.5" width="14" height="18" rx="2.5"/><path d="M9 3.5h6v3H9zM8.5 11h7M8.5 15h5"/></svg>Match</button>
   <span class="tabind" id="tabind"></span>
 </nav>
@@ -625,7 +711,9 @@
     chip('ch-laptop', live ? (s && !s.online ? false : true) : false, live ? (s && !s.online ? 'Laptop off server' : 'Laptop') : 'Laptop');
     chip('ch-clip', c ? !!c.engine.on : null, c ? c.engine.name : 'Clipper');
     chip('ch-rec', c ? !!c.rec.on : null, c && c.rec.on ? 'Recording' : 'Rec');
-    chip('ch-gfx', live && P.sections ? true : null, live && P.sections ? 'Graphics synced' : 'Graphics');
+    const air = (P.onair || []).length;
+    chip('ch-gfx', live && P.sections ? true : null, live && P.sections ? (air ? `${air} on air` : 'Graphics ready') : 'Graphics');
+    $('ch-gfx').classList.toggle('air', live && air > 0);
     let bar = '';
     if(!sock.connected && everConnected) bar = downSince && Date.now() - downSince > 11000 ? '⚠️ No connection — runs (0–6) you press are saved on this phone and sent the moment it is back. The laptop keeps running.' : '↻ Reconnecting… the laptop keeps running; runs you press are saved here.';
     else if(joined && !hostOnline) bar = '💻 The laptop panel is offline — open it (or check its internet). Runs (0–6) are saved on this phone until it is back; nothing else is sent.';
@@ -675,12 +763,28 @@
     const scoreText = `${s.runs}/${s.wkts}`;
     if(scoreText !== lastScore){ const r = $('runs'); r.textContent = scoreText; if(lastScore){ r.classList.remove('bump'); void r.offsetWidth; r.classList.add('bump'); } lastScore = scoreText; }
     $('overs').innerHTML = `${esc(s.overs)}${s.maxOvers ? ` <small>/ ${esc(s.maxOvers)} ov</small>` : ' <small>ov</small>'}`;
-    let sub = s.crr != null ? `CRR ${s.crr}` : '';
+    const bowl = s.bowl || {};
+    $('vs-name').textContent = bowl.name || bowl.short ? `vs ${bowl.short || bowl.name}` : '';
+    const tgt = $('tgt');
+    tgt.hidden = !s.target; tgt.textContent = s.target ? `Target ${s.target}` : '';
+    let sub = '';
     if(s.target){
       const need = s.target - s.runs;
-      sub = need > 0 ? `Need ${need} off ${s.ballsLeft != null ? s.ballsLeft + ' balls' : '—'}${s.rrr ? ` · RRR ${s.rrr}` : ''}` : `Target ${s.target} reached`;
+      sub = need > 0 ? `Need ${need} off ${s.ballsLeft != null ? s.ballsLeft + ' balls' : '—'}` : `Target ${s.target} reached`;
     }
     $('chase').textContent = sub;
+    // CRR · RRR (or projected) · partnership · extras — from the laptop's own numbers
+    const m = P.match || {};
+    const ext = m.extras ? ['wd', 'nb', 'b', 'lb', 'pen'].reduce((a, k) => a + (Number(m.extras[k]) || 0), 0) : null;
+    const ovNum = (() => { const [o, b] = String(s.overs || '0.0').split('.').map(Number); return (o || 0) + (b || 0) / 6; })();
+    const proj = !s.target && s.maxOvers && ovNum > 0 && s.crr != null ? Math.round(Number(s.crr) * s.maxOvers) : null;
+    const cells = [['CRR', s.crr != null ? s.crr : '—'], s.target ? ['RRR', s.rrr != null ? s.rrr : '—', true] : ['Proj.', proj != null ? proj : '—'],
+      ['P’ship', m.partnership ? `${m.partnership.runs} (${m.partnership.balls})` : '—'], ['Extras', ext != null ? ext : '—']];
+    const statsHtml = cells.map(c => `<div class="st2${c[2] ? ' hot' : ''}"><i>${esc(c[0])}</i><b>${esc(c[1])}</b></div>`).join('');
+    if($('stats').innerHTML !== statsHtml) $('stats').innerHTML = statsHtml;
+    const lb = m.lastBall;
+    const lbTxt = lb ? (lb.wicket ? 'WICKET' : ({ '4': 'FOUR', '6': 'SIX', '0': 'dot', Wd: 'wide', Nb: 'no ball', B: 'bye', LB: 'leg bye', OT: 'overthrow' }[lb.kind] || (lb.runs + ' run' + (lb.runs === 1 ? '' : 's')))) : '';
+    $('lastball').innerHTML = lb ? `Last <b>${esc(lbTxt)}</b>${lb.striker ? ' · ' + esc(lb.striker) : ''}` : '';
     $('freehit').classList.toggle('show', !!s.freeHit);
     const prow = (id, p, ph) => {
       const el = $(id);
@@ -790,7 +894,8 @@
   /* ---------------- sections: GRAPHICS / CLIPPER / MATCH ---------------- */
   let openSecs = {};
   try{ openSecs = JSON.parse(store.get('crOpenSecs') || '{}') || {}; }catch(e){ openSecs = {}; }
-  const DEFAULT_OPEN = { scorebug: true, toss: true, tossm: false, squads: false, bcg: true, playercards: true, statcards: false, summary: true, milestones: false, tournament: false, recording: false, clipper: true, crease: false, bowler: true, newbat: false, events: true, innings: false };
+  const DEFAULT_OPEN = { scorebug: true, toss: true, tossm: false, squads: false, bcg: true, playercards: true, statcards: false, summary: true, milestones: false, tournament: false, recording: false, clipper: true, crease: false, bowler: true, newbat: false, events: true, innings: false,
+    start: false, daystream: false, reports: false, live: true };
   const isOpen = (id) => openSecs[id] != null ? !!openSecs[id] : !!DEFAULT_OPEN[id];
   const secJson = {};
   function renderSections(onlyTab){
@@ -970,8 +1075,19 @@
       + `<div class="muted" style="font-size:12px;margin-top:8px">Partnership ${m.partnership.runs} (${m.partnership.balls})${m.extras ? ` · Extras ${['wd', 'nb', 'b', 'lb', 'pen'].reduce((s, k) => s + (m.extras[k] || 0), 0)}` : ''}</div>` : '<div class="empty">No batting yet</div>';
     $('bowl-tbl').innerHTML = (m.bowling || []).length ? `<table class="sc"><tr><th>Bowler</th><th>O</th><th>M</th><th>R</th><th>W</th></tr>${m.bowling.map(b =>
       `<tr class="${b.now ? 'now' : ''}"><td>${esc(b.name)}${b.now ? ' ●' : ''}</td><td>${esc(b.o)}</td><td>${b.m}</td><td>${b.r}</td><td><b>${b.w}</b></td></tr>`).join('')}</table>` : '<div class="empty">No bowling yet</div>';
+    const L = m.links || [];
+    $('links').hidden = !L.length;
+    const NAMES = { overlay: ['Overlay (vMix / OBS browser input)', '🖥️'], scorecard: ['Public scorecard', '📋'], led: ['LED screen output', '🏟️'] };
+    const lhtml = L.map(x => `<div class="lk"><span><b>${esc((NAMES[x.k] || [x.k])[1] || '')} ${esc((NAMES[x.k] || [x.k])[0])}</b><small>${esc(x.url)}</small></span>`
+      + `<button data-copy="${esc(x.url)}">Copy</button>${navigator.share ? `<button data-share="${esc(x.url)}" data-title="${esc((NAMES[x.k] || [x.k])[0])}">Share</button>` : ''}</div>`).join('');
+    if($('links-list').innerHTML !== lhtml) $('links-list').innerHTML = lhtml;
     renderers.score();
   };
+  $('links-list').addEventListener('click', async (e) => {
+    const c = e.target.closest('[data-copy]'), sh = e.target.closest('[data-share]');
+    if(c){ try{ await navigator.clipboard.writeText(c.dataset.copy); toast('📋 Link copied', 'ok', 1600); }catch(err){ toast('Could not copy — long-press the link instead', 'bad'); } }
+    if(sh){ try{ await navigator.share({ title: sh.dataset.title, url: sh.dataset.share }); }catch(err){} }
+  });
 
   /* ---------------- the laptop's popup / a card / a question, as a sheet ---------------- */
   const SOFT = new Set(['ww-overlay', 'auto-card-modal-overlay']);
@@ -993,7 +1109,17 @@
      phone scrolled down): it falls back to the sheet, which ignores taps in
      its first 300 ms. Only on the Scoring screen. */
   function padTop(){ const p = $('pad'); return p ? p.getBoundingClientRect().top : 0; }
-  function dockFits(){ return tab === 'score' && padTop() - 6 >= 250; }
+  // where the wheel can sit without covering a single scoring key:
+  // above the pad (portrait), or beside it (landscape, pad on the right)
+  function dockRect(){
+    const p = $('pad'); if(!p || tab !== 'score') return null;
+    const r = p.getBoundingClientRect();
+    if(r.top - 6 >= 250) return { top: 0, left: 0, width: innerWidth, height: Math.round(r.top - 6), side: false };
+    const nav = $('tabbar').getBoundingClientRect().top;
+    if(r.left - 10 >= 250) return { top: 0, left: 0, width: Math.round(r.left - 8), height: Math.round(nav), side: true };
+    return null;
+  }
+  function dockFits(){ return !!dockRect(); }
   function hideDock(){ const d = $('wwdock'); if(d.classList.contains('show')) d.classList.remove('show'); }
   function showDock(m){
     const d = $('wwdock'), items = m.items || [];
@@ -1007,7 +1133,10 @@
       + (skip ? `<button class="wwd-skip" ${ds(skip)}>Skip</button>` : '') + `</div>`
       + `<div class="wwd-field">${it ? wheelSvg(it) : ''}</div>`
       + `<div class="wwd-foot"><span id="wwd-lbl">${it && it.boundary ? 'Tap the boundary it went to' : 'Tap where the ball went'} · or just score the next ball</span>${off ? `<button class="wwd-off" ${ds(off)}>Turn off</button>` : ''}</div>`;
-    d.style.height = Math.round(padTop() - 6) + 'px';
+    const rc = dockRect() || { top: 0, left: 0, width: innerWidth, height: Math.round(padTop() - 6) };
+    d.style.top = rc.top + 'px'; d.style.left = rc.left + 'px'; d.style.width = rc.width + 'px'; d.style.height = rc.height + 'px';
+    d.style.right = 'auto'; d.style.margin = '0'; d.style.maxWidth = 'none';
+    d.classList.toggle('side', !!rc.side);
     setHtml(d, html);
     d.classList.add('show');
   }
@@ -1466,7 +1595,7 @@
       ['Phone ↔ server (ping)', ms(diag.pings.length ? diag.pings[diag.pings.length - 1] : null) + (diag.pings.length > 2 ? ` · median ${ms(med(diag.pings))}` : '')],
       ['Laptop', !sock.connected ? '—' : hostOnline ? (s && !s.online ? '<span class="warn">Connected · lost the server</span>' : '<span class="ok">Connected</span>') : '<span class="bad">Offline</span>'],
       ['Press → laptop’s answer', rtts.length ? `${ms(avg(rtts))} avg · ${ms(p95(rtts))} p95` : '—'],
-      ['  network (phone↔server)', net.length ? `${ms(avg(net))} avg · ${ms(p95(net))} p95` : '—'],
+      ['  network', net.length ? `${ms(avg(net))} avg · ${ms(p95(net))} p95` : '—'],
       ['  server ↔ laptop', lap.length ? `${ms(avg(lap))} avg · ${ms(p95(lap))} p95` : '—'],
       ['  laptop working', host.length ? `${ms(avg(host))} avg · ${ms(p95(host))} p95` : '—'],
       ['Presses measured', String(c.length)],
