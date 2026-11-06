@@ -175,13 +175,54 @@
   function selectItems(sel){
     if(sel._proDD && typeof sel._proDD.items === 'function'){
       const items = safe(() => sel._proDD.items(), []) || [];
-      if(items.length) return items.map(it => ({ v: String(it.id), l: norm(it.label) + (it.sub ? ' · ' + norm(it.sub) : '') }));
+      if(items.length) return items.filter(it => String(it.id) !== '').map(it => ({ v: String(it.id), l: norm(it.label), sub: it.sub ? norm(it.sub) : '' }));
     }
     return Array.prototype.filter.call(sel.options, o => o.value !== '' && !o.disabled).map(o => ({ v: o.value, l: norm(o.textContent) }));
+  }
+  // What a dropdown holds, for the phone's picker: players of one team (each
+  // with what the panel knows — captain, keeper, bench, left-hander, at the
+  // crease, bowling), the two teams, or a plain list. The values stay the
+  // panel's own (a player's permanent id), so the phone never changes who is who.
+  function selectMeta(opts){
+    const vals = opts.map(o => String(o.v));
+    if(vals.length && vals.every(v => v === 'A' || v === 'B')) return { kind: 'team', opts };
+    const roster = (k) => safe(() => (typeof rosterPlayers === 'function' ? rosterPlayers(k) : []), []) || [];
+    const ra = roster('A'), rb = roster('B');
+    const ia = new Set(ra.map(p => String(p.id))), ib = new Set(rb.map(p => String(p.id)));
+    let a = 0, b = 0;
+    vals.forEach(v => { if(ia.has(v)) a++; if(ib.has(v)) b++; });
+    if(!a && !b) return { kind: 'list', opts };
+    const key = a >= b ? 'A' : 'B';
+    const t = (key === 'A' ? state.teamA : state.teamB) || {};
+    const byId = new Map((key === 'A' ? ra : rb).map(p => [String(p.id), p]));
+    const s = state || {};
+    const same = (x, p) => x && p && x.id && String(x.id) === String(p.id);
+    return { kind: 'player', team: { name: t.name || '', short: t.short || '', color: t.color || '' }, side: key === s.battingTeam ? 'bat' : 'bowl', opts: opts.map(o => {
+      const p = byId.get(String(o.v));
+      if(!p) return o;
+      const tags = [];
+      if(t.captainId && String(t.captainId) === String(p.id)) tags.push('C');
+      if(t.wkId && String(t.wkId) === String(p.id)) tags.push('WK');
+      if(same(s.striker, p)) tags.push('On strike'); else if(same(s.nonStriker, p)) tags.push('Non-striker');
+      if(same(s.bowler, p)) tags.push('Bowling');
+      if(p.isXI === false) tags.push('Bench');
+      if(p.hand === 'L') tags.push('LHB');
+      // the name without the panel's " (C)" / " (WK)" badge — the tags carry it
+      return Object.assign({}, o, { l: norm(p.name) || o.l, tags });
+    }) };
   }
   function placeholderOf(sel){
     const first = sel.options[0];
     return first && first.value === '' ? norm(first.textContent) : '';
+  }
+  // A styled dropdown's own prompt ("— choose bowler —"): what its button
+  // shows while nothing is chosen. Remembered, because once a player is
+  // picked the button shows the name instead.
+  function proPlaceholder(sel, opts){
+    const dd = sel._proDD;
+    const shownText = norm(safe(() => dd.trigger.textContent, '') || '');
+    if(!sel.value && shownText && !opts.some(o => o.l === shownText || norm(o.l) === shownText)) sel._crPh = shownText;
+    return sel._crPh || placeholderOf(sel) || '— choose —';
   }
   // A card's title without its "— note" tail.
   function cardTitle(card){
@@ -207,7 +248,8 @@
         if(tooBig || ex.has(c)) return;
         if(c.tagName === 'SELECT' && c._proDD){
           if(c._proDD.wrap && !shown(c._proDD.wrap)) return;
-          push({ k: 's', ref: R(c), sig: 'select', value: c.value, ph: placeholderOf(c) || '— choose —', opts: selectItems(c), dis: !!c.disabled });
+          const opts = selectItems(c);
+          push(Object.assign({ k: 's', ref: R(c), sig: 'select', value: c.value, ph: proPlaceholder(c, opts), dis: !!c.disabled }, selectMeta(opts)));
           return;
         }
         if(c.classList && c.classList.contains('pro-dd')) return;      // shown above, as its select
@@ -240,7 +282,7 @@
           return;
         }
         if(c.tagName === 'SELECT'){
-          push({ k: 's', ref: R(c), sig: 'select', value: c.value, ph: placeholderOf(c), opts: selectItems(c), dis: !!c.disabled });
+          push(Object.assign({ k: 's', ref: R(c), sig: 'select', value: c.value, ph: placeholderOf(c), dis: !!c.disabled }, selectMeta(selectItems(c))));
           return;
         }
         if(c.tagName === 'INPUT' || c.tagName === 'TEXTAREA'){
@@ -269,6 +311,13 @@
         if(!interactive){
           const cs = window.getComputedStyle ? getComputedStyle(c) : null;
           const kids = Array.prototype.filter.call(c.children, x => shown(x));
+          // the panel's stat tiles (Bowler / Overs / Maidens / Runs / Wickets):
+          // label + value pairs, a full-width tile kept full width
+          if(c.classList && c.classList.contains('stat-grid')){
+            const rows = kids.filter(x => x.querySelector('.k') && x.querySelector('.v'))
+              .map(x => [textOf(x.querySelector('.k')), textOf(x.querySelector('.v')), /grid-column:\s*1\s*\/\s*-1/.test(x.getAttribute('style') || '') ? 1 : 0]);
+            if(rows.length){ push({ k: 'kv', look: 'tiles', rows }); return; }
+          }
           // a label / value grid (Recording ● Active, Buffer ● 12 s, …)
           if(cs && cs.display === 'grid' && kids.length >= 2 && kids.length % 2 === 0 && kids.every(x => !x.children.length || x.querySelector('b, small'))){
             const rows = [];
