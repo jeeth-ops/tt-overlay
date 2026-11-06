@@ -1341,6 +1341,17 @@
   .pt-updated{ font-size:11px; color:var(--text-faint); margin-top:8px; text-align:right; }
 
   .empty-state{ text-align:center; color:var(--text-faint); padding:24px 0; font-size:13px; }
+  /* ⏳ a match link opened before the match has started (see showPrematch()) */
+  #wrap.prematch > :not(#prematch){ display:none !important; }
+  #prematch{ text-align:center; padding:44px 22px 40px; }
+  #prematch .pm-ic{ font-size:46px; line-height:1; }
+  #prematch h2{ margin:14px 0 6px; font-size:22px; font-weight:800; }
+  #prematch .pm-teams{ font-weight:800; font-size:18px; margin:10px 0 2px; }
+  #prematch .pm-when{ font-size:14px; font-weight:700; color:var(--text-dim); }
+  #prematch p{ margin:10px auto 0; max-width:460px; color:var(--text-dim); font-size:14px; line-height:1.55; }
+  #prematch .pm-live{ display:inline-flex; align-items:center; gap:8px; margin-top:16px; font-size:12.5px; font-weight:700; color:var(--text-dim); }
+  #prematch .pm-live i{ width:8px; height:8px; border-radius:50%; background:#22c55e; animation:pmPulse 1.6s infinite; }
+  @keyframes pmPulse{ 50%{ opacity:.35; } }
 
   footer{ text-align:center; padding:22px 10px 4px; color:var(--text-faint); font-size:11.5px; }
   footer a{ color:var(--accent); font-weight:700; }
@@ -4249,6 +4260,72 @@ function setConn(status){
   else { dot.classList.remove('on'); txt.textContent = 'Connecting'; }
 }
 
+/* ⏳ BEFORE THE MATCH — a link shared ahead of the match (a WhatsApp match
+   announcement, say) opened before the broadcaster has started it. The room
+   then only holds the server's own placeholder (no ball log, no batting card
+   — the same test /api/cricket/room-state uses), and a tournament match not
+   yet on the website answers "Match not found". Either way the viewer is
+   told the match has not started (never shown placeholder teams or an
+   error), and the page picks the match up by itself the moment it starts. */
+let liveRoomId = '';
+let prematchWatch = null;
+function isPlaceholderState(st){
+  return !!st && !Array.isArray(st.ballLog) && !(st.battingCard && typeof st.battingCard === 'object');
+}
+function showPrematch(info){
+  const wrap = document.getElementById('wrap');
+  if(!wrap) return;
+  let card = document.getElementById('prematch');
+  if(info === false){
+    wrap.classList.remove('prematch');
+    if(card) card.remove();
+    if(prematchWatch){ clearInterval(prematchWatch); prematchWatch = null; }
+    return;
+  }
+  info = info || {};
+  if(!card){ card = document.createElement('div'); card.id = 'prematch'; card.className = 'card'; wrap.insertBefore(card, wrap.firstChild); }
+  card.innerHTML = '<div class="pm-ic">⏳</div><h2>This match hasn\'t started yet</h2>'
+    + (info.teams ? `<div class="pm-teams">${escapeHtml(info.teams)}</div>` : '')
+    + (info.when ? `<div class="pm-when">${escapeHtml(info.when)}</div>` : '')
+    + '<p>Its live scorecard appears right here the moment the broadcaster starts the match. Keep this page open — it updates by itself.</p>'
+    + '<div class="pm-live"><i></i>Waiting for the match to start</div>';
+  wrap.classList.add('prematch');
+  const pill = document.getElementById('conn-pill'); if(pill) pill.style.display = 'none';
+}
+// A ?match= link joined a room before the website knew which room the match
+// would really be scored in: keep asking, and open it properly once it starts.
+// (A ?room= link is the match's own room — it fills in by itself.)
+function watchMatchStart(){
+  const id = new URLSearchParams(location.search).get('match');
+  if(!id || prematchWatch) return;
+  const token = getTournamentToken();
+  const url = token
+    ? `${clipApiBase()}/api/public/tournament/${encodeURIComponent(token)}/match/${encodeURIComponent(id)}`
+    : `${clipApiBase()}/api/public/match/${encodeURIComponent(id)}`;
+  prematchWatch = setInterval(async () => {
+    if(document.hidden) return;
+    try{
+      const res = await apiFetch(url);
+      if(!res.ok) return;
+      const d = await res.json();
+      if(d && d.success && (d.match || (d.roomId && d.roomId !== liveRoomId))) location.reload();
+    }catch(e){}
+  }, 30000);
+}
+// A saved match nobody has bowled a ball in yet (the panel saves a match as
+// soon as it is set up) — not a scorecard to show yet.
+function notStartedRecord(m){
+  if(!m || m.winningTeam || m.matchResultText || m.abandoned || m.importSource) return false;
+  const zero = (sc) => !sc || ((Number(sc.runs) || 0) === 0 && (Number(sc.wickets) || 0) === 0 && (!sc.overs || /^0(\.0)?$/.test(String(sc.overs))));
+  return zero(m.scoreA) && zero(m.scoreB) && !((m.inningsArchive || []).length);
+}
+function fixtureWhen(m){
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(m.scheduledDate || '') ? m.scheduledDate : (/^\d{4}-\d{2}-\d{2}$/.test(m.matchDate || '') ? m.matchDate : '');
+  if(!iso) return '';
+  const [y, mo, d] = iso.split('-').map(Number);
+  return new Date(y, mo - 1, d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function connect(){
   const matchId = getMatchId();
   if(!matchId){
@@ -4301,6 +4378,7 @@ function connectLive(matchId){
   if(socket){ socket.removeAllListeners(); socket.disconnect(); }
 
   socket = io({ query: { uid: matchId } });
+  liveRoomId = matchId;
 
   // DIAGNOSTIC: if the badge is stuck on "Connecting" forever (not even
   // flipping to "Reconnecting"), the handshake itself never came back —
@@ -4321,6 +4399,9 @@ function connectLive(matchId){
   socket.on('connect_error', (err) => { console.warn('[live] connect_error:', err && err.message, err); setConn('off'); });
   socket.on('liveCricketScore', (serverState) => {
     if(serverState && Object.keys(serverState).length){
+      // ⏳ no panel has been in this room yet: the match has not started
+      if(isPlaceholderState(serverState) && !latestState){ showPrematch(); watchMatchStart(); return; }
+      showPrematch(false);
       latestState = serverState;
       // If two updates arrive within the same frame (a quick correction,
       // a reconnect replaying a few missed events, etc.) this collapses
@@ -4488,6 +4569,9 @@ async function loadMatchSnapshot(matchId){
           location.replace(`${location.pathname}?${qs.toString()}${location.hash}`);
           return;
         }
+        // ⏳ the tournament is there but this match is not on the website yet —
+        // it has not started (the 30s poll picks it up once it goes live)
+        if(moved && moved.error === 'Match not found'){ showPrematch(); return; }
       }
       throw new Error('bad response');
     }
@@ -4511,6 +4595,13 @@ async function loadMatchSnapshot(matchId){
 
     const match = data && data.match;
     if(!match) throw new Error('no match');
+    // ⏳ a scheduled fixture, or a match set up but not started: not a scorecard yet
+    if(match.upcoming === true || notStartedRecord(match)){
+      const nm = (t) => (t && (t.name || t.short)) || '';
+      showPrematch({ teams: [nm(match.teamA), nm(match.teamB)].filter(Boolean).join(' vs '), when: fixtureWhen(match) });
+      return;
+    }
+    showPrematch(false);
     // Prefer the match's own original capture-time room id for clips
     // (see getClipMatchId() above). Falls back to the URL's matchId if
     // the backend doesn't send one yet.
