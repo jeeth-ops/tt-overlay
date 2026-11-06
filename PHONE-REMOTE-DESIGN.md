@@ -69,6 +69,9 @@ control there, built from the classes above, and it appears everywhere.
   dialog with real words on the buttons.
 - **Nothing covers the scoring.** Clip notes hide while the wagon wheel,
   a sheet, the picker or a dialog is up, and never take a tap meant for them.
+  The "Reconnecting…" bar never covers a run key. In landscape it stays
+  over the score card, and the score card's questions ("Was that a
+  highlight?") and the runs saved offline sit right under the card.
 - **Cheap to draw.** No `backdrop-filter`. Animate only `transform`,
   `opacity` and `grid-template-rows`. Respect `prefers-reduced-motion`.
 - **Every state exists:** pressed (`:active`), selected (`.on`), focused
