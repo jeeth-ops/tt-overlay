@@ -66,6 +66,16 @@ node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the RE
                                                   # an outbox (also across a refresh); "saved" only after the server says so
 node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
+node test/cricket/undo-history-test.js           # ↩️ Undo in milliseconds, both panels: every Undo lands on the exact state before that action (runs, 4, 6,
+                                                  # wide, no ball, byes, leg byes, overthrow, bowled, run out + runs, run out off a no ball, over end);
+                                                  # a 1,050-ball Test: snapshots share unchanged deliveries; a reload keeps the latest steps within
+                                                  # storage, the old full-copy stack read once and removed; one press = one undo
+node test/cricket/over-end-delay-test.js         # ⏱ the between-overs graphic 2 s after the over (score at once); Undo / Reset / switching match inside
+                                                  # the 2 s puts nothing on air; a re-bowled last ball gets its own; wides never end an over; the
+                                                  # over's runs counted from its balls; an undone batter takes their pending card with them
+NODE_PATH=$(npm root -g) node test/cricket/shot-persistence-test.js  # 🎯 every marked shot reaches the finished match: sent with browser storage
+                                                  # full, retried until stored, all sent again when a decided match is saved; the server copies a
+                                                  # lost shot from the room's live ball log only when id, innings, over and ball agree
 node test/cricket/test-match-innings-test.js     # 🏏 a Test on the website scorecard: every innings its own tab (3rd/4th too), its own batters,
                                                   # bowlers, extras and partnerships; "154/10 & 133/7 d" header; the unarchived chase innings;
                                                   # older untagged records keep their two tabs; the live view drops "· Live" once decided

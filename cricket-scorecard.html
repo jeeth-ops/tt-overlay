@@ -1836,6 +1836,11 @@
   .ow-pitch{ fill:#d8b57a; }
   .ow-crease{ fill:none; stroke:#fff; stroke-width:.7; }
   .ow-halo{ fill:none; stroke:rgba(5,30,10,.5); stroke-width:6; stroke-linecap:round; }
+  /* boundaries glow in their own colour — a wide tinted halo, not a CSS
+     filter, so a page of dozens of wheels stays cheap to draw */
+  .ow-halo.ow-s4{ stroke:rgba(40,110,230,.42); stroke-width:7.5; }
+  .ow-halo.ow-s6{ stroke:rgba(140,60,230,.46); stroke-width:8; }
+  .ow-inner{ fill:rgba(255,255,255,.035); }
   .ow-line{ fill:none; stroke-linecap:round; }
   .ow-line.ow-s1{ stroke:rgba(255,255,255,.95); stroke-width:2.4; }
   .ow-line.ow-s4{ stroke:#6cb2ff; stroke-width:3.4; }
@@ -1843,6 +1848,11 @@
   .ow-end circle{ fill:#fff; stroke:rgba(5,30,10,.6); stroke-width:1; transform:scale(.62); }
   .ow-end.ow-s4 circle{ fill:#2f7ff0; stroke:#fff; }
   .ow-end.ow-s6 circle{ fill:#9b4cf0; stroke:#fff; }
+  .ow-end.ow-s4 circle, .ow-end.ow-s6 circle{ stroke-width:1.4; }
+  .ow-ripple{ fill:none; stroke-width:1.4; transform-box:fill-box; transform-origin:center; opacity:0; animation:owRipple .9s ease-out .8s 1 both; pointer-events:none; }
+  .ow-ripple.ow-s4{ stroke:#6cb2ff; }
+  .ow-ripple.ow-s6{ stroke:#d39bff; }
+  @keyframes owRipple{ from{ opacity:.9; transform:scale(.6); } to{ opacity:0; transform:scale(2.6); } }
   .ow-end text{ display:none; font:800 8px var(--font-display); fill:#0b1a0d; text-anchor:middle; }
   .ow-end.ow-s4 text, .ow-end.ow-s6 text{ fill:#fff; }
   .ow-bat{ fill:#fff; stroke:#15803d; stroke-width:.9; }
@@ -1857,7 +1867,7 @@
   .ow-end.ow-fresh{ animation:owFade .3s ease .75s both; }
   @keyframes owDraw{ from{ stroke-dashoffset:1; } to{ stroke-dashoffset:0; } }
   @keyframes owFade{ from{ opacity:0; } }
-  @media (prefers-reduced-motion: reduce){ .ow-fresh{ animation:none !important; } }
+  @media (prefers-reduced-motion: reduce){ .ow-fresh, .ow-ripple{ animation:none !important; } }
   .ow-pill{ fill:rgba(6,20,10,.74); }
   .ow-pilltx{ font:700 9px var(--font-body); fill:#fff; text-anchor:middle; }
   .ow-meta{ flex:1; min-width:0; max-width:420px; display:flex; flex-direction:column; gap:8px; }
@@ -6420,7 +6430,7 @@ function owWedge(r, a0, a1){
 function overWheelSvg(w, emptyText, label){
   const p = [];
   for(let i = 0; i < 16; i += 2) p.push(`<path class="ow-stripe" d="${owWedge(100, i * 22.5, (i + 1) * 22.5)}"/>`);
-  p.push('<circle class="ow-ring" r="55"/><circle class="ow-rope" r="100"/>');
+  p.push('<circle class="ow-inner" r="55"/><circle class="ow-ring" r="55"/><circle class="ow-rope" r="100"/>');
   p.push('<rect class="ow-pitch" x="-4.2" y="-15" width="8.4" height="30" rx="1"/><path class="ow-crease" d="M-5.5 -11.5h11M-5.5 11.5h11"/>');
   // singles first, sixes on top; a six flies (a curve), the rest run along the ground
   const rank = (s) => s.bnd === '6' ? 2 : s.bnd === '4' ? 1 : 0;
@@ -6432,9 +6442,11 @@ function overWheelSvg(w, emptyText, label){
       ? `M${bx} ${by}Q${owF((bx + ex) / 2 + (ey - by) * 0.18)} ${owF((by + ey) / 2 - (ex - bx) * 0.18)} ${ex} ${ey}`
       : `M${bx} ${by}L${ex} ${ey}`;
     const fresh = s.fresh ? ' ow-fresh' : '', len = s.fresh ? ' pathLength="1"' : '';
-    p.push(`<path class="ow-halo${fresh}"${len} d="${d}" data-ball="${s.at}"/><path class="ow-line ow-${kind(s)}${fresh}"${len} d="${d}" data-ball="${s.at}"/>`);
+    p.push(`<path class="ow-halo ow-${kind(s)}${fresh}"${len} d="${d}" data-ball="${s.at}"/><path class="ow-line ow-${kind(s)}${fresh}"${len} d="${d}" data-ball="${s.at}"/>`);
   });
   shots.forEach(s => p.push(`<g class="ow-end ow-${kind(s)}${s.fresh ? ' ow-fresh' : ''}" transform="translate(${owF(s.x)} ${owF(s.y)})" data-ball="${s.at}"><circle r="6.2"/><text y="2.9">${s.runs}</text></g>`));
+  // a live over's newest FOUR / SIX: one ring as it lands on the rope
+  shots.filter(s => s.fresh && s.bnd).forEach(s => p.push(`<circle class="ow-ripple ow-${kind(s)}" cx="${owF(s.x)}" cy="${owF(s.y)}" r="5"/>`));
   p.push('<circle class="ow-bat" cx="0" cy="-11.5" r="2.4"/>');
   // Off / leg only when every shot here was by one kind of batter.
   if(w.hands.size === 1){

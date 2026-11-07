@@ -1007,6 +1007,10 @@
   #innings-summary-card .sc-row:not(.sc-row-head) > .sc-c-num:nth-child(n+6):nth-child(-n+8){ color:#4f5d78; }
   .cardg-best{ display:inline-block; margin-left:calc(10 * var(--u)); vertical-align:middle; font-family:var(--font-num); font-weight:900; font-size:calc(11 * var(--u) * var(--cyc,1));
     letter-spacing:calc(1.6 * var(--u)); padding:calc(3 * var(--u)) calc(8 * var(--u)); border-radius:99px; background:var(--card-accent-ink,#0b3d91); color:#fff; }
+  /* TOP scorer on the between-overs batting card: the same tag as BEST,
+     drawn after the name (not part of its text) */
+  .cardg-name[data-tag]::after{ content:attr(data-tag); flex:none; display:inline-block; margin-left:calc(10 * var(--u)); vertical-align:middle; font-family:var(--font-num); font-weight:900; font-size:calc(11 * var(--u) * var(--cyc,1));
+    letter-spacing:calc(1.6 * var(--u)); padding:calc(3 * var(--u)) calc(8 * var(--u)); border-radius:99px; background:var(--card-accent-ink,#0b3d91); color:#fff; }
   /* table */
   .cardg .sc-rows{ padding-top:calc(16 * var(--u) * var(--cyc,1)); }
   .cardg .sc-row{ border-radius:calc(9 * var(--u)); }
@@ -1023,6 +1027,9 @@
     background:var(--card-accent-ink,#0b3d91); box-shadow:0 0 0 calc(3 * var(--u)) var(--card-tint2,rgba(11,61,145,0.14)); }
   #batting-card-graphic .sc-row:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2),
   #innings-batting-summary-card .sc-row:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2){ font-weight:900; font-size:1.3em; color:var(--bc-ink,#12213f); }
+  /* the top scorer's runs in the team's accent (after the rule above, at its specificity) */
+  #batting-card-graphic .sc-row.cardg-top:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2),
+  #innings-batting-summary-card .sc-row.cardg-top:not(.sc-row-head):not(.cardg-yet) > .sc-c-num:nth-child(2){ color:var(--card-accent-ink,#0b3d91); }
   /* yet to bat: one quiet section — a label, then the names in batting order */
   .cardg-yet-head{ display:flex; align-items:center; gap:calc(12 * var(--u)); margin:calc(10 * var(--u) * var(--cyc,1)) calc(10 * var(--ux)) calc(4 * var(--u) * var(--cyc,1));
     font-family:var(--font-num); font-weight:900; font-size:calc(12.5 * var(--u) * var(--cyc,1)); letter-spacing:calc(2.6 * var(--u)); color:var(--card-ink,#0b3d91); }
@@ -2475,6 +2482,22 @@
   .mc-n{ text-align:right; font-family:var(--font-num); font-weight:700; font-size:calc(var(--rf, 26) * .92 * var(--u)); line-height:1.2; color:rgba(255,255,255,.86); font-variant-numeric:tabular-nums; }
   .mc-n.k{ font-weight:900; font-size:calc(var(--rf, 26) * 1.08 * var(--u)); color:#fff; }
   .mc-th .c-r{ text-align:right; }
+  /* 🏅 the innings' standout figures — TOP scorer on the batting card, BEST
+     bowling on the bowling card: a tag after the name (drawn, not part of the
+     name's text), the key figure in the team's line colour, one light sweep
+     across the row once the card is in. */
+  .mc-nm[data-tag]::after{ content:attr(data-tag); display:inline-block; margin-left:calc(12 * var(--u)); vertical-align:.16em;
+    padding:calc(3 * var(--u)) calc(10 * var(--u)) calc(2 * var(--u)); border-radius:99px; background:var(--m-line); color:var(--m-line-ink);
+    font-family:var(--font-num); font-weight:900; font-size:calc(var(--rf, 26) * .46 * var(--u)); line-height:1.2; letter-spacing:.14em; }
+  .mc-tr.top{ position:relative; overflow:hidden; }
+  .mc-tr.top .mc-n.k{ color:var(--m-line); }
+  .mc-tr.top::before{ content:''; position:absolute; top:0; bottom:0; left:0; width:30%; pointer-events:none;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent); transform:translateX(-110%); opacity:0;
+    animation:mcGlint 1.1s 1.25s cubic-bezier(.45,0,.25,1) 1 both; }
+  @keyframes mcGlint{ 0%{ transform:translateX(-110%); opacity:1; } 100%{ transform:translateX(360%); opacity:1; } }
+  .mc-n{ transform-origin:right center; }
+  .mc-total{ transform-origin:right center; }
+  @media (prefers-reduced-motion: reduce){ .mc-tr.top::before{ animation:none; } }
   .mc-sum{
     flex:none; display:flex; align-items:center; justify-content:space-between; gap:calc(24 * var(--u)); margin-top:calc(8 * var(--u));
     padding:calc(10 * var(--u)) calc(18 * var(--u)); border-radius:calc(6 * var(--u)); background:rgba(255,255,255,.07);
@@ -3047,7 +3070,22 @@ socket.on('connect', () => connStatus.classList.remove('visible'));
 socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
 
+// 🖼 Team logos decoded ahead of time: a between-overs card paints its logos
+// as CSS backgrounds from its payload, and a logo decoded only then pops in a
+// frame late on air. Each logo the score brings is decoded now (and kept), so
+// every card that shows it later finds it ready.
+const warmLogos = new Map();
+function warmLogo(url){
+  if(!url || typeof url !== 'string' || warmLogos.has(url)) return;
+  if(warmLogos.size > 24) warmLogos.delete(warmLogos.keys().next().value);
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = url;
+  if(img.decode) img.decode().catch(() => {});
+  warmLogos.set(url, img);
+}
 socket.on('liveCricketScore', (data) => {
+  if(data){ warmLogo(data.teamA && data.teamA.logoUrl); warmLogo(data.teamB && data.teamB.logoUrl); }
   if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
   // While an event graphic is on the bar, OR the over-summary sequencer is
   // holding the bar off-air, the newest state is parked (latest wins) and
@@ -7174,6 +7212,10 @@ function fillBattingCardGraphic(d, cardId = 'batting-card-graphic', prefix = 'ba
   } else {
     let yetGrid = null;
     const yetCount = batsmen.filter(b => b.yetToBat || b.status === 'yet').length;
+    // the top scorer (most runs, then fewer balls) — once two have batted — gets TOP, like BEST on the bowling card
+    const batted = batsmen.filter(b => !(b.yetToBat || b.status === 'yet'));
+    const runsOf = (b) => Number(b.runs) || 0, ballsOf = (b) => Number(b.balls) || 0;
+    const topBat = batted.length >= 2 ? batted.filter(b => runsOf(b) > 0).reduce((t, b) => (!t || runsOf(b) > runsOf(t) || (runsOf(b) === runsOf(t) && ballsOf(b) < ballsOf(t))) ? b : t, null) : null;
     batsmen.forEach((b, i) => {
       // The rest of the XI, in batting order, under one quiet "YET TO BAT"
       // label — names only, down two columns, no empty figures.
@@ -7222,6 +7264,7 @@ function fillBattingCardGraphic(d, cardId = 'batting-card-graphic', prefix = 'ba
       pos.textContent = String(i + 1);
       row.querySelector('.cardg-name').prepend(pos);
       if(b.striker){ const dot = document.createElement('span'); dot.className = 'cardg-strike'; dot.title = 'on strike'; row.querySelector('.cardg-name').appendChild(dot); }
+      if(b === topBat){ row.classList.add('cardg-top'); row.querySelector('.cardg-name').dataset.tag = 'TOP'; }
       rows.appendChild(row);
     });
   }
@@ -8262,19 +8305,26 @@ const bcg = (() => {
     const extras = `<span><b>EXTRAS</b>${T.extrasTotal == null ? '—' : T.extrasTotal}${exParts ? ` (${exParts})` : ''}</span>`;
     const total = scoreText ? `<span class="tot">TOTAL ${escapeHtml(scoreText)}${T.overs ? ` (${escapeHtml(T.overs)} ov)` : ''}</span>` : '';
     let head, rows;
+    // the standout figures: the top scorer (most runs, then fewer balls —
+    // once two have batted) / the best bowling (most wickets, then fewest
+    // runs — once a wicket has fallen)
+    const n = (v) => Number(v) || 0;
+    const top = bat ? (d.batters || []).filter(r => n(r.runs) > 0).reduce((b, r) => (!b || n(r.runs) > n(b.runs) || (n(r.runs) === n(b.runs) && n(r.balls) < n(b.balls))) ? r : b, null) : null;
+    const topOn = top && (d.batters || []).length >= 2 ? top : null;
+    const best = !bat ? (d.bowlers || []).filter(r => n(r.wickets) > 0).reduce((b, r) => (!b || n(r.wickets) > n(b.wickets) || (n(r.wickets) === n(b.wickets) && n(r.runs) < n(b.runs))) ? r : b, null) : null;
     if(bat){
       head = ['BATTER', '', 'R', 'B', '4s', '6s', 'SR'];
       rows = d.batters.map(r => {
         const at = r.status === 'striker' || r.status === 'nonStriker';
         const how = at ? 'batting' : r.status === 'notout' ? 'not out' : (r.howOut || (r.status === 'retired' ? 'retired' : 'out'));
-        return `<div class="mc-tr${at ? ' live' : ''}"><span class="mc-nm">${escapeHtml(r.name)}${r.status === 'striker' ? ' *' : ''}</span><span class="mc-how${at ? ' at' : ''}">${escapeHtml(how)}</span>`
+        return `<div class="mc-tr${at ? ' live' : ''}${r === topOn ? ' top' : ''}"><span class="mc-nm"${r === topOn ? ' data-tag="TOP"' : ''}>${escapeHtml(r.name)}${r.status === 'striker' ? ' *' : ''}</span><span class="mc-how${at ? ' at' : ''}">${escapeHtml(how)}</span>`
           + `<span class="mc-n k">${dash(r.runs)}</span><span class="mc-n">${dash(r.balls)}</span><span class="mc-n">${dash(r.fours)}</span><span class="mc-n">${dash(r.sixes)}</span><span class="mc-n">${dash(r.sr)}</span></div>`;
       });
     } else {
       // Economy is ALWAYS the last column — O M R W, the extras columns, then
       // ECON — the same order as the between-overs bowling card and the website.
       head = ['BOWLER', 'O', 'M', 'R', 'W', '0s', 'NB', 'WD', 'ECON'];
-      rows = d.bowlers.map(r => `<div class="mc-tr${r.current ? ' live' : ''}"><span class="mc-nm">${escapeHtml(r.name)}${r.current ? ' *' : ''}</span>`
+      rows = d.bowlers.map(r => `<div class="mc-tr${r.current ? ' live' : ''}${r === best ? ' top' : ''}"><span class="mc-nm"${r === best ? ' data-tag="BEST"' : ''}>${escapeHtml(r.name)}${r.current ? ' *' : ''}</span>`
         + `<span class="mc-n">${dash(r.overs)}</span><span class="mc-n">${dash(r.maidens)}</span><span class="mc-n">${dash(r.runs)}</span><span class="mc-n k">${dash(r.wickets)}</span>`
         + `<span class="mc-n">${dash(r.dots)}</span><span class="mc-n">${dash(r.noBalls)}</span><span class="mc-n">${dash(r.wides)}</span><span class="mc-n">${dash(r.econ)}</span></div>`);
     }
@@ -8305,8 +8355,11 @@ const bcg = (() => {
     // the rows share the table's height: as tall as reads best, never past the sheet
     const table = el.querySelector('.mc-table'), rows = table.querySelectorAll('.mc-tr:not(.mc-th)');
     const avail = table.getBoundingClientRect().height / u - 40;
-    const rh = Math.max(22, Math.min(62, Math.floor(avail / Math.max(rows.length, 1)) - 1));
-    const rf = Math.max(12, Math.min(28, Math.round(rh * 0.5)));
+    // a short card (a few bowlers) lets its rows grow into the sheet rather
+    // than leaving an empty block under them
+    const few = rows.length <= 8;
+    const rh = Math.max(22, Math.min(few ? 84 : 62, Math.floor(avail / Math.max(rows.length, 1)) - 1));
+    const rf = Math.max(12, Math.min(few ? 30 : 28, Math.round(rh * (few ? 0.42 : 0.5))));
     table.style.setProperty('--rh', String(rh));
     table.style.setProperty('--rf', String(rf));
     table.querySelectorAll('.mc-nm').forEach(n => fitLine(n, rf, Math.max(11, Math.round(rf * 0.62))));
@@ -8329,6 +8382,11 @@ const bcg = (() => {
       .fromTo(qa('.mc-sum, .mc-group, .mc-fow'), { opacity: 0, y: px(12) }, { opacity: 1, y: 0, duration: 0.4, ease: 'power3.out', stagger: 0.07 }, 0.85)
       .fromTo(q('.xi-foot'), { opacity: 0, y: px(24) }, { opacity: 1, y: 0, duration: 0.55, ease: 'expo.out' }, 0.5);
     if(q('.mc-score')) tl.fromTo(q('.mc-score'), { opacity: 0, x: px(30) }, { opacity: 1, x: 0, duration: 0.55, ease: 'expo.out' }, 0.36);
+    // the total settles in with a small lift, then the standout figure
+    // (TOP / BEST) gets one beat — transforms only
+    if(q('.mc-total')) tl.fromTo(q('.mc-total'), { scale: 0.9 }, { scale: 1, duration: 0.7, ease: 'back.out(1.8)' }, 0.4);
+    const key = q('.mc-tr.top .mc-n.k');
+    if(key) tl.to(key, { scale: 1.22, duration: 0.18, ease: 'power2.out' }, 1.15).to(key, { scale: 1, duration: 0.34, ease: 'power2.inOut' }, 1.33);
     return tl;
   }
   function cardExit(sc){
