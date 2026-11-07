@@ -21,9 +21,10 @@ function grab(name){
 const names = ['oversStrToBallsCount','ballsToOversStr','matchRecordFootprint','footprintTotalBalls',
                'groupsLostBy','guardMatchRecordWrite','matchRecordFromPanelState','ballDocsFromPanelState',
                'findRescoredDeliveries','findIncompleteOvers','isSuperOverBall','inningsArchiveFromBalls','deriveBallFacts',
-               'playerKey','personName'];
+               'playerKey','personName','cleanStreamMoreDays','sanitizeShot'];
 const api = new Function([
   'const SHRINK_TOLERANCE_BALLS = 30;',
+  "const SHOT_ZONES = new Set(['fineleg', 'squareleg', 'midwicket', 'midon', 'midoff', 'cover', 'point', 'thirdman']);",
   ...names.map(grab),
   `return { ${names.join(', ')} };`
 ].join('\n'))();

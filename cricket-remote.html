@@ -1961,9 +1961,17 @@
   document.addEventListener('pointerdown', (e) => {
     const svg = e.target.closest && e.target.closest('svg#ww');
     if(!svg || svg.classList.contains('done')) return;
-    // a wheel that only just appeared never takes a tap that was meant for
-    // what was on the screen a moment before
-    if(performance.now() - Number(svg.dataset.openAt || 0) < 300) return;
+    // 🐛 Every tap in the wheel's first 300 ms used to be thrown away, docked
+    // or not, with nothing on screen to say so — a quick operator's first tap
+    // was lost and the shot needed a second one. The guard is only for the
+    // sheet, which can open over the scoring keys (a tap meant for a run must
+    // never land on it); the docked wheel sits above the pad and never covers
+    // a key, so a tap on it is always meant for it. In the sheet, a tap that
+    // early is now told to go again instead of vanishing.
+    if(!svg.closest('#wwdock') && performance.now() - Number(svg.dataset.openAt || 0) < 300){
+      const lbl = $('wwd-lbl'); if(lbl){ lbl.className = 'bad'; lbl.textContent = 'The wheel just opened — tap the spot again'; }
+      return;
+    }
     e.preventDefault();
     try{ svg.setPointerCapture(e.pointerId); }catch(err){}
     const p = wwPoint(svg, e); if(!p) return;

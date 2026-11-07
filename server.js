@@ -3857,6 +3857,8 @@ app.get('/api/public/tournament/:token/match/:matchId/balls', async (req, res) =
         const balls = candidateIds.length
             ? await ballsCollection.find({ matchId: { $in: candidateIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray()
             : [];
+        // 🎯 shots marked on the panel that never reached a stored delivery
+        await healShotsFromLiveState(balls, candidateIds).catch(err => console.log('Shot heal error:', err));
         res.json({ success: true, balls: balls.map(mapBallForPublic) });
     } catch (err) {
         console.log('Public tournament match balls fetch error:', err);
@@ -3978,6 +3980,8 @@ app.get('/api/public/match/:id/balls', async (req, res) => {
         const balls = candidateIds.length
             ? await ballsCollection.find({ matchId: { $in: candidateIds } }).sort({ innings: 1, over: 1, ballInOver: 1 }).toArray()
             : [];
+        // 🎯 shots marked on the panel that never reached a stored delivery
+        await healShotsFromLiveState(balls, candidateIds).catch(err => console.log('Shot heal error:', err));
         res.json({ success: true, balls: balls.map(mapBallForPublic) });
     } catch (err) {
         console.log('Public match balls fetch error:', err);
@@ -7267,6 +7271,51 @@ function sanitizeShot(s) {
     if (!s || typeof s !== 'object' || !SHOT_ZONES.has(String(s.zone))) return null;
     const num = (v) => (typeof v === 'number' && isFinite(v)) ? Math.max(-1.2, Math.min(1.2, Math.round(v * 1000) / 1000)) : null;
     return { zone: String(s.zone), depth: s.depth === 'deep' ? 'deep' : 'inner', hand: s.hand === 'L' ? 'L' : 'R', x: num(s.x), y: num(s.y) };
+}
+// 🎯 WAGON WHEEL SHOTS, HEALED FROM THE PANEL'S OWN BALL LOG.
+// A shot marked on the panel goes two ways: onto that delivery in the
+// panel's ball log (the room's live state: what live commentary shows) and,
+// through setBallShot, onto the stored delivery here (what a finished
+// match's commentary shows). The second one could fail on the panel without
+// a trace — its retry queue lived only in browser storage, and a full storage
+// dropped it (fixed in the panels) — so a finished match lost shots its live
+// commentary had shown: the Harris Shield final kept 108 of 301.
+// The room's live state still holds every one of them, on the SAME delivery
+// id the stored row carries. A shot is copied across only onto a delivery
+// that has none, and only when the id, the innings, the over and the ball
+// all agree. Nothing is guessed: a delivery the live state does not know,
+// or one that disagrees, keeps no shot. At most once a minute per match.
+const SHOT_HEAL_GAP_MS = 60 * 1000;
+const shotHealAt = new Map(); // match ids -> last attempt
+async function healShotsFromLiveState(balls, roomIds) {
+    if (!ballsCollection || !Array.isArray(balls) || !balls.length || !Array.isArray(roomIds) || !roomIds.length) return 0;
+    const missing = balls.filter(b => b && b.ballUid && !b.shot && b.kind !== 'PEN');
+    if (!missing.length) return 0;
+    const key = roomIds.join('|'), now = Date.now();
+    if (now - (shotHealAt.get(key) || 0) < SHOT_HEAL_GAP_MS) return 0;
+    if (shotHealAt.size > 5000) shotHealAt.clear();
+    shotHealAt.set(key, now);
+    const live = new Map();
+    for (const id of roomIds) {
+        const rs = await getRoomState(`room-${id}`);
+        const log = rs && rs.cricketState && Array.isArray(rs.cricketState.ballLog) ? rs.cricketState.ballLog : [];
+        log.forEach(e => { if (e && e.deliveryId && e.shot && !live.has(String(e.deliveryId))) live.set(String(e.deliveryId), e); });
+    }
+    if (!live.size) return 0;
+    const ops = [];
+    missing.forEach(b => {
+        const e = live.get(String(b.ballUid));
+        const shot = e && sanitizeShot(e.shot);
+        if (!shot) return;
+        const [ov, bl] = String(e.over == null ? '' : e.over).split('.');
+        if (Number(e.innings || 1) !== Number(b.innings || 1) || Number(ov) !== Number(b.over) || Number(bl || 0) !== Number(b.ballInOver)) return;
+        ops.push({ updateOne: { filter: { _id: b._id, shot: { $exists: false } }, update: { $set: { shot, shotRecoveredAt: now } } } });
+        b.shot = shot;
+    });
+    if (!ops.length) return 0;
+    await ballsCollection.bulkWrite(ops, { ordered: false });
+    console.log(`🎯 [SHOTS] ${roomIds.join('/')}: ${ops.length} wagon wheel shot(s) copied from the panel's ball log onto their stored deliveries`);
+    return ops.length;
 }
 function mapBallForPublic(b) {
     return {
@@ -12402,6 +12451,8 @@ function ballDocsFromPanelState(st, matchId, ownerUid) {
             bowlerKey: playerKey(personName(b.bowler)),
             dismissal: isWicket ? { type: b.dismissalType || 'Out', fielder: personName(b.fielderName) } : null,
             dismissalFielderKey: playerKey(personName(b.fielderName)),
+            // the wagon wheel shot marked on this delivery, as setBallShot stores it
+            ...(sanitizeShot(b.shot) ? { shot: sanitizeShot(b.shot) } : {}),
             timestamp: Number(b.timestamp) || 0,
             recoveredAt: Date.now()
         };

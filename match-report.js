@@ -1709,9 +1709,10 @@
         return [{ t: x.b.name, bold: true, sub: x.inn.teamShort }, { t: x.b.runs + (x.b.out ? '' : '*'), bold: true }, x.b.balls, x.b.fours + '/' + x.b.sixes, x.b.sr];
       }));
     label('BEST BOWLING', MX + half2 + 6, y + 2);
-    var yw2 = table(MX + half2 + 6, y + 4, [{ h: 'Bowler', w: half2 - 48 }, { h: 'O', w: 11, align: 'center' }, { h: 'R', w: 10, align: 'center' }, { h: 'W', w: 9, align: 'center' }, { h: 'Eco', w: 18, align: 'right' }],
+    // the bowling order everywhere: O M R W, Economy always last
+    var yw2 = table(MX + half2 + 6, y + 4, [{ h: 'Bowler', w: half2 - 57 }, { h: 'O', w: 11, align: 'center' }, { h: 'M', w: 9, align: 'center' }, { h: 'R', w: 10, align: 'center' }, { h: 'W', w: 9, align: 'center' }, { h: 'Eco', w: 18, align: 'right' }],
       allBowl.slice().sort(function (a, b) { return b.w.wickets - a.w.wickets || a.w.runs - b.w.runs; }).slice(0, 5).map(function (x) {
-        return [{ t: x.w.name, bold: true, sub: m.teams[x.inn.team === 'A' ? 'B' : 'A'].short }, x.w.overs, x.w.runs, { t: x.w.wickets, bold: true }, x.w.econ];
+        return [{ t: x.w.name, bold: true, sub: m.teams[x.inn.team === 'A' ? 'B' : 'A'].short }, x.w.overs, x.w.maidens, x.w.runs, { t: x.w.wickets, bold: true }, x.w.econ];
       }));
     y = Math.max(yb2, yw2, y0 + 12) + 7;
     if (allPs.length) {
