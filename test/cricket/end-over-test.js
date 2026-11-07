@@ -61,7 +61,10 @@ function setup(P){
   `);
   P.emits.length = 0;
 }
-const summaries = (P) => P.emits.filter(e => e.ev === 'cricketOverSummary').map(e => e.payload.data);
+// The over-end graphic goes on air 2 s after the over (see END-OF-OVER GRAPHICS
+// in the panels — timing tested in over-end-delay-test.js); this suite is about
+// its payload, so it sends the pending one now instead of waiting.
+const summaries = (P) => { P.E('firePendingOverEndGraphics()'); return P.emits.filter(e => e.ev === 'cricketOverSummary').map(e => e.payload.data); };
 function nextOver(P, name, id){ P.E(`closeNewOverModal(); setLiveBowler(${JSON.stringify(name)}, ${JSON.stringify(id)}); renderPanel();`); }
 function wicket(P, newBat, newId){ P.E(`recordBall('W', { dismissalType: 'Bowled' }); sendInNewBatsman(${JSON.stringify(newBat)}, ${JSON.stringify(newId)});`); }
 const bat = (d) => d.batsmen.map(b => [b.name, b.status]);
