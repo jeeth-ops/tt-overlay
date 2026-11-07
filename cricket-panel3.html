@@ -7495,18 +7495,141 @@ let state = mergeWithDefaults(loadState());
 // Undo click had nothing to pop even though the last ball (e.g. that Nb+6)
 // was real. `history` now persists the same way `state` does, via
 // loadHistory()/pushHistory() below, so it survives a reload.
-const HISTORY_STORAGE_KEY = 'cricket-panel-history';
+// 🚀 UNDO HISTORY — exact, instant, and small enough to keep.
+// 🐛 Every scoring action and every Undo used to write the WHOLE undo stack
+// to browser storage: up to 300 complete copies of the match state, ball log
+// included. On a Test match (1,000+ deliveries, an 830 KB state) that is a
+// 228 MB JSON string per click — over a second with the page frozen, on every
+// ball and every Undo — and far past what browser storage holds (about 5 MB),
+// so the write then failed. The last stack that DID fit stayed behind,
+// filling storage, and the next small writes failed too: the wagon wheel's
+// shot queue among them, which is how marked shots never reached the website.
+// Now:
+//   • a snapshot SHARES what did not change. Each delivery of the ball log
+//     (and each section of the state) is copied once and reused by every
+//     later snapshot while it still reads exactly the same; a delivery that
+//     changed gets a new copy. Snapshots are never edited, so sharing is
+//     safe; restoring one builds a fresh live state from it.
+//   • only the most recent HISTORY_PERSIST_MAX steps are kept across a
+//     reload, each shared piece stored once, written a moment after the
+//     click (never on it), and never more than HISTORY_PERSIST_BUDGET.
+//     Undo in this session still goes back MAX_HISTORY steps.
+//   • the old full-copy stack is read once (so its undo steps survive the
+//     update) and then removed, freeing the space it was holding.
+const HISTORY_STORAGE_KEY = 'cricket-panel-history';       // old format: every snapshot in full
+const HISTORY_STORAGE_KEY_V2 = 'cricket-panel-history-v2';  // shared pieces stored once
 const MAX_HISTORY = 300; // comfortably covers a full T20 (~150 deliveries incl. extras) with headroom; older balls beyond this fall back to the best-effort delete path (see deleteLastBall())
+const HISTORY_PERSIST_MAX = 40;
+const HISTORY_PERSIST_BUDGET = 1800000; // characters
+// frozen copy -> its JSON; live delivery -> { json, copy }; state key -> { json, copy }
+const _histJson = new WeakMap();
+const _histEntry = new WeakMap();
+let _histPart = {};
+function _histJsonOf(copy){
+  let j = _histJson.get(copy);
+  if(j == null){ j = JSON.stringify(copy); _histJson.set(copy, j); }
+  return j;
+}
+function _histFrozen(json){ const copy = JSON.parse(json); if(copy && typeof copy === 'object') _histJson.set(copy, json); return copy; }
+function _histInternAll(list){
+  // pieces that read the same become ONE shared copy (an old-format stack, or one just read back)
+  const seen = new Map();
+  const intern = (v) => {
+    if(v === null || typeof v !== 'object') return v;
+    const j = _histJsonOf(v);
+    const hit = seen.get(j);
+    if(hit) return hit;
+    seen.set(j, v);
+    return v;
+  };
+  return list.filter(s => s && typeof s === 'object').map(s => {
+    const o = {};
+    Object.keys(s).forEach(k => { o[k] = (k === 'ballLog' && Array.isArray(s[k])) ? s[k].map(intern) : intern(s[k]); });
+    return o;
+  });
+}
+function _histDecodeV2(raw){
+  const d = JSON.parse(raw);
+  if(!d || d.v !== 2 || !Array.isArray(d.pool) || !Array.isArray(d.snaps)) return [];
+  const pool = d.pool;
+  return d.snaps.map(o => {
+    const s = {};
+    Object.keys(o || {}).forEach(k => {
+      const e = o[k] || {};
+      if(Array.isArray(e.l)) s[k] = e.l.map(i => pool[i]);
+      else if('p' in e) s[k] = pool[e.p];
+      else s[k] = e.v;
+    });
+    return s;
+  });
+}
+function _histEncodeV2(list){
+  const pool = [], at = new Map(), byJson = new Map();
+  const add = (v) => {
+    if(v === null || typeof v !== 'object'){ pool.push(v); return pool.length - 1; }
+    let i = at.get(v);
+    if(i != null) return i;
+    const j = _histJsonOf(v);
+    i = byJson.get(j);
+    if(i == null){ i = pool.length; pool.push(v); byJson.set(j, i); }
+    at.set(v, i);
+    return i;
+  };
+  const snaps = list.map(s => {
+    const o = {};
+    Object.keys(s).forEach(k => {
+      const v = s[k];
+      if(k === 'ballLog' && Array.isArray(v)) o[k] = { l: v.map(add) };
+      else if(v !== null && typeof v === 'object') o[k] = { p: add(v) };
+      else o[k] = { v };
+    });
+    return o;
+  });
+  return JSON.stringify({ v: 2, savedAt: Date.now(), pool, snaps });
+}
 function loadHistory(){
   try{
+    const raw2 = localStorage.getItem(HISTORY_STORAGE_KEY_V2);
+    if(raw2){ const list = _histDecodeV2(raw2); if(list.length) return list; }
+  }catch(e){}
+  try{
     const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed : [];
+    if(!raw) return [];
+    let parsed = null;
+    try{ parsed = JSON.parse(raw); }catch(e){}
+    try{ localStorage.removeItem(HISTORY_STORAGE_KEY); }catch(e){}
+    if(!Array.isArray(parsed)) return [];
+    const list = _histInternAll(parsed.slice(-MAX_HISTORY));
+    setTimeout(() => saveHistoryLocal(), 0); // the old stack is gone from storage — keep its recent steps in the new form
+    return list;
   }catch(e){ return []; }
 }
-function saveHistoryLocal(){
-  try{ localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history)); }catch(e){}
+let _histSaveTimer = null;
+function _writeHistoryNow(){
+  clearTimeout(_histSaveTimer); _histSaveTimer = null;
+  try{ localStorage.removeItem(HISTORY_STORAGE_KEY); }catch(e){}
+  if(!history.length){ try{ localStorage.removeItem(HISTORY_STORAGE_KEY_V2); }catch(e){} return; }
+  // the newest steps that fit the budget — and that storage accepts
+  let n = Math.min(HISTORY_PERSIST_MAX, history.length);
+  while(n > 0){
+    let raw = null;
+    try{ raw = _histEncodeV2(history.slice(-n)); }catch(e){ raw = null; }
+    if(raw && raw.length <= HISTORY_PERSIST_BUDGET){
+      try{ localStorage.setItem(HISTORY_STORAGE_KEY_V2, raw); return; }catch(e){}
+    }
+    n = n > 4 ? Math.floor(n / 2) : n - 1;
+  }
+  // nothing fits: never leave an older stack behind holding the space
+  try{ localStorage.removeItem(HISTORY_STORAGE_KEY_V2); }catch(e){}
 }
+// Name kept for every caller: "the undo stack changed — keep it". The write
+// happens a moment later, off the click, and once for a burst of changes.
+function saveHistoryLocal(){
+  if(_histSaveTimer) return;
+  _histSaveTimer = setTimeout(_writeHistoryNow, 350);
+}
+window.addEventListener('pagehide', () => { if(_histSaveTimer) _writeHistoryNow(); });
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden' && _histSaveTimer) _writeHistoryNow(); });
 // Use this instead of `history.push(snapshot())` directly, so every
 // pushed snapshot is also persisted immediately.
 // 🧱 ATOMIC SCORING — one scorer action (a wicket together with its new
@@ -7815,34 +7938,68 @@ function loadState(){
 function saveLocal(){
   try{ localStorage.setItem('cricket-panel-state', JSON.stringify(state)); }catch(e){}
 }
-// 🩹 FIX (undo silently running out of road well before the actual match
-// start): history snapshots used to deep-clone the ENTIRE state, including
-// each team's uploaded logo — a compressed but still non-trivial data URL
-// (see compressImageToDataURL()) that never actually changes ball-to-ball.
-// Duplicating it into every one of up to MAX_HISTORY snapshots could push
-// the persisted history well past what localStorage's quota allows for one
-// origin; saveHistoryLocal()'s save then starts silently failing (caught,
-// never surfaced), so anything scored after that point has no snapshot to
-// undo back to even though `history` still looks non-empty in memory during
-// the same session — and the moment the tab reloads, the last SUCCESSFULLY
-// persisted (much older, smaller) history comes back instead, effectively
-// truncating undo partway through the match. Logos are excluded from the
-// snapshot itself and reattached from the live team objects (which are never
-// touched by a history restore, since only the score/ball state below
-// actually changes ball-to-ball) whenever a snapshot is restored — see
-// restoreHistorySnapshot().
+// The state as it is right now, for the undo stack. Team logos (a data URL
+// that never changes ball to ball) are left out, as before, and put back
+// from the live teams on restore — see restoreHistorySnapshot().
+// Every delivery and every section that still reads exactly as it did in
+// the previous snapshot is the SAME frozen copy (see UNDO HISTORY above):
+// a Test match's 1,000-ball log is not copied again on every ball, only the
+// deliveries that changed are.
 function snapshot(){
-  const clone = JSON.parse(JSON.stringify(state));
-  if(clone.teamA) clone.teamA.logoUrl = '';
-  if(clone.teamB) clone.teamB.logoUrl = '';
-  return clone;
+  const snap = {};
+  Object.keys(state).forEach(k => {
+    const v = state[k];
+    if(v === undefined || typeof v === 'function') return; // JSON never kept these either
+    if(k === 'ballLog' && Array.isArray(v)){
+      snap.ballLog = v.map(e => {
+        if(e === null || typeof e !== 'object') return e;
+        const json = JSON.stringify(e);
+        const c = _histEntry.get(e);
+        if(c && c.json === json) return c.copy;
+        const copy = _histFrozen(json);
+        _histEntry.set(e, { json, copy });
+        return copy;
+      });
+      return;
+    }
+    if(v === null || typeof v !== 'object'){
+      if(typeof v === 'number' && !isFinite(v)) snap[k] = null; // as JSON would have it
+      else snap[k] = v;
+      return;
+    }
+    const json = JSON.stringify((k === 'teamA' || k === 'teamB') && v.logoUrl ? { ...v, logoUrl: '' } : v);
+    const c = _histPart[k];
+    if(c && c.json === json){ snap[k] = c.copy; return; }
+    const copy = _histFrozen(json);
+    _histPart[k] = { json, copy };
+    snap[k] = copy;
+  });
+  return snap;
 }
-// Restores a popped history snapshot as the live `state`, reattaching the
-// logo fields snapshot() deliberately left out (see comment above).
+// Restores a popped history snapshot as the live `state`: a fresh copy of
+// it (the snapshot's pieces are shared with other snapshots and must never
+// be edited), with the logo fields snapshot() left out put back.
 function restoreHistorySnapshot(snap){
   const logoA = state.teamA && state.teamA.logoUrl;
   const logoB = state.teamB && state.teamB.logoUrl;
-  state = snap;
+  const next = {};
+  Object.keys(snap || {}).forEach(k => {
+    const v = snap[k];
+    if(k === 'ballLog' && Array.isArray(v)){
+      next.ballLog = v.map(copy => {
+        if(copy === null || typeof copy !== 'object') return copy;
+        const json = _histJsonOf(copy);
+        const live = JSON.parse(json);
+        _histEntry.set(live, { json, copy }); // the next snapshot reuses this same copy
+        return live;
+      });
+    } else if(v !== null && typeof v === 'object'){
+      const json = _histJsonOf(v);
+      next[k] = JSON.parse(json);
+      _histPart[k] = { json, copy: v };
+    } else next[k] = v;
+  });
+  state = next;
   if(state.teamA) state.teamA.logoUrl = logoA || '';
   if(state.teamB) state.teamB.logoUrl = logoB || '';
 }
@@ -14537,6 +14694,7 @@ function squadSnapshotOf(t){
 }
 
 function saveMatchToLeague(silent){
+  if(state.milestonesHit && state.milestonesHit['match-result'] && typeof wwQueueAllShots === 'function') wwQueueAllShots();
   bindMatchTournament();
   const name = currentMatchTournament();
   if(!name){ if(!silent) toast('Pick or start a tournament first'); return; }
@@ -14604,6 +14762,7 @@ function currentSingleMatches(){
 // tournamentMatchId, see ensureTournamentMatchId()) always lands as a NEW
 // entry, never overwriting the previous single match's saved scorecard.
 function saveMatchToSingleHistory(silent){
+  if(state.milestonesHit && state.milestonesHit['match-result'] && typeof wwQueueAllShots === 'function') wwQueueAllShots();
   const rec = buildMatchRecordForLeague();
   const key = leagueStorageKey(SINGLE_MATCHES_NAME);
   const matches = currentSingleMatches().slice();
@@ -20668,6 +20827,7 @@ function applyServerCardsToScore(cards){
   if(history.length) history.pop();
 }
 // Returns { ok:true, mode:'exact'|'approx'|'server' } or { ok:false, reason:'empty'|'unsafe'|... }
+let undoServerPending = false; // the server-backed undo is waiting on the network (see the Undo button)
 async function deleteLastBall(){
   // 🔁 The last step was an Impact Player substitution: it is not a delivery
   // (it can even come before the first ball), so Undo reverses just that.
@@ -20710,13 +20870,19 @@ async function deleteLastBall(){
   // Wicket ball, no local snapshot — can't safely reverse it from what
   // THIS browser has in memory. Ask the database for its own last-recorded
   // delivery instead, which works no matter which device scored it.
-  const serverResult = await deleteLastBallViaServer();
-  if(!serverResult.ok) return { ok: false, reason: 'unsafe' };
+  undoServerPending = true;
+  let serverResult;
+  try { serverResult = await deleteLastBallViaServer(); } finally { undoServerPending = false; }
+  if(!serverResult || !serverResult.ok) return { ok: false, reason: 'unsafe' };
   applyServerCardsToScore(serverResult.cards);
   return { ok: true, mode: 'server' };
 }
 
 document.getElementById('undo-btn').addEventListener('click', async () => {
+  // One press, one undo: the server-backed undo waits on the network — a
+  // second press meanwhile is not a second undo. (Every other undo is done
+  // before the click returns, so it can never overlap.)
+  if(undoServerPending){ toast('↩️ Still undoing the last ball — one moment'); return; }
   const result = await deleteLastBall();
   if(!result.ok){
     if(result.reason === 'empty') toast('Nothing to undo');
@@ -23451,8 +23617,41 @@ function wwPickAt(x, y){
 // setBallShot update either way (kept on this laptop until the server has
 // it — the same promise the ball itself gets).
 const WW_SHOT_KEY = 'cricket-ball-shot-queue';
-function wwLoadQ(){ try{ const q = JSON.parse(localStorage.getItem(WW_SHOT_KEY) || '[]'); return Array.isArray(q) ? q : []; }catch(e){ return []; } }
-function wwSaveQ(q){ try{ localStorage.setItem(WW_SHOT_KEY, JSON.stringify(q.slice(-300))); }catch(e){} }
+// 🐛 The queue used to live ONLY in browser storage: setBallShot wrote it there
+// and flushShotQueue read it back. With storage full (the old undo stack filled
+// it on long matches) that write failed silently, the read came back without
+// the new shot, and it was never sent — the live commentary had it, the
+// finished match did not (the Harris Shield final kept 108 of 301). The queue
+// is now kept in memory, like the ball outbox; storage is only its copy for a
+// reload, written when there is room.
+let wwShotQueue = null;
+function wwLoadQ(){
+  if(!wwShotQueue){
+    try{ const q = JSON.parse(localStorage.getItem(WW_SHOT_KEY) || '[]'); wwShotQueue = Array.isArray(q) ? q : []; }catch(e){ wwShotQueue = []; }
+  }
+  return wwShotQueue.slice();
+}
+function wwSaveQ(q){
+  wwShotQueue = q.slice(-2000);
+  try{ localStorage.setItem(WW_SHOT_KEY, JSON.stringify(wwShotQueue.slice(-300))); }catch(e){}
+}
+// 🏁 A decided match: every shot on the ball log goes up once more, so its
+// finished-match commentary has exactly what the live one showed — even a shot
+// whose first send never made it. Storing a shot again changes nothing.
+let wwFinalSyncKey = null;
+function wwQueueAllShots(){
+  const matchId = currentMatchId();
+  const log = state.ballLog || [];
+  if(!matchId || !log.length) return;
+  const withShot = log.filter(e => e && e.shot && e.deliveryId);
+  const key = `${matchId}|${log.length}|${withShot.length}`;
+  if(key === wwFinalSyncKey) return;
+  wwFinalSyncKey = key;
+  const q = wwLoadQ(), queued = new Set(q.map(x => x.uid)), now = Date.now();
+  withShot.forEach(e => { if(!queued.has(e.deliveryId)) q.push({ uid: e.deliveryId, matchId, shot: e.shot, at: now }); });
+  wwSaveQ(q);
+  flushShotQueue();
+}
 function setBallShot(entry, shot){
   entry.shot = shot;
   const uid = entry.deliveryId;
