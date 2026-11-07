@@ -4651,7 +4651,7 @@ async function loadMatchSnapshot(matchId){
 let finalMatchData = null;
 // Its tournament's name — per-over wagon wheels are on for some tournaments (overWheelsOn).
 let finalTournamentName = '';
-let finalActiveInnings = 'A';
+let finalActiveInnings = 1; // the innings NUMBER on show (a Test has up to 4 — see finalInningsOf)
 
 // Which team's card is genuinely the 1st innings. The toggle used to
 // hardcode team A = 1st innings / team B = 2nd innings, which is wrong
@@ -4687,19 +4687,111 @@ function firstBattingTeamOf(m){
   return 'A'; // no per-row innings tag on this record — fall back to the old assumption
 }
 
+// Every regulation innings of a SAVED match record, in batting order:
+//   [{ no, team, runs, wickets, overs, declared, extras, archived }]
+// 🐛 The finished-match view used to have one tab per TEAM (1st Innings =
+// whoever batted first, 2nd Innings = the other side), so a Test — where a
+// side bats twice — never showed its 3rd or 4th innings at all, and a side's
+// two innings were drawn as one mixed batting card. The same match opened
+// from its live room link showed all of them. The innings, not the team, is
+// what the tabs switch between now.
+// Sources, most trusted first: inningsArchive, then the innings each
+// batting / bowling / fall-of-wickets row is tagged with. The innings that
+// ended the match is often not archived — its figures are its side's match
+// total (scoreA/scoreB add up every innings; the wickets are the last
+// innings') less that side's archived innings. A record with no innings
+// tags at all (an older save) is one innings each, the side that batted
+// first going in first — exactly the two tabs it always had.
+function finalInningsOf(m){
+  if(!m) return [];
+  const other = (k) => k === 'A' ? 'B' : 'A';
+  const regular = (n) => Number.isFinite(n) && n > 0 && !isSuperOverInnings(n);
+  const teamOf = new Map(), archived = new Map();
+  (m.inningsArchive || []).forEach(i => {
+    const no = Number(i && i.no);
+    if(!regular(no) || (i.team !== 'A' && i.team !== 'B') || teamOf.has(no)) return;
+    teamOf.set(no, i.team); archived.set(no, i);
+  });
+  const see = (no, team) => { no = Number(no); if(regular(no) && !teamOf.has(no)) teamOf.set(no, team); };
+  const rowsOf = (card, k) => (m[card] && m[card][k]) || [];
+  ['A', 'B'].forEach(k => {
+    rowsOf('battingCard', k).forEach(r => { if(r && r.inningsNo != null) see(r.inningsNo, k); });
+    rowsOf('fallOfWickets', k).forEach(f => { if(f && f.inningsNo != null) see(f.inningsNo, k); });
+    rowsOf('bowlingCard', k).forEach(r => { if(r && r.inningsNo != null) see(r.inningsNo, other(k)); });
+  });
+  // A side with no tagged innings still batted when it has rows (an older
+  // save) — or, with nothing tagged anywhere, always (the old two tabs).
+  const first = firstBattingTeamOf(m);
+  const tagged = teamOf.size > 0;
+  [first, other(first)].forEach(k => {
+    if([...teamOf.values()].includes(k)) return;
+    if(tagged && !rowsOf('battingCard', k).length && !rowsOf('bowlingCard', other(k)).length) return;
+    let no = 1;
+    while(teamOf.has(no)) no++;
+    teamOf.set(no, k);
+  });
+  const list = [...teamOf.keys()].sort((a, b) => a - b).map(no => {
+    const a = archived.get(no);
+    return a
+      ? { no, team: teamOf.get(no), runs: Number(a.runs) || 0, wickets: Number(a.wickets) || 0, overs: String(a.overs || '0.0'), declared: !!a.declared, extras: a.extras || null, archived: true }
+      : { no, team: teamOf.get(no), runs: null, wickets: null, overs: null, declared: false, extras: null, archived: false };
+  });
+  const toBalls = (o) => { const p = String(o == null ? '0' : o).split('.'); return (Number(p[0]) || 0) * 6 + (Number(p[1]) || 0); };
+  ['A', 'B'].forEach(k => {
+    const open = list.filter(i => i.team === k && !i.archived);
+    const sc = k === 'A' ? m.scoreA : m.scoreB;
+    if(open.length !== 1 || !sc) return;
+    const done = list.filter(i => i.team === k && i.archived);
+    const runs = (Number(sc.runs) || 0) - done.reduce((n, i) => n + i.runs, 0);
+    const balls = toBalls(sc.overs) - done.reduce((n, i) => n + toBalls(i.overs), 0);
+    if(runs < 0 || balls < 0) return;
+    // The panel keeps a side's extras as a running count of its LATEST
+    // innings; an imported scorecard keeps the side's whole match — less
+    // its archived innings, that is this one (an unknown part stays unknown).
+    let extras = (m.extras && m.extras[k]) || null;
+    if(extras && m.importSource && done.length){
+      extras = { ...extras };
+      ['wd', 'nb', 'b', 'lb', 'pen'].forEach(x => {
+        const parts = done.map(i => i.extras ? i.extras[x] : null);
+        extras[x] = (extras[x] == null || parts.some(v => v == null)) ? null : Math.max(0, extras[x] - parts.reduce((n, v) => n + v, 0));
+      });
+      delete extras.total;
+    }
+    Object.assign(open[0], { runs, wickets: Number(sc.wickets) || 0, overs: `${Math.floor(balls / 6)}.${balls % 6}`, extras });
+  });
+  return list;
+}
+// "154/10 & 133/7 d" — a side's match score line in a saved Test, every
+// innings it batted (same form as the live page's teamScoreLine()).
+function finalTestScoreLine(m, team){
+  return finalInningsOf(m).filter(i => i.team === team && i.runs != null)
+    .map(i => `${i.runs}/${i.wickets}${i.declared ? ' d' : ''}`).join(' & ');
+}
+// One innings' extras worked out from its own deliveries — the same
+// crediting as the server's card rebuild (buildLiveCardsFromBallsArray): a
+// Wide's runs are all extras, a No Ball is 1 (plus any byes / leg byes off
+// it), Byes / Leg Byes / penalty runs are all extras.
+function extrasFromBalls(balls){
+  const ex = { wd: 0, nb: 0, b: 0, lb: 0, pen: 0 };
+  (balls || []).forEach(b => {
+    const k = String((b && b.ballType) || '').toUpperCase(), r = Number(b && b.runs) || 0;
+    if(/^WD/.test(k)) ex.wd += r;
+    else if(/^NB/.test(k)){
+      ex.nb += 1;
+      if(b.nbRunsAs === 'bye') ex.b += Math.max(0, r - 1);
+      else if(b.nbRunsAs === 'legbye') ex.lb += Math.max(0, r - 1);
+    }
+    else if(k === 'B') ex.b += r;
+    else if(k === 'LB') ex.lb += r;
+    else if(k === 'PEN') ex.pen += r;
+  });
+  return ex;
+}
 // Saved match records key m.partnerships by INNINGS NUMBER (1/2/3/4 — see
-// computeLivePartnerships() in cricket-panel.html), not by team letter, so
-// this resolves which innings number(s) belong to a given team ('A'/'B')
-// before looking the list up. Uses inningsArchive (authoritative, and the
-// only way to get this right for a Test match where a team bats twice);
-// falls back to the plain 1st/2nd innings assumption for older records
-// saved before inningsArchive existed.
-function partnershipsForTeam(m, team){
+// computeLivePartnerships() in cricket-panel.html), not by team letter.
+function partnershipsForInnings(m, inn){
   const src = m.partnerships;
-  if(!src) return [];
-  let nos = (m.inningsArchive || []).filter(i => i.team === team).map(i => i.no).sort((a,b) => a-b);
-  if(!nos.length) nos = [team === firstBattingTeamOf(m) ? 1 : 2];
-  return nos.reduce((all, no) => all.concat(src[no] || []), []);
+  return (src && src[inn]) || [];
 }
 
 function finalResultText(m){
@@ -4897,9 +4989,14 @@ function superOverDataOf(x){
 function regulationTotalsOf(x){
   const out = { A: null, B: null };
   if(x.scoreA || x.scoreB){ out.A = x.scoreA || null; out.B = x.scoreB || null; }
+  // A saved record (no live inningsNumber): its innings that ended the match
+  // is often not archived — finalInningsOf() still knows it.
+  const saved = x.inningsNumber == null && !!(x.scoreA || x.scoreB);
   ['A', 'B'].forEach(k => {
     const arch = (x.inningsArchive || []).filter(i => i.team === k && !isSuperOverInnings(i.no));
-    if(x.format === 'Test' && arch.length){
+    const savedLine = saved && x.format === 'Test' ? finalTestScoreLine(x, k) : '';
+    if(savedLine) out[k] = { ...(out[k] || {}), line: savedLine };
+    else if(x.format === 'Test' && arch.length){
       out[k] = { ...(out[k] || {}), line: arch.map(i => `${i.runs}/${i.wickets}${i.declared ? ' d' : ''}`).join(' & ') };
     }
     if(out[k]) return;
@@ -5026,7 +5123,10 @@ function renderFinalSnapshot(match, displayName){
   const isFirstLoadOfThisMatch = finalMatchData === null;
   finalMatchData = match;
   finalTournamentName = displayName || '';
-  if(isFirstLoadOfThisMatch) finalActiveInnings = firstBattingTeamOf(match);
+  const inningsList = finalInningsOf(match);
+  if(isFirstLoadOfThisMatch || !inningsList.some(i => i.no === finalActiveInnings)){
+    finalActiveInnings = inningsList.length ? inningsList[0].no : 1;
+  }
   document.title = `${(match.teamA&&(match.teamA.short||match.teamA.name))||'Team A'} vs ${(match.teamB&&(match.teamB.short||match.teamB.name))||'Team B'} — All Sports Live`;
 
   // Sections that only make sense mid-match — nothing "current" to show
@@ -5100,13 +5200,19 @@ function renderFinalSnapshot(match, displayName){
   // inline where the stacked header has the width for them. Which one
   // happens is CSS's call — see .ps-overs.
   const prevLine = (sc) => `${sc.runs||0}-${sc.wickets||0}<span class="ps-overs">(${escapeHtml(String(sc.overs||'0.0'))} ov)</span>`;
+  // A Test side that batted twice: each innings, "154/10 & 133/7 d" — the
+  // same line the live page shows — not both innings added up into one
+  // made-up "287-7 (87.3 ov)".
+  const testLine = (k) => (match.format === 'Test' && !superOverDataOf(match)) ? finalTestScoreLine(match, k) : '';
   if(prevA){
     prevA.style.display = '';
-    prevA.innerHTML = prevLine(scoreA) + superOverHeroLine(match, 'A');
+    const t = testLine('A');
+    if(t) prevA.textContent = t; else prevA.innerHTML = prevLine(scoreA) + superOverHeroLine(match, 'A');
   }
   if(prevB){
     prevB.style.display = '';
-    prevB.innerHTML = prevLine(scoreB) + superOverHeroLine(match, 'B');
+    const t = testLine('B');
+    if(t) prevB.textContent = t; else prevB.innerHTML = prevLine(scoreB) + superOverHeroLine(match, 'B');
   }
   setText('main-score', hasResult
     ? (winMarginText(match) || shortResultText(match) || 'Match Completed')
@@ -5141,44 +5247,43 @@ function renderFinalSnapshot(match, displayName){
 
   ensureInningsToggle();
   renderFinalInnings();
-  renderTeamWicketClips({ battingTeam: finalActiveInnings });
+  renderTeamWicketClips({ battingTeam: (inningsList.find(i => i.no === finalActiveInnings) || {}).team || firstBattingTeamOf(match) });
   renderResultAndSuperOver(match, hasResult, finalBallLog);
   if(typeof scTabsRefresh === 'function') scTabsRefresh();
 }
 
-// Small A/B switch above the batting/bowling tables so both completed
-// innings are reachable. The element itself is built once and reused,
-// but which team each button points at is re-synced on every call —
-// that mapping depends on who batted first, which can differ match to
-// match (it must NOT stay pinned to whatever the first match loaded on
-// this page happened to have).
+// The innings switch above the batting/bowling tables: one tab per innings
+// the match actually had (2 in a limited-overs match, up to 4 in a Test —
+// see finalInningsOf), the same tabs the live page shows. Each tab carries
+// its innings number and the side that batted in it.
 // `_lastFinalToggleKey` mirrors the live toggle's own `_lastToggleState`
 // caching (see ensureLiveInningsToggle) — a "history mode" finished-match
 // page re-runs this on every 30s snapshot poll (loadMatchSnapshot), and
-// without this guard it rebuilt these two buttons' innerHTML + rebound
-// their click listeners every single time even though which innings
-// batted first essentially never changes after the match is over.
+// without this guard it rebuilt the buttons' innerHTML + rebound their
+// click listeners every single time even though a finished match's
+// innings essentially never change.
 let _lastFinalToggleKey = null;
 function ensureInningsToggle(){
-  const first = finalActiveInnings;
-  const second = first === 'A' ? 'B' : 'A';
+  const inns = finalInningsOf(finalMatchData);
   const grid = document.getElementById('tables-grid');
   let bar = document.getElementById('final-innings-toggle');
-  const toggleKey = first + '|' + second;
+  const toggleKey = inns.map(i => i.no + i.team).join(',') + '|' + finalActiveInnings;
   if(bar && _lastFinalToggleKey === toggleKey) return;
   _lastFinalToggleKey = toggleKey;
   if(!bar){
     bar = document.createElement('div');
     bar.id = 'final-innings-toggle';
-    bar.style.cssText = 'display:flex; gap:6px; margin:-4px 0 2px;';
+    bar.style.cssText = 'display:flex; gap:6px; margin:-4px 0 2px; flex-wrap:wrap;';
     grid.parentNode.insertBefore(bar, grid);
   }
-  bar.innerHTML = `<button class="cd-tab active" data-team="${first}" style="flex:none; padding:6px 14px;">1st Innings</button>
-                    <button class="cd-tab" data-team="${second}" style="flex:none; padding:6px 14px;">2nd Innings</button>`;
+  bar.innerHTML = inns.map(i =>
+    `<button class="cd-tab${i.no === finalActiveInnings ? ' active' : ''}" data-inn="${i.no}" data-team="${i.team}" style="flex:none; padding:6px 14px;">${_ord(i.no)} Innings</button>`
+  ).join('');
   bar.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
     bar.querySelectorAll('button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    finalActiveInnings = btn.dataset.team;
+    finalActiveInnings = Number(btn.dataset.inn);
+    _lastFinalToggleKey = null; // the active tab changed: the next poll may rebuild the bar
     renderFinalInnings();
   }));
 }
@@ -5186,12 +5291,22 @@ function ensureInningsToggle(){
 function renderFinalInnings(){
   const m = finalMatchData;
   if(!m) return;
-  const team = finalActiveInnings;
+  const inns = finalInningsOf(m);
+  const entry = inns.find(i => i.no === finalActiveInnings) || inns[0] || { no: 1, team: firstBattingTeamOf(m), extras: null };
+  const inn = entry.no, team = entry.team;
   const other = team === 'A' ? 'B' : 'A';
+  const sideInnings = inns.filter(i => i.team === team).length;
+  // A row with no innings tag (an older save) belongs to its batting side's first innings.
+  const firstInnOf = (k) => { const e = inns.find(i => i.team === k); return e ? e.no : null; };
+  const inThisInnings = (r) => (r && r.inningsNo != null ? Number(r.inningsNo) : firstInnOf(team)) === inn;
   scImpactLog = impactListOf(m);
-  const teamBalls = (finalBallLog || []).filter(b => b.battingTeam === team && !isSuperOverInnings(b.innings));
-  const bat = orderBattingRows((m.battingCard && m.battingCard[team]) || [], teamBalls);
-  const bowl = orderBowlingRows((m.bowlingCard && m.bowlingCard[other]) || [], teamBalls);
+  // This innings' own deliveries — by innings number, so a Test side's two
+  // innings never share one card. (A side that batted once falls back to its
+  // deliveries by team, for an older log with no innings numbers on it.)
+  let teamBalls = (finalBallLog || []).filter(b => Number(b.innings || 1) === inn && (!b.battingTeam || b.battingTeam === team));
+  if(!teamBalls.length && sideInnings <= 1) teamBalls = (finalBallLog || []).filter(b => b.battingTeam === team && !isSuperOverInnings(b.innings));
+  const bat = orderBattingRows(((m.battingCard && m.battingCard[team]) || []).filter(inThisInnings), teamBalls);
+  const bowl = orderBowlingRows(((m.bowlingCard && m.bowlingCard[other]) || []).filter(inThisInnings), teamBalls);
 
   applyScorecardTeams(team === 'A' ? m.teamA : m.teamB, other === 'A' ? m.teamA : m.teamB);
 
@@ -5231,7 +5346,14 @@ function renderFinalInnings(){
   const fowList = document.getElementById('fow-list');
   renderFowPanel(m, typeof finalBallLog !== 'undefined' ? finalBallLog : [], true);
 
-  const ex = (m.extras && m.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
+  // This innings' own extras: its archive entry's, else — a side that batted
+  // once — the side's, else counted from this innings' deliveries (the
+  // record's per-side figure can be a Test side's two innings added up).
+  const ex = entry.extras
+    || (sideInnings <= 1 && m.extras && m.extras[team])
+    || (teamBalls.length && !imp ? extrasFromBalls(teamBalls) : null)
+    || (m.extras && m.extras[team])
+    || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', nv(ex.wd)); setText('ex-nb', nv(ex.nb)); setText('ex-b', nv(ex.b)); setText('ex-lb', nv(ex.lb));
   setText('ex-pen', nv(ex.pen));
   const exParts = [ex.wd, ex.nb, ex.b, ex.lb, ex.pen];
@@ -5246,12 +5368,10 @@ function renderFinalInnings(){
   // same as inningsArchive), not by team letter. Looking it up as
   // m.partnerships[team] ('A'/'B') always missed, so this always showed
   // "No partnership data" even though the correct list was sitting right
-  // there under a different key. Map team -> its innings number(s) via
-  // inningsArchive first (handles Tests, where a team can have two
-  // innings), falling back to the standard 1st/2nd innings order
-  // firstBattingTeamOf() already trusts for older records with no
-  // inningsArchive.
-  const pships = partnershipsForTeam(m, team);
+  // there under a different key. The tab on show IS an innings number now
+  // (see finalInningsOf), so it is looked up directly — a Test side's two
+  // innings each list their own partnerships.
+  const pships = partnershipsForInnings(m, inn);
   const pshipEl = document.getElementById('pship-big-runs');
   if(pshipEl){
     const pshipCard = pshipEl.closest('.card');
@@ -8182,7 +8302,10 @@ function ensureLiveInningsToggle(s){
     return;
   }
   const active = liveSelectedInnings == null ? total : liveSelectedInnings;
-  const toggleKey = total + '|' + active + '|' + liveInSuperOver(s);
+  // Once the match has a result its last innings is over too — no "· Live"
+  // on it (a finished Test still read "3rd Innings · Live").
+  const decided = matchStatusText(s).badge === 'RESULT';
+  const toggleKey = total + '|' + active + '|' + liveInSuperOver(s) + '|' + decided;
   if(bar && _lastToggleState === toggleKey){ bar.style.display = 'flex'; return; }
   _lastToggleState = toggleKey;
   const ordinal = (n) => (n===1?'1st':n===2?'2nd':n===3?'3rd':n+'th');
@@ -8194,7 +8317,7 @@ function ensureLiveInningsToggle(s){
   }
   bar.style.display = 'flex';
   bar.innerHTML = Array.from({length: total}, (_, i) => i + 1).map(n =>
-    `<button class="cd-tab${n === active ? ' active' : ''}" data-inn="${n}" style="flex:none; padding:6px 14px;">${ordinal(n)} Innings${n === total && !liveInSuperOver(s) ? ' · Live' : ''}</button>`
+    `<button class="cd-tab${n === active ? ' active' : ''}" data-inn="${n}" style="flex:none; padding:6px 14px;">${ordinal(n)} Innings${n === total && !liveInSuperOver(s) && !decided ? ' · Live' : ''}</button>`
   ).join('');
   bar.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
     const n = Number(btn.dataset.inn);
@@ -8382,7 +8505,11 @@ function renderBottom(s){
   const fowList = document.getElementById('fow-list');
   renderFowPanel(s, s.ballLog, false);
 
-  const ex = (s.extras && s.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
+  // A finished innings' own extras are in its archive entry — s.extras[team]
+  // is the side's running count for the innings it is batting NOW, so a Test
+  // side's 1st innings tab used to show its 2nd innings' extras.
+  const pastEx = !isLive && ((s.inningsArchive || []).find(i => Number(i.no) === inn) || {}).extras;
+  const ex = pastEx || (s.extras && s.extras[team]) || { wd:0,nb:0,b:0,lb:0 };
   setText('ex-wd', ex.wd||0); setText('ex-nb', ex.nb||0); setText('ex-b', ex.b||0); setText('ex-lb', ex.lb||0);
   setText('ex-pen', ex.pen||0);
   setText('ex-total', 'Total extras: ' + ((ex.wd||0)+(ex.nb||0)+(ex.b||0)+(ex.lb||0)+(ex.pen||0)));

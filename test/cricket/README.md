@@ -66,6 +66,9 @@ node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the RE
                                                   # an outbox (also across a refresh); "saved" only after the server says so
 node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
+node test/cricket/test-match-innings-test.js     # 🏏 a Test on the website scorecard: every innings its own tab (3rd/4th too), its own batters,
+                                                  # bowlers, extras and partnerships; "154/10 & 133/7 d" header; the unarchived chase innings;
+                                                  # older untagged records keep their two tabs; the live view drops "· Live" once decided
 NODE_PATH=$(npm root -g) node test/cricket/overlay-layout-test.js  # 🎯 the overlay's score bar in Chromium at 1920x1080 / 1920x1280 / 1536x864 /
                                                   # 1366x768 / 1280x720 / 854x480: nothing off screen, cut or overlapping in any state (measured from the
                                                   # rendered page), frame by frame through updates, events and innings changes; the chase panel in
