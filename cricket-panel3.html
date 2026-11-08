@@ -22816,6 +22816,9 @@ document.getElementById('newmatch-start').addEventListener('click', async () => 
         + (unverified ? ` ⚠️ ${unverified} older player(s) could not be matched to a saved Player ID (offline / not signed in) — check them before scoring.` : ''), unverified ? 10000 : 6000);
     }
     closeNewMatchModal();
+    // 🟢 the new match's WhatsApp card + message (and YouTube title/description)
+    // open ready to send — not over a new match code, which is shown only once
+    if(!lockRoom && window.__matchShare && window.__matchShare.afterNewMatch) window.__matchShare.afterNewMatch();
     if(lockRoom) mlShowCode(lockRoom, lockCode, matchLabelForToast(state), '✅ Code set — this laptop is scoring the match now. To open it again later (▶ Resume, here or on any laptop) this same code is asked. Note it down: the panel does not show it again.');
   }catch(err){
     console.error('Create New Match failed', err);
@@ -24933,6 +24936,8 @@ async function startUpcomingMatch(rec, btn, listTournament){
     refreshLeagueUI();
     sendMatchSnapshot(started);
     pingTournamentLiveStatus(true);
+    // 🟢 the fixture is the match now: its share opens ready (see Create New Match)
+    if(window.__matchShare && window.__matchShare.afterNewMatch) window.__matchShare.afterNewMatch();
 
     const unverified = (teamA.unverified || 0) + (teamB.unverified || 0);
     toast(`▶️ Started${rec.matchNo ? ' Match ' + rec.matchNo : ''} — ${teamA.name} vs ${teamB.name}${fixtureFormatText(rec) ? ` (${fixtureFormatText(rec)})` : ''}. Match ID is now ${rec.roomId} — update the overlay link in OBS / Live Output, set the toss/openers and start scoring; it is live on the tournament page.`
@@ -25085,6 +25090,6 @@ document.addEventListener('keydown', (e) => {
 <script src="/cricket-remote-host.js?v=1"></script>
 <!-- 🟢 WHATSAPP MATCH SHARE — beside Phone Remote: a match card (two real QR codes) + a WhatsApp message
      with the match, scorecard and website links, made from this match (cricket-share.js) -->
-<script src="/cricket-share.js?v=1"></script>
+<script src="/cricket-share.js?v=2"></script>
 </body>
 </html>
