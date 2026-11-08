@@ -339,7 +339,8 @@ async function chain(){
     eq('…captain and keeper marked on the right players', o.tags, ['Rohit Sharma:C', 'Rishabh Pant:WK']);
     eq('…Cricket Panel 3 shows it on air too (and Cricket Panel)', [(await btn(P3, 'bcg-xi-btn')).on, (await btn(P3, 'bcg-xi-btn')).pressed, await air(P3), (await btn(P1, 'bcg-xi-btn')).on], [true, 'true', 'On air · Playing XI', true]);
     ok('…the score bar has stepped off air', (await until(ov, v => v.bar < 0.05, 3000)).bar < 0.05);
-    eq('…the logo is the team\'s own picture; the side without one shows its initials', await OV.page.evaluate(() => [...document.querySelectorAll('#bcg .xi-logo .bcg-plate')].map(p => p.classList.contains('mono') ? 'mono:' + p.textContent.trim() : (p.querySelector('.bcg-plate-img').style.backgroundImage.startsWith('url("data:image/png;base64,') ? 'png' : '?'))), ['png', 'mono:CSK']);
+    // (the logo in its own true shape — logoKit draws it anew as a PNG: a blob: url — on no white plate)
+    eq('…the logo is the team\'s own picture; the side without one shows its initials', await OV.page.evaluate(() => [...document.querySelectorAll('#bcg .xi-logo .bcg-plate')].map(p => p.classList.contains('mono') ? 'mono:' + p.textContent.trim() : (/^(blob:|data:image\/png;base64,)/.test((p.querySelector('.lg img.lg-art') || {}).src || '') ? 'png' : '?'))), ['png', 'mono:CSK']);
     await sleep(10500);
     o = await ov();
     eq('10.5 s later: still team one (its 10 readable seconds come after its 1.5 s entrance)', [o.phase, o.team], ['team1', 'Mumbai Indians']);
@@ -441,7 +442,7 @@ async function chain(){
     }), ['ar-ko final', 'FINAL', 2, 1]);
     eq('…the team reveal over the picture: the two teams\' strands of light, the glass, both logos (no player photos), VS between them, no team-coloured halves',
       await OV.page.evaluate(() => [document.querySelectorAll('#bcg .ar-env svg .ar-str.a').length > 0 && document.querySelectorAll('#bcg .ar-env svg .ar-str.b').length > 0, !!document.querySelector('#bcg .ar-panel'),
-        document.querySelectorAll('#bcg .ar-frame .bcg-plate').length, document.querySelectorAll('#bcg .bcg-matchIntro img:not(.bcg-brand)').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [true, true, 2, 0, true, false]);
+        document.querySelectorAll('#bcg .ar-frame .bcg-plate').length, document.querySelectorAll('#bcg .bcg-matchIntro img:not(.bcg-brand):not(.lg-art)').length, !!document.querySelector('#bcg .ar-vs-t'), !!document.querySelector('#bcg .intro-side')]), [true, true, 2, 0, true, false]);
     // reloaded while it holds: it comes back as it is — not a second opening sequence
     await OV.page.reload();
     await OV.page.waitForFunction(() => window.gsap && document.querySelector('#bcg .bcg-scene[data-ready="1"]'), null, { timeout: 6000 });

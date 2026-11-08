@@ -114,6 +114,18 @@ NODE_PATH=$(npm root -g) node test/cricket/broadcast-graphics-test.js  # 🎬 PL
                                                   # round read from stage / title (SEMI-FINAL, FINAL …, never a league game); a final's gold
                                                   # ribbon on the intro; with the score bar switched off the graphics still go on air and the
                                                   # bar stays off after; Live Output blurs its camera while one is up, sharp again after
+NODE_PATH=$(npm root -g) node test/cricket/graphics-upgrade-test.js  # 🛡 the broadcast graphics upgrade (npm install --no-save gsap), in Chromium:
+                                                  # TEAM LOGOS in their own true shape — a tall shield, a wide wordmark, an emblem saved on BLACK as a
+                                                  # JPEG (Safari), a crest on WHITE, a coloured tile, a dark logo, a crest in empty margin, an SVG, a
+                                                  # broken one: trimmed / keyed out (corners really see-through) / kept whole / a light backing /
+                                                  # initials; every badge the logo's own box (no circle, plate or crop, object-fit contain), the score
+                                                  # bar's caps, the Playing XI hero, the toss coin, the Match Intro ring; the MANUAL BAT / BOWL CARDS —
+                                                  # every figure in its column, ECON last, at the crease / bowler on lit, TOP / BEST, a long name as
+                                                  # initials + surname, white type readable on white / yellow / neon / black teams, the entrance in its
+                                                  # layers with no bounce, the masks let go, BAT→BOWL→BAT in half a second → one card, the exit,
+                                                  # reduced motion; the SCORE BAR's layered entrance (line, caps, band, text) and exit (text, then
+                                                  # right to left), always at the foot of the picture, on/off/on → whole; BOTH PANELS' logo upload
+                                                  # keeps its transparency (WEBP, a PNG where WEBP cannot be written — never a black-ground JPEG)
 node test/cricket/match-report-test.js           # 📑 scorecard Excel + PDF report with wagon wheels, auto-download at match end: both panels
                                                   # (MR_LIBS=<dir with node_modules/exceljs + jspdf> also builds and checks the real files;
                                                   #  --sync re-inlines match-report.js into both panels)

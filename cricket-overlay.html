@@ -177,6 +177,32 @@
   html,body{ width:100%; height:100%; background:transparent; overflow:hidden; font-family:var(--font-ui); -webkit-font-smoothing:antialiased; }
   #stage{ position:relative; width:100vw; height:100vh; }
 
+  /* ============================================================
+     🛡 TEAM LOGOS — every logo in its own true shape (logoKit, script)
+     A badge that shows a logo (.lg) becomes the logo's own box: as wide
+     or as tall as the logo itself, at the visual weight a square logo of
+     the place's nominal size (--lgs) has — never a fixed circle or square
+     it is cut, stretched or squeezed into. --lg-mw / --lg-mh: how far past
+     that size a wide / tall logo may go in that place. The picture inside
+     (.lg-art) is the logo as logoKit drew it once: trimmed of its empty
+     margin, a lost black / white ground taken back out, a soft shadow (and
+     for a dark logo a light backing in its own outline) drawn into it —
+     so no plate, ring, crop or CSS filter is laid over it here. A logo
+     that fills its own rectangle (a tile, a photo) keeps that rectangle,
+     its corners rounded. Badges with no logo keep their initials look.
+     ============================================================ */
+  .lg{
+    display:flex !important; align-items:center; justify-content:center; flex:none; align-self:center !important;
+    width:auto !important; height:auto !important; min-width:0 !important; min-height:0 !important;
+    padding:0 !important; border:0 !important; border-radius:0 !important;
+    background:none !important; box-shadow:none !important; overflow:visible !important;
+    font-size:0 !important; color:transparent !important;
+  }
+  .lg > .lg-art{ display:block; flex:none; max-width:none; max-height:none; object-fit:contain; pointer-events:none; user-select:none; -webkit-user-drag:none; }
+  .lg.lg-wait > .lg-art{ visibility:hidden; }
+  .lg.lg-tile > .lg-art{ border-radius:calc(var(--lgs, 64px) * .12);
+    box-shadow:0 0 0 calc(var(--lgs, 64px) * .016) rgba(255,255,255,.32), 0 calc(var(--lgs, 64px) * .05) calc(var(--lgs, 64px) * .14) rgba(0,0,0,.36); }
+
   /* ---------------- Scorecard shell ---------------- */
   #scorecard{
     position:absolute;
@@ -201,6 +227,19 @@
      every frame that anything inside the bar moves, and without a GPU
      (vMix's browser input) that one blur cost more than the whole page. */
   #sb-shadow{ position:absolute; left:0; top:0; pointer-events:none; }
+  /* 🎬 the bar coming on / going off air (animateEntry / animateExit): a line
+     of light drawn along its top edge first, and a glint run through each
+     part once it is built — only ever moved (transform) or faded, and only
+     while the bar comes on air; at rest they are not there. */
+  #sb-guide{
+    position:absolute; left:1.5%; right:1.5%; top:calc(-5 * var(--bu)); height:calc(3 * var(--bu)); border-radius:99px; pointer-events:none;
+    background:linear-gradient(90deg, rgba(255,255,255,0) 0%, var(--badge) 16%, #ffffff 50%, var(--badge) 84%, rgba(255,255,255,0) 100%);
+    opacity:0; transform:scaleX(0);
+  }
+  .sb-glint{ position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:2; }
+  .sb-glint b{ position:absolute; top:-20%; bottom:-20%; left:0; width:calc(140 * var(--bu)); opacity:0; transform:translateX(-130%) skewX(-18deg);
+    background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.3) 50%, rgba(255,255,255,0) 100%); }
+  #mid-row .sb-glint b{ width:calc(220 * var(--bu)); background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.22) 42%, rgba(120,150,220,.16) 58%, rgba(255,255,255,0) 100%); }
   /* (the parts of the bar that blur / scale out around a ball event are put
      on the GPU only for the length of that animation — see playEventTimeline
      — so their small text stays pixel-sharp the rest of the time) */
@@ -253,6 +292,7 @@
   #cap-left::before{ left:0; clip-path:polygon(0 0, 100% 0, 0 100%); }
   #cap-right::before{ right:0; clip-path:polygon(100% 0, 100% 100%, 0 0); }
   .cap-logo{
+    --lgs:calc(62 * var(--bu)); --lg-mw:1.45; --lg-mh:1.1;
     width:calc(70 * var(--bu)); height:calc(70 * var(--bu)); border-radius:50%; flex:none;
     background-position:center; background-size:100%; background-repeat:no-repeat;
     display:flex; align-items:center; justify-content:center;
@@ -809,7 +849,7 @@
   .msx .ms-team-bar{ padding:calc(14 * var(--u) * var(--cyc,1)) calc(24 * var(--u)); font-size:calc(27 * var(--u) * var(--cyc,1)); letter-spacing:calc(1 * var(--u)); color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.3); }
   .msx .ms-team-bar > span:last-child{ font-size:1.18em; }
   .msx .ms-team-left{ gap:calc(16 * var(--u)); }
-  .msx .ms-badge{ width:calc(54 * var(--u) * var(--cyc,1)); height:calc(54 * var(--u) * var(--cyc,1)); font-size:calc(17 * var(--u)); border:calc(2.5 * var(--u)) solid rgba(255,255,255,0.92); box-shadow:0 2px 8px rgba(0,0,0,0.3); }
+  .msx .ms-badge{ --lgs:calc(50 * var(--u) * var(--cyc,1)); width:calc(54 * var(--u) * var(--cyc,1)); height:calc(54 * var(--u) * var(--cyc,1)); font-size:calc(17 * var(--u)); border:calc(2.5 * var(--u)) solid rgba(255,255,255,0.92); box-shadow:0 2px 8px rgba(0,0,0,0.3); }
   .msx .ms-rows{ padding:calc(4 * var(--u) * var(--cyc,1)) calc(24 * var(--u)) calc(10 * var(--u) * var(--cyc,1)); background:transparent; }
   .msx .ms-row{ font-size:calc(21 * var(--u) * var(--cyc,1)); padding:calc(9 * var(--u) * var(--cyc,1)) 0; gap:calc(48 * var(--u)); border-top:1px solid rgba(16,25,58,0.07); }
   .msx .ms-row.ms-row-head{ font-family:var(--font-num); font-weight:900; font-size:calc(12.5 * var(--u) * var(--cyc,1)); letter-spacing:calc(2.4 * var(--u)); color:var(--ms-ink,#0b3d91); border-top:0; padding-bottom:calc(4 * var(--u) * var(--cyc,1)); }
@@ -818,7 +858,7 @@
   .msx .ms-so{ margin:calc(14 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) 0; border-radius:calc(14 * var(--u)); }
   .msx .ms-so-head{ padding:calc(11 * var(--u) * var(--cyc,1)) calc(24 * var(--u)); font-size:calc(18 * var(--u) * var(--cyc,1)); }
   .msx .ms-so-row{ padding:calc(9 * var(--u) * var(--cyc,1)) calc(24 * var(--u)); font-size:calc(20 * var(--u) * var(--cyc,1)); }
-  .msx .ms-so-row .ms-badge{ width:calc(34 * var(--u)); height:calc(34 * var(--u)); font-size:calc(12 * var(--u)); }
+  .msx .ms-so-row .ms-badge{ --lgs:calc(32 * var(--u)); width:calc(34 * var(--u)); height:calc(34 * var(--u)); font-size:calc(12 * var(--u)); }
   .msx .ms-footer{ margin:calc(16 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)) calc(22 * var(--u) * var(--cyc,1)); padding:calc(16 * var(--u) * var(--cyc,1)) calc(24 * var(--u));
     border-radius:calc(14 * var(--u)); font-size:calc(28 * var(--u) * var(--cyc,1)); letter-spacing:calc(2 * var(--u)); color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.3);
     background:
@@ -831,7 +871,7 @@
   #over-summary-card .sc-header{ background:linear-gradient(100deg, var(--osc-accent) 0%, var(--osc-accent) 42%, var(--osc-accent-b) 58%, var(--osc-accent-b) 100%); padding:calc(22 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)); }
   .osc-vs-header{ display:flex; align-items:center; justify-content:center; gap:28px; }
   .osc-vs-side{ display:flex; flex-direction:column; align-items:center; gap:8px; flex:none; }
-  .osc-vs-side .sc-badge{ width:calc(84 * var(--u) * var(--cyc,1)); height:calc(84 * var(--u) * var(--cyc,1)); }
+  .osc-vs-side .sc-badge{ --lgs:calc(80 * var(--u) * var(--cyc,1)); width:calc(84 * var(--u) * var(--cyc,1)); height:calc(84 * var(--u) * var(--cyc,1)); }
   .osc-vs-short{ font-family:var(--font-num); font-weight:900; font-size:calc(26 * var(--u)); letter-spacing:1.5px; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,0.4); }
   .osc-vs-mid{ display:flex; flex-direction:column; align-items:center; gap:4px; flex:none; padding:0 8px; }
   .osc-vs-word{ font-family:var(--font-num); font-weight:900; font-size:calc(19 * var(--u)); letter-spacing:3.5px; color:rgba(255,255,255,0.75); }
@@ -906,7 +946,7 @@
       linear-gradient(135deg, var(--card-accent,#0b3d91), var(--card-accent,#0b3d91));
     padding:calc(20 * var(--u) * var(--cyc,1)) calc(34 * var(--ux)); gap:calc(22 * var(--ux));
   }
-  #batting-card-graphic .sc-badge, #bowling-card-graphic .sc-badge{ width:calc(78 * var(--u) * var(--cyc,1)); height:calc(78 * var(--u) * var(--cyc,1)); font-size:calc(21 * var(--u) * var(--cyc,1)); }
+  #batting-card-graphic .sc-badge, #bowling-card-graphic .sc-badge{ --lgs:calc(74 * var(--u) * var(--cyc,1)); width:calc(78 * var(--u) * var(--cyc,1)); height:calc(78 * var(--u) * var(--cyc,1)); font-size:calc(21 * var(--u) * var(--cyc,1)); }
   #batting-card-graphic .sc-title, #bowling-card-graphic .sc-title{ font-size:calc(34 * var(--u)); }
   #batting-card-graphic .sc-sub, #bowling-card-graphic .sc-sub{ color:rgba(255,255,255,0.88); font-size:calc(16 * var(--u)); }
   /* Score block on the right of the header — the innings total/overs, so the
@@ -976,7 +1016,7 @@
   /* a fine light edge under the header, in the team's own hue */
   .cardg .cardg-head::after{ content:''; position:absolute; left:0; right:0; bottom:0; height:calc(4 * var(--u));
     background:linear-gradient(90deg, var(--card-glow,rgba(255,255,255,.7)), rgba(255,255,255,0.15) 70%, rgba(255,255,255,0)); }
-  .cardg .sc-badge{ width:calc(86 * var(--u) * var(--cyc,1)); height:calc(86 * var(--u) * var(--cyc,1)); font-size:calc(22 * var(--u) * var(--cyc,1));
+  .cardg .sc-badge{ --lgs:calc(80 * var(--u) * var(--cyc,1)); width:calc(86 * var(--u) * var(--cyc,1)); height:calc(86 * var(--u) * var(--cyc,1)); font-size:calc(22 * var(--u) * var(--cyc,1));
     border:calc(3 * var(--u)) solid rgba(255,255,255,0.92); box-shadow:0 calc(6 * var(--u)) calc(18 * var(--u)) rgba(0,0,0,0.35), 0 0 0 calc(6 * var(--u)) rgba(255,255,255,0.12);
     color:var(--card-ink,#0b3d91); }
   .cardg-kicker{ display:flex; align-items:center; gap:calc(12 * var(--u)); }
@@ -1184,6 +1224,7 @@
   }
   .ipc-team{ position:relative; display:flex; align-items:center; gap:calc(var(--ph) * var(--ipc-s) * 0.14); min-width:0; flex:none; }
   .ipc-badge{
+    --lgs:calc(var(--ph) * var(--ipc-s) * 0.64); --lg-mw:1.4; --lg-mh:1.08;
     width:calc(var(--ph) * var(--ipc-s) * 0.7); height:calc(var(--ph) * var(--ipc-s) * 0.7); border-radius:50%; flex:none;
     display:grid; place-items:center; background:var(--ipc-c) center/cover no-repeat;
     font:900 calc(var(--ph) * var(--ipc-s) * 0.2)/1 var(--font-num); color:#fff; letter-spacing:.5px;
@@ -1558,6 +1599,7 @@
     padding:24px 32px; border-bottom:5px solid var(--bc-gold,#f5c518);
   }
   .sc-badge{
+    --lgs:68px;
     flex:none; width:72px; height:72px; border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #ffffff, #dbe6fb 55%, #aec0ea);
     border:3px solid var(--bc-gold,#f5c518); box-shadow:0 2px 10px rgba(0,0,0,0.35);
@@ -1616,6 +1658,7 @@
   .ms-team-bar{ display:flex; justify-content:space-between; align-items:center; padding:14px 21px; font-family:var(--font-num); font-weight:900; font-size:min(2.3vw,25px); letter-spacing:1px; color:#fff; }
   .ms-team-left{ display:flex; align-items:center; gap:12px; min-width:0; flex:1 1 auto; }
   .ms-badge{
+    --lgs:38px;
     flex:none; width:40px; height:40px; border-radius:50%; background:rgba(255,255,255,0.22);
     border:2px solid rgba(255,255,255,0.75); display:flex; align-items:center; justify-content:center;
     font-family:var(--font-num); font-weight:900; font-size:15px; color:#fff;
@@ -1640,7 +1683,7 @@
   .ms-so-head small{ font-size:.78em; letter-spacing:1px; opacity:.8; }
   .ms-so-row{ display:flex; align-items:center; gap:12px; padding:9px 21px; border-top:1px solid rgba(11,61,145,0.1); font-size:min(1.9vw,21px); color:var(--bc-ink,#12213f); }
   .ms-so-row:first-of-type{ border-top:none; }
-  .ms-so-row .ms-badge{ width:32px; height:32px; font-size:12px; color:#fff; border-color:rgba(0,0,0,.08); }
+  .ms-so-row .ms-badge{ --lgs:30px; width:32px; height:32px; font-size:12px; color:#fff; border-color:rgba(0,0,0,.08); }
   .ms-so-row .nm{ flex:1; min-width:0; font-weight:800; }
   .ms-so-row .sc{ font-family:var(--font-num); font-weight:900; color:var(--bc-blue,#0b3d91); }
   .ms-so-row .ov{ font-size:.8em; color:var(--bc-ink-dim,#5c6c8a); margin-left:4px; }
@@ -1662,7 +1705,7 @@
     width:calc(880 * var(--su)); border-radius:calc(18 * var(--su));
   }
   #team-stat-card .sc-header{ gap:calc(18 * var(--su)); padding:calc(24 * var(--su)) calc(32 * var(--su)); border-bottom-width:calc(5 * var(--su)); }
-  #team-stat-card .sc-badge{ width:calc(72 * var(--su)); height:calc(72 * var(--su)); border-width:calc(3 * var(--su)); font-size:calc(19 * var(--su)); }
+  #team-stat-card .sc-badge{ --lgs:calc(68 * var(--su)); width:calc(72 * var(--su)); height:calc(72 * var(--su)); border-width:calc(3 * var(--su)); font-size:calc(19 * var(--su)); }
   #team-stat-card .sc-title{ font-size:calc(39 * var(--su)); letter-spacing:calc(.6 * var(--su)); }
   #team-stat-card .sc-sub{ font-size:calc(16 * var(--su)); letter-spacing:calc(1.5 * var(--su)); margin-top:calc(4 * var(--su)); }
   #team-stat-card .stat-grid{ padding:calc(8 * var(--su)) calc(16 * var(--su)) calc(4 * var(--su)); }
@@ -1760,6 +1803,7 @@
   .stat-head{ display:flex; align-items:center; gap:calc(16 * var(--u)); padding:calc(20 * var(--u)) calc(22 * var(--u)) calc(21 * var(--u)) calc(20 * var(--u)); }
   .stat-card.mirror .stat-head{ flex-direction:row-reverse; text-align:right; padding:calc(20 * var(--u)) calc(20 * var(--u)) calc(21 * var(--u)) calc(22 * var(--u)); }
   .stat-badge{
+    --lgs:calc(64 * var(--u));
     flex:none; width:calc(68 * var(--u)); height:calc(68 * var(--u)); border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #ffffff, #dbe6fb 55%, #aec0ea);
     border:calc(3 * var(--u)) solid rgba(255,255,255,0.92);
@@ -1858,7 +1902,7 @@
   .cardg-venue svg path{ fill:inherit; }
   /* a team as a badge + name, used in table rows */
   .fx-teamcell{ display:flex; align-items:center; gap:calc(14 * var(--u)); min-width:0; }
-  .fx-badge{ flex:none; width:calc(42 * var(--u) * var(--cyc,1)); height:calc(42 * var(--u) * var(--cyc,1)); border-radius:50%;
+  .fx-badge{ --lgs:calc(40 * var(--u) * var(--cyc,1)); flex:none; width:calc(42 * var(--u) * var(--cyc,1)); height:calc(42 * var(--u) * var(--cyc,1)); border-radius:50%;
     display:inline-flex; align-items:center; justify-content:center; font-family:var(--font-num); font-weight:900;
     font-size:calc(12.5 * var(--u) * var(--cyc,1)); letter-spacing:calc(.3 * var(--u)); color:#fff;
     background-size:cover; background-position:center; background-repeat:no-repeat;
@@ -2030,11 +2074,16 @@
     mask-image:radial-gradient(48% 62% at 100% 0%, #000 0%, rgba(0,0,0,0) 72%), radial-gradient(42% 56% at 0% 100%, #000 0%, rgba(0,0,0,0) 72%);
   }
 
-  /* ---- the logo plate: every team logo sits on one, never stretched or
-     recoloured. White under a dark / coloured crest, deep navy under a
-     light one (read from the picture itself, see bcgLogoInfo), the team's
-     own colour with its initials when there is no logo. --ps = its size. */
+  /* ---- a team's mark. --ps = its size. With a logo it is the logo itself,
+     in its own true shape (.lg — see TEAM LOGOS): in a row of text the
+     plate IS the logo's box (pl-flow); a big logo is centred in the square
+     its place keeps (pl-hero, pl-ring — the Match Intro's ring round it);
+     only the toss coin is a disc, white under a dark / coloured logo and
+     deep navy under a light one (read from the logo itself), the logo
+     inside it whole. With no logo — or one that will not load — the team's
+     initials on its own colour (.mono). */
   .bcg-plate{
+    --lgs:calc(var(--ps) * var(--u));
     position:relative; flex:none; border-radius:50%;
     width:calc(var(--ps) * var(--u)); height:calc(var(--ps) * var(--u));
     background:radial-gradient(circle at 34% 28%, #ffffff 0%, #eef1f6 58%, #d3d9e4 100%);
@@ -2043,7 +2092,6 @@
   }
   .bcg-plate.dark{ background:radial-gradient(circle at 34% 28%, #29324a 0%, #131a2b 60%, #0a0e18 100%); }
   .bcg-plate.mono{ background:linear-gradient(140deg, var(--pl-accent, #2b3f66), var(--pl-deep, #111a2c)); }
-  .bcg-plate-img{ position:absolute; inset:13%; background-position:center; background-size:contain; background-repeat:no-repeat; }
   .bcg-plate-mono{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     font-family:var(--font-event); font-size:calc(var(--ps) * .34 * var(--u)); line-height:1; letter-spacing:.02em; color:#fff;
@@ -2053,6 +2101,14 @@
     position:absolute; top:-10%; bottom:-10%; left:0; width:42%; opacity:0;
     background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.6) 50%, rgba(255,255,255,0));
   }
+  /* a logo centred in its plate's square: as big as the place allows */
+  .bcg-plate .bcg-art{ position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); --lgs:calc(var(--ps) * var(--u) * var(--art-k, 1)); }
+  .bcg-plate.pl-hero, .bcg-plate.pl-ring{ background:none; box-shadow:none; }
+  .bcg-plate.pl-hero .bcg-art{ --art-k:.9; --lg-mw:1.55; --lg-mh:1.12; }
+  .bcg-plate.pl-ring .bcg-art{ --art-k:.8; --lg-mw:1.06; --lg-mh:1.06; }
+  .bcg-plate.pl-coin .bcg-art{ --art-k:.64; --lg-mw:1.12; --lg-mh:1.12; }
+  /* (the round sheen is the coin's — never swept across a logo's own shape) */
+  .bcg-plate.lg .bcg-plate-sheen, .bcg-plate.pl-hero .bcg-plate-sheen, .bcg-plate.pl-ring .bcg-plate-sheen{ display:none; }
 
   /* ---------------- PLAYING XI ----------------
      Over the picture: on the left a tall card in the team's own colour —
@@ -2362,7 +2418,6 @@
   .ar-glint{ position:absolute; inset:0; width:100%; height:100%; overflow:visible; animation:ar-spin 9s linear infinite; }
   .ar-team.b .ar-glint{ animation-direction:reverse; }
   .bcg-matchIntro .ar-frame .bcg-plate{ position:absolute; left:calc(16 * var(--u)); top:calc(16 * var(--u)); --ps:290; }
-  .bcg-matchIntro .ar-frame .bcg-plate-img{ inset:14%; }
   .ar-flare{ width:calc(620 * var(--u)); height:calc(5 * var(--u)); margin:calc(-2.5 * var(--u)) 0 0 calc(-310 * var(--u)); border-radius:99px; opacity:0;
     background:linear-gradient(90deg, rgba(255,255,255,0), var(--t-v) 28%, #fff 50%, var(--t-v) 72%, rgba(255,255,255,0)); }
   .ar-vs{ left:calc(475 * var(--u)); top:calc(418 * var(--u)); width:0; height:0; }
@@ -2437,81 +2492,176 @@
   @media (prefers-reduced-motion: reduce){ .bcg-matchIntro *{ animation:none !important; } }
 
   /* ---------------- MANUAL SCORECARDS ----------------
-     One innings' batting or bowling card, pinned by the operator: a dark
-     sheet over the picture, the team's colour glowing in from its
-     corner; the team, the innings and the score on top; every player
-     with figures in a full-width table (the batters
-     at the crease / the bowler on marked); then the rest of the squad by
-     name only — yet to bat / did not bat / did not bowl / not in the XI. */
-  .mc-fill{ background:radial-gradient(80% 90% at 14% 0%, var(--m-tint) 0%, rgba(3,6,12,.34) 56%, rgba(3,6,12,.52) 100%); }
+     One innings' batting or bowling card, pinned by the operator — two
+     parts side by side over the picture:
+     - the IDENTITY column, in the team's own colour, in layers (its
+       gradient with a light band and a fine weave in its top corner, a
+       cricket ball's seam drawn big and faint, a light edge in its hue):
+       the innings, the team's logo
+       in its own true shape over a soft bloom, the team's name, who it
+       played (or who batted), and the innings total — the biggest thing on
+       the card — with its overs, run rate and target as chips;
+     - the DATA panel, dark glass: one row per player — the batting order
+       number, the name over how they were out, the figures in columns, the
+       runs / the wickets the largest; the batters at the crease /
+       the bowler on lit in the team's colour; the innings' TOP scorer /
+       BEST bowling tagged; then extras and the total, the rest of the
+       squad by name and the fall of wickets. A short card's panel is only
+       as tall as its rows, centred beside the column.
+     Every colour comes from the team's one colour (tones() in the
+     script) — no team is styled by hand: a very dark colour is lifted
+     toward steel, a very light one deepened so white type reads on it.
+     Motion (cardEnter / cardExit): transforms and opacity only; the
+     layers come in through masks (.mc-m) that clip only while they move. */
+  .mc-fill{ background:
+      radial-gradient(62% 90% at 14% 42%, var(--m-tint) 0%, rgba(3,6,12,0) 64%),
+      radial-gradient(130% 115% at 50% 46%, rgba(3,6,12,.3) 0%, rgba(3,6,12,.44) 62%, rgba(3,6,12,.56) 100%); }
   .mc-sheet{
-    position:absolute; left:calc(96 * var(--u)); right:calc(96 * var(--u)); top:calc(54 * var(--u)); bottom:calc(134 * var(--u));
-    display:flex; flex-direction:column; padding:calc(26 * var(--u)) calc(36 * var(--u)) calc(22 * var(--u)); border-radius:calc(12 * var(--u));
-    background:linear-gradient(180deg, rgba(10,14,23,.88), rgba(5,8,14,.92));
-    box-shadow:inset 0 calc(1 * var(--u)) 0 rgba(255,255,255,.1), 0 calc(24 * var(--u)) calc(60 * var(--u)) rgba(0,0,0,.4);
+    position:absolute; left:calc(96 * var(--u)); right:calc(96 * var(--u)); top:calc(62 * var(--u)); bottom:calc(136 * var(--u));
+    display:flex; align-items:center; gap:calc(22 * var(--u));
   }
-  .mc-head{ flex:none; display:flex; align-items:center; justify-content:space-between; gap:calc(30 * var(--u)); padding-bottom:calc(18 * var(--u)); margin-bottom:calc(10 * var(--u)); box-shadow:0 calc(2 * var(--u)) 0 0 var(--m-line); }
-  .mc-id{ display:flex; align-items:center; gap:calc(24 * var(--u)); min-width:0; }
-  .mc-id .bcg-plate{ --ps:112; }
-  .mc-id-t{ display:flex; flex-direction:column; align-items:flex-start; gap:calc(6 * var(--u)); min-width:0; }
+  /* (a mask is a plain rectangle: a rounded clip round a layer that moves
+     is redrawn on every frame without a GPU — each layer carries its own
+     rounded corners instead) */
+  .mc-mask{ position:absolute; inset:0; overflow:hidden; }
+  .mc-mask > *{ position:absolute; inset:0; }
+  /* while a layer moves through its mask (entrance / exit) — at rest nothing is clipped */
+  .mc-sheet.moving .mc-m{ overflow:hidden; }
+
+  /* ---- the identity column ---- */
+  .mc-id{ position:relative; flex:none; align-self:stretch; width:calc(468 * var(--u)); }
+  /* (each layer carries its own rounded corners and light edge, so they
+     move with it through the mask — nothing is drawn round an empty mask) */
+  .mc-id-bg{ border-radius:calc(16 * var(--u)); overflow:hidden; box-shadow:inset 0 0 0 calc(1 * var(--u)) rgba(255,255,255,.16); }
+  .mc-id-bg > i{ position:absolute; display:block; }
+  .mc-id-fill{ inset:0; background:
+      linear-gradient(118deg, rgba(255,255,255,0) 0 36%, rgba(255,255,255,.1) 36.1%, rgba(255,255,255,.03) 58%, rgba(255,255,255,0) 58.1%),
+      repeating-linear-gradient(135deg, rgba(255,255,255,.045) 0 calc(2 * var(--u)), rgba(255,255,255,0) calc(2 * var(--u)) calc(16 * var(--u))) 0 0 / 100% 28% no-repeat,
+      linear-gradient(168deg, var(--m-top) 0%, var(--m-a32) 32%, var(--m-mid) 70%, var(--m-deep) 100%); }
+  .mc-id-seam{ right:calc(-170 * var(--u)); bottom:calc(-150 * var(--u)); width:calc(580 * var(--u)); height:calc(580 * var(--u)); opacity:.1; transform:rotate(-24deg);
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' fill='none' stroke='white'%3E%3Ccircle cx='100' cy='100' r='94' stroke-width='4'/%3E%3Cpath d='M64 8 C 116 62 116 138 64 192' stroke-width='3'/%3E%3Cpath d='M88 8 C 140 62 140 138 88 192' stroke-width='3'/%3E%3Cpath d='M76 10 C 128 62 128 138 76 190' stroke-width='13' stroke-dasharray='2.5 7.5'/%3E%3C/svg%3E") center / contain no-repeat; }
+  .mc-id-edge{ top:0; bottom:0; right:0; width:calc(5 * var(--u)); background:linear-gradient(180deg, var(--m-line) 0%, rgba(255,255,255,.12) 72%, rgba(255,255,255,0) 100%); }
+  .mc-id-shade{ left:0; right:0; bottom:0; height:64%; background:linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,var(--m-shade, .26))); }
+  .mc-id-sweep{ inset:0; overflow:hidden; }
+  .mc-id-sweep b{ position:absolute; top:-20%; bottom:-20%; left:0; width:34%; opacity:0; transform:skewX(-16deg);
+    background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.2), rgba(255,255,255,0)); }
+  .mc-id-in{
+    position:relative; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    padding:calc(34 * var(--u)) calc(34 * var(--u)) calc(32 * var(--u));
+  }
+  .mc-id-in > *{ position:relative; flex:none; max-width:100%; }
   .mc-kicker{
-    padding:calc(4 * var(--u)) calc(16 * var(--u)) calc(3 * var(--u)); border-radius:calc(4 * var(--u)); background:var(--m-line); color:var(--m-line-ink);
-    font-family:var(--font-event); font-size:calc(26 * var(--u)); line-height:1.15; letter-spacing:.18em; white-space:nowrap;
+    padding:calc(5 * var(--u)) calc(18 * var(--u)) calc(4 * var(--u)); border-radius:calc(5 * var(--u)); background:var(--m-line); color:var(--m-line-ink);
+    font-family:var(--font-event); font-size:calc(24 * var(--u)); line-height:1.15; letter-spacing:.16em; white-space:nowrap;
+    box-shadow:0 calc(6 * var(--u)) calc(16 * var(--u)) rgba(0,0,0,.25);
   }
-  .mc-team{ max-width:calc(1000 * var(--u)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-event); font-size:calc(60 * var(--u)); line-height:1.08; letter-spacing:.02em; text-transform:uppercase; color:#fff; }
-  .mc-sub{ max-width:calc(1000 * var(--u)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; font-size:calc(19 * var(--u)); line-height:1.3; letter-spacing:.16em; text-transform:uppercase; color:rgba(255,255,255,.7); }
-  .mc-score{ flex:none; display:flex; flex-direction:column; align-items:flex-end; text-align:right; }
-  .mc-total{ font-family:var(--font-event); font-size:calc(92 * var(--u)); line-height:1; color:#fff; white-space:nowrap; }
-  .mc-total small{ font-size:.62em; color:rgba(255,255,255,.86); }
-  .mc-overs{ margin-top:calc(8 * var(--u)); font-weight:800; font-size:calc(20 * var(--u)); line-height:1.25; letter-spacing:.14em; color:var(--m-line); white-space:nowrap; }
-  .mc-table{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  .mc-logo{ display:flex; align-items:center; justify-content:center; margin:calc(26 * var(--u)) 0 calc(22 * var(--u)); min-height:calc(130 * var(--u)); }
+  .mc-logo .bcg-plate{ --ps:168; --lg-mw:1.5; --lg-mh:1.1; }
+  .mc-logo .bcg-plate.mono{ --ps:150; }
+  .mc-logo-glow{ position:absolute; left:50%; top:50%; width:calc(420 * var(--u)); height:calc(420 * var(--u)); margin:calc(-210 * var(--u)) 0 0 calc(-210 * var(--u)); border-radius:50%; pointer-events:none;
+    background:radial-gradient(circle, rgba(255,255,255,.26) 0%, rgba(255,255,255,.08) 34%, rgba(255,255,255,0) 66%); }
+  .mc-m{ display:block; }
+  .mc-team{
+    width:calc(400 * var(--u)); max-width:100%; font-family:var(--font-event); font-size:calc(58 * var(--u)); line-height:1.04; letter-spacing:.02em;
+    text-transform:uppercase; color:#fff; text-shadow:0 calc(3 * var(--u)) calc(14 * var(--u)) rgba(0,0,0,.4); overflow-wrap:break-word;
+  }
+  .mc-sub{
+    width:calc(400 * var(--u)); max-width:100%; margin-top:calc(10 * var(--u)); font-weight:800; font-size:calc(18 * var(--u)); line-height:1.32;
+    letter-spacing:.14em; text-transform:uppercase; color:rgba(255,255,255,.8); overflow-wrap:break-word;
+  }
+  .mc-rule{ display:block; width:calc(96 * var(--u)); height:calc(4 * var(--u)); margin:calc(24 * var(--u)) 0 calc(14 * var(--u)); border-radius:99px; background:var(--m-line); transform-origin:center; }
+  .mc-score{ display:flex; flex-direction:column; align-items:center; }
+  .mc-total{ font-family:var(--font-event); font-size:calc(150 * var(--u)); line-height:1.02; color:#fff; white-space:nowrap; letter-spacing:.01em;
+    text-shadow:0 calc(6 * var(--u)) calc(24 * var(--u)) rgba(0,0,0,.35); }
+  .mc-total small{ font-size:.56em; color:rgba(255,255,255,.88); }
+  .mc-dg{ display:inline-block; }
+  .mc-overs{ display:flex; flex-wrap:nowrap; justify-content:center; gap:calc(10 * var(--u)); margin-top:calc(10 * var(--u)); white-space:nowrap; }
+  .mc-overs > i{ display:none; }
+  .mc-overs > span{ padding:calc(6 * var(--u)) calc(14 * var(--u)) calc(5 * var(--u)); border-radius:calc(6 * var(--u)); background:rgba(0,0,0,.26);
+    box-shadow:inset 0 0 0 calc(1 * var(--u)) rgba(255,255,255,.16);
+    font-weight:800; font-size:calc(19 * var(--u)); line-height:1.2; letter-spacing:.12em; color:#fff; }
+  .mc-overs > span.tg{ background:var(--m-line); color:var(--m-line-ink); box-shadow:none; }
+
+  /* ---- the data panel ---- */
+  .mc-data{ position:relative; flex:1 1 auto; min-width:0; max-height:100%; align-self:center; }
+  .mc-data-bg{ border-radius:calc(16 * var(--u)); overflow:hidden; background:linear-gradient(180deg, rgba(14,19,30,.9) 0%, rgba(6,9,15,.93) 100%);
+    box-shadow:inset 0 0 0 calc(1 * var(--u)) rgba(255,255,255,.09); }
+  .mc-data-bg::before{ content:''; position:absolute; left:0; top:0; bottom:0; width:42%; background:linear-gradient(90deg, var(--m-wash), rgba(0,0,0,0)); }
+  .mc-data-line{ position:absolute; left:0; right:0; top:0; height:calc(4 * var(--u)); transform-origin:left center;
+    background:linear-gradient(90deg, var(--m-line) 0%, var(--m-accent2) 46%, rgba(255,255,255,0) 100%); }
+  .mc-data-in{ position:relative; display:flex; flex-direction:column; padding:calc(22 * var(--u)) calc(24 * var(--u)) calc(20 * var(--u)); }
+  .mc-table{ flex:none; display:flex; flex-direction:column; counter-reset:mcno; }
   .mc-tr{
-    flex:none; display:grid; align-items:center; column-gap:calc(16 * var(--u)); height:calc(var(--rh, 52) * var(--u)); padding:0 calc(18 * var(--u));
-    border-radius:calc(4 * var(--u));
+    position:relative; flex:none; display:grid; align-items:center; column-gap:calc(14 * var(--u));
+    height:calc(var(--rh, 60) * var(--u)); padding:0 calc(18 * var(--u)) 0 calc(12 * var(--u)); border-radius:calc(6 * var(--u));
   }
-  .mc-bat .mc-tr{ grid-template-columns:minmax(0, 1.25fr) minmax(0, 1.55fr) repeat(5, calc(104 * var(--u))); }
-  .mc-bowl .mc-tr{ grid-template-columns:minmax(0, 1fr) repeat(8, calc(104 * var(--u))); }
-  .mc-tr:nth-child(even):not(.mc-th){ background:rgba(255,255,255,.045); }
-  .mc-tr.live{ background:linear-gradient(90deg, var(--m-glow), rgba(255,255,255,.04) 60%); box-shadow:inset calc(5 * var(--u)) 0 0 var(--m-line); }
-  .mc-th{ height:calc(40 * var(--u)); }
-  .mc-th span{ font-weight:800; font-size:calc(16 * var(--u)); line-height:1.2; letter-spacing:.16em; color:var(--m-line); white-space:nowrap; }
-  .mc-tr span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .mc-nm{ font-family:var(--font-num); font-weight:900; font-size:calc(var(--rf, 26) * var(--u)); line-height:1.2; letter-spacing:.02em; text-transform:uppercase; color:#fff; }
-  .mc-how{ font-weight:600; font-size:calc(var(--rf, 26) * .74 * var(--u)); line-height:1.25; color:rgba(255,255,255,.68); }
-  .mc-how.at{ color:var(--m-line); font-weight:800; letter-spacing:.06em; }
-  .mc-n{ text-align:right; font-family:var(--font-num); font-weight:700; font-size:calc(var(--rf, 26) * .92 * var(--u)); line-height:1.2; color:rgba(255,255,255,.86); font-variant-numeric:tabular-nums; }
-  .mc-n.k{ font-weight:900; font-size:calc(var(--rf, 26) * 1.08 * var(--u)); color:#fff; }
+  .mc-tr:not(.mc-th){ box-shadow:inset 0 calc(-1 * var(--u)) 0 rgba(255,255,255,.055); }
+  .mc-tr:nth-child(even):not(.mc-th){ background:rgba(255,255,255,.035); }
+  .mc-th{ height:calc(44 * var(--u)); margin-bottom:calc(4 * var(--u)); box-shadow:inset 0 calc(-2 * var(--u)) 0 rgba(255,255,255,.1); }
+  .mc-th span{ font-weight:800; font-size:calc(15 * var(--u)); line-height:1.2; letter-spacing:.18em; color:var(--m-line); white-space:nowrap; }
   .mc-th .c-r{ text-align:right; }
+  .mc-tr span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mc-nm{ font-family:var(--font-num); font-weight:900; font-size:calc(var(--rf, 26) * var(--u)); line-height:1.18; letter-spacing:.02em; text-transform:uppercase; color:#fff; }
+  .mc-how{ font-weight:600; font-size:calc(var(--hf, 17) * var(--u)); line-height:1.22; color:rgba(255,255,255,.62); }
+  .mc-how.at{ color:var(--m-line); font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+  .mc-n{ text-align:right; font-family:var(--font-num); font-weight:700; font-size:calc(var(--rf, 26) * .88 * var(--u)); line-height:1.2; color:rgba(255,255,255,.8); font-variant-numeric:tabular-nums; }
+  .mc-n.k{ font-weight:900; font-size:calc(var(--rf, 26) * 1.16 * var(--u)); line-height:1.15; color:#fff; }
+  .mc-n{ transform-origin:right center; }
+  .mc-total{ transform-origin:center; }
+  /* batting: [order no.] [name over how out] R B 4s 6s SR */
+  .mc-bat .mc-tr{ grid-template-columns:calc(36 * var(--u)) minmax(0, 1fr) calc(96 * var(--u)) calc(82 * var(--u)) repeat(2, calc(64 * var(--u))) calc(100 * var(--u));
+    grid-template-rows:auto auto; align-content:center; row-gap:calc(1 * var(--u)); }
+  .mc-bat .mc-tr::before{ content:''; grid-column:1; grid-row:1 / span 2; }
+  .mc-bat .mc-tr > .mc-nm{ grid-column:2; grid-row:1; }
+  .mc-bat .mc-tr > .mc-how{ grid-column:2; grid-row:2; }
+  .mc-bat .mc-tr > .mc-n{ grid-row:1 / span 2; }
+  .mc-bat .mc-th{ grid-template-rows:auto; }
+  .mc-bat .mc-th::before{ grid-row:1; }
+  .mc-bat .mc-th > span:first-child{ grid-column:2; }
+  .mc-bat .mc-th > span:nth-child(2){ display:none; }
+  .mc-bat .mc-tr:not(.mc-th){ counter-increment:mcno; }
+  .mc-bat .mc-tr:not(.mc-th)::before{
+    content:counter(mcno); display:flex; align-items:center; justify-content:center; justify-self:start;
+    width:calc(32 * var(--u)); height:calc(32 * var(--u)); border-radius:calc(8 * var(--u)); background:rgba(255,255,255,.08); color:rgba(255,255,255,.7);
+    font-family:var(--font-num); font-weight:800; font-size:calc(15 * var(--u)); line-height:1;
+  }
+  .mc-bat .mc-tr.live::before{ background:var(--m-line); color:var(--m-line-ink); }
+  /* bowling: name O M R W 0s NB WD ECON — Economy ALWAYS the last column */
+  .mc-bowl .mc-tr{ grid-template-columns:minmax(0, 1fr) calc(84 * var(--u)) calc(66 * var(--u)) calc(84 * var(--u)) calc(88 * var(--u)) repeat(3, calc(66 * var(--u))) calc(104 * var(--u)); }
+  .mc-bowl .mc-tr:not(.mc-th) > .mc-n:last-child{ color:#fff; font-weight:800; }
+  /* the batters at the crease / the bowler on */
+  .mc-tr.live{ background:linear-gradient(90deg, var(--m-glow) 0%, rgba(255,255,255,.035) 74%) !important; box-shadow:inset calc(5 * var(--u)) 0 0 var(--m-line); }
   /* 🏅 the innings' standout figures — TOP scorer on the batting card, BEST
      bowling on the bowling card: a tag after the name (drawn, not part of the
      name's text), the key figure in the team's line colour, one light sweep
-     across the row once the card is in. */
+     across the row once the card is in (.glint, set by the entrance). */
   .mc-nm[data-tag]::after{ content:attr(data-tag); display:inline-block; margin-left:calc(12 * var(--u)); vertical-align:.16em;
     padding:calc(3 * var(--u)) calc(10 * var(--u)) calc(2 * var(--u)); border-radius:99px; background:var(--m-line); color:var(--m-line-ink);
-    font-family:var(--font-num); font-weight:900; font-size:calc(var(--rf, 26) * .46 * var(--u)); line-height:1.2; letter-spacing:.14em; }
-  .mc-tr.top{ position:relative; overflow:hidden; }
+    font-family:var(--font-num); font-weight:900; font-size:calc(var(--rf, 26) * .44 * var(--u)); line-height:1.2; letter-spacing:.14em; }
+  .mc-tr.top{ overflow:hidden; }
   .mc-tr.top .mc-n.k{ color:var(--m-line); }
-  .mc-tr.top::before{ content:''; position:absolute; top:0; bottom:0; left:0; width:30%; pointer-events:none;
-    background:linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent); transform:translateX(-110%); opacity:0;
-    animation:mcGlint 1.1s 1.25s cubic-bezier(.45,0,.25,1) 1 both; }
+  .mc-tr.top::after{ content:''; position:absolute; top:0; bottom:0; left:0; width:30%; pointer-events:none; opacity:0;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent); transform:translateX(-110%); }
+  .mc-tr.top.glint::after{ animation:mcGlint 1.1s cubic-bezier(.45,0,.25,1) 1 both; }
   @keyframes mcGlint{ 0%{ transform:translateX(-110%); opacity:1; } 100%{ transform:translateX(360%); opacity:1; } }
-  .mc-n{ transform-origin:right center; }
-  .mc-total{ transform-origin:right center; }
-  @media (prefers-reduced-motion: reduce){ .mc-tr.top::before{ animation:none; } }
-  .mc-sum{
-    flex:none; display:flex; align-items:center; justify-content:space-between; gap:calc(24 * var(--u)); margin-top:calc(8 * var(--u));
-    padding:calc(10 * var(--u)) calc(18 * var(--u)); border-radius:calc(6 * var(--u)); background:rgba(255,255,255,.07);
-  }
-  .mc-sum span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; font-size:calc(20 * var(--u)); line-height:1.3; letter-spacing:.06em; color:rgba(255,255,255,.8); }
+  @media (prefers-reduced-motion: reduce){ .mc-tr.top.glint::after{ animation:none; } }
+  /* ---- under the rows ---- */
+  .mc-foot{ flex:none; display:flex; flex-direction:column; gap:calc(8 * var(--u)); margin-top:calc(14 * var(--u)); }
+  .mc-sum{ display:flex; align-items:stretch; justify-content:space-between; gap:calc(16 * var(--u)); }
+  .mc-sum span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:calc(9 * var(--u)) calc(18 * var(--u)); border-radius:calc(8 * var(--u));
+    background:rgba(255,255,255,.06); font-weight:700; font-size:calc(19 * var(--u)); line-height:1.3; letter-spacing:.05em; color:rgba(255,255,255,.84); }
   .mc-sum b{ font-weight:900; letter-spacing:.16em; color:var(--m-line); margin-right:calc(10 * var(--u)); }
-  .mc-sum .tot{ flex:none; font-family:var(--font-num); font-weight:900; font-size:calc(24 * var(--u)); color:#fff; letter-spacing:.04em; }
-  .mc-groups{ flex:none; display:flex; flex-direction:column; gap:calc(6 * var(--u)); margin-top:calc(12 * var(--u)); }
-  .mc-group{ display:flex; gap:calc(14 * var(--u)); align-items:baseline; font-size:calc(var(--gf, 19) * var(--u)); line-height:1.35; }
+  .mc-sum .tot{ flex:none; background:linear-gradient(110deg, var(--m-accent) 0%, var(--m-deep) 100%); box-shadow:inset 0 0 0 calc(1.5 * var(--u)) var(--m-line);
+    font-family:var(--font-num); font-weight:900; font-size:calc(21 * var(--u)); letter-spacing:.06em; color:#fff; }
+  .mc-groups{ display:flex; flex-direction:column; gap:calc(5 * var(--u)); padding:0 calc(4 * var(--u)); }
+  .mc-group{ display:flex; gap:calc(14 * var(--u)); align-items:baseline; font-size:calc(var(--gf, 18) * var(--u)); line-height:1.35; }
   .mc-group b{ flex:none; font-weight:900; letter-spacing:.14em; color:var(--m-line); white-space:nowrap; }
   .mc-group span{ min-width:0; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:rgba(255,255,255,.86); }
-  .mc-group.dim span{ color:rgba(255,255,255,.62); }
-  .mc-fow{ flex:none; margin-top:calc(8 * var(--u)); font-weight:700; font-size:calc(var(--gf, 19) * .92 * var(--u)); line-height:1.35; letter-spacing:.06em; color:rgba(255,255,255,.66); }
+  .mc-group.dim span{ color:rgba(255,255,255,.6); }
+  .mc-fow{ padding:calc(8 * var(--u)) calc(4 * var(--u)) 0; box-shadow:inset 0 calc(1 * var(--u)) 0 rgba(255,255,255,.08);
+    font-weight:700; font-size:calc(var(--gf, 18) * .92 * var(--u)); line-height:1.35; letter-spacing:.05em; color:rgba(255,255,255,.68); }
   .mc-fow b{ font-weight:900; letter-spacing:.14em; color:var(--m-line); margin-right:calc(12 * var(--u)); }
+  .mc-fw{ white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -2520,6 +2670,7 @@
 
   <div id="scorecard">
     <canvas id="sb-shadow" aria-hidden="true"></canvas>
+    <i id="sb-guide" aria-hidden="true"></i>
     <div id="top-row">
       <div class="cap" id="cap-left">
         <div class="cap-logo" id="logo-left"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
@@ -2527,8 +2678,10 @@
           <div class="cap-short" id="short-left">TMA</div>
           <div class="cap-name" id="name-left">TEAM A</div>
         </div>
+        <i class="sb-glint" aria-hidden="true"><b></b></i>
       </div>
       <div id="mid-row">
+        <i class="sb-glint" aria-hidden="true"><b></b></i>
         <div id="score-block">
           <div id="score-value"><span id="score-row"></span></div>
           <div id="score-rate-line">
@@ -2606,6 +2759,7 @@
           <div class="cap-name" id="name-right">TEAM B</div>
         </div>
         <div class="cap-logo" id="logo-right"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
+        <i class="sb-glint" aria-hidden="true"><b></b></i>
       </div>
       <div id="event-stage">
         <div id="event-bg">
@@ -3070,20 +3224,292 @@ socket.on('connect', () => connStatus.classList.remove('visible'));
 socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
 socket.on('connect_error', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Connection error — retrying…'; });
 
-// 🖼 Team logos decoded ahead of time: a between-overs card paints its logos
-// as CSS backgrounds from its payload, and a logo decoded only then pops in a
-// frame late on air. Each logo the score brings is decoded now (and kept), so
-// every card that shows it later finds it ready.
-const warmLogos = new Map();
-function warmLogo(url){
-  if(!url || typeof url !== 'string' || warmLogos.has(url)) return;
-  if(warmLogos.size > 24) warmLogos.delete(warmLogos.keys().next().value);
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = url;
-  if(img.decode) img.decode().catch(() => {});
-  warmLogos.set(url, img);
-}
+/* ============================================================
+   🛡 TEAM LOGOS — EVERY LOGO IN ITS OWN TRUE SHAPE
+   A logo used to be painted as the background of a round box: cut to a
+   circle (background-size:cover) or set on a white disc, so a shield, a
+   wide wordmark or a square crest lost its corners or sat as a square in
+   a circle — and a logo whose see-through parts had been saved black (a
+   panel on Safari wrote every logo as a JPEG) showed as a black square.
+   Now every logo is read ONCE, from its own pixels, before it is shown:
+   - its real size, and the empty see-through margin round it, which is
+     trimmed: the box fits the logo, not the picture's padding;
+   - an opaque picture whose edges are all one plain black or white
+     ground (a logo whose transparency was lost, or one saved on white)
+     has that ground taken back out — from the edges in only, so black or
+     white inside the logo stays — the pixels on its rim un-blended from
+     the ground, so no dark or light fringe is left. A picture whose own
+     design fills it (a coloured tile, a photo) keeps its rectangle;
+   - a mostly dark logo gets a light backing in its own outline, so it
+     reads on the dark graphics; one with a dark rim a faint light glow;
+     every logo a soft shadow — drawn once into the picture, never a CSS
+     filter (vMix's browser redraws a filter on every frame).
+   The result is drawn at up to 512 px (a small stored logo is drawn up
+   once, smoothly) and decoded before anything shows it, so a logo is
+   never late on air. show() puts it in a badge (.lg in the CSS): the box
+   takes the logo's own proportions — a wide logo is wide, a tall one
+   tall — at the visual weight of a square one, never stretched, squashed,
+   cropped or forced round. A logo from another site that cannot be read
+   keeps its picture at its own proportions; one that will not load
+   shows the team's initials (onNone).
+   ============================================================ */
+const logoKit = (() => {
+  const cache = new Map();          // url -> { p, info, used }
+  const MAX = 40;                   // logos kept (a points table shows a dozen)
+  const WORK_MIN = 256, WORK_MAX = 512;
+  // (a test DOM has no 2D canvas: every logo is shown as it is)
+  const CAN = typeof CanvasRenderingContext2D !== 'undefined';
+  let tick = 0;
+  const lumOf = (r, g, b) => (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  function canvasOf(w, h){ const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; }
+  function load(url, cors){
+    return new Promise((res) => {
+      const img = new Image();
+      if(cors) img.crossOrigin = 'anonymous';
+      img.decoding = 'async';
+      img.onload = () => { const done = () => res(img); if(img.decode) img.decode().then(done, done); else done(); };
+      img.onerror = () => res(null);
+      img.src = url;
+    });
+  }
+  // An opaque picture whose edges are ONE plain black or white ground: that
+  // ground keyed out in place, from the edges in. false = left whole.
+  function keyGround(px, W, H){
+    const N = W * H;
+    if(W < 8 || H < 8) return false;
+    const ring = [];
+    for(const y of [0, 1, H - 2, H - 1]) for(let x = 0; x < W; x++) ring.push(y * W + x);
+    for(let y = 2; y < H - 2; y++) for(const x of [0, 1, W - 2, W - 1]) ring.push(y * W + x);
+    const G = [0, 0, 0];
+    ring.forEach(i => { G[0] += px[i * 4]; G[1] += px[i * 4 + 1]; G[2] += px[i * 4 + 2]; });
+    G[0] /= ring.length; G[1] /= ring.length; G[2] /= ring.length;
+    const dist = (i) => { const o = i * 4, a = px[o] - G[0], b = px[o + 1] - G[1], c = px[o + 2] - G[2]; return Math.sqrt(a * a + b * b + c * c); };
+    let near = 0, dev = 0;
+    ring.forEach(i => { const d = dist(i); if(d < 40){ near++; dev += d * d; } });
+    if(near < ring.length * 0.9) return false;                         // no plain ground all round
+    const black = Math.max(G[0], G[1], G[2]) < 64, white = Math.min(G[0], G[1], G[2]) > 196;
+    if(!black && !white) return false;                                 // a coloured ground: the logo's own tile
+    // how far a pixel may be from the ground and still be it (JPEG noise)
+    const T1 = Math.min(64, Math.max(30, Math.sqrt(dev / near) * 3 + 22)), T2 = T1 + 72;
+    const bg = new Uint8Array(N), q = new Int32Array(N);
+    let qt = 0;
+    const visit = (j) => { if(!bg[j] && dist(j) <= T1){ bg[j] = 1; q[qt++] = j; } };
+    ring.forEach(visit);
+    for(let qh = 0; qh < qt; qh++){
+      const i = q[qh], x = i % W;
+      if(x > 0) visit(i - 1);
+      if(x < W - 1) visit(i + 1);
+      if(i >= W) visit(i - W);
+      if(i < N - W) visit(i + W);
+    }
+    if(qt < N * 0.04 || qt > N * 0.92) return false;                   // (nearly) all logo, or all ground: its own design
+    for(let i = 0; i < N; i++){
+      const o = i * 4;
+      if(bg[i]){ px[o + 3] = 0; continue; }
+      const x = i % W;
+      if(!((x > 0 && bg[i - 1]) || (x < W - 1 && bg[i + 1]) || (i >= W && bg[i - W]) || (i < N - W && bg[i + W]))) continue;
+      // the logo's rim: how much of it is logo, and its own colour back
+      const d = dist(i);
+      if(d >= T2) continue;
+      const a = (d - T1) / (T2 - T1);
+      if(a < 0.08){ px[o + 3] = 0; continue; }
+      for(let c = 0; c < 3; c++) px[o + c] = Math.max(0, Math.min(255, Math.round((px[o + c] - (1 - a) * G[c]) / a)));
+      px[o + 3] = Math.round(a * 255);
+    }
+    return true;
+  }
+  function analyse(img, url){
+    let nw = img.naturalWidth || img.width, nh = img.naturalHeight || img.height;
+    if(!nw || !nh){ nw = nh = WORK_MAX; }                              // (an SVG with no size of its own)
+    const raw = { kind: 'raw', ar: nw / nh, src: url };
+    const long = Math.max(nw, nh), s = long > WORK_MAX ? WORK_MAX / long : long < WORK_MIN ? WORK_MIN / long : 1;
+    const W = Math.max(1, Math.round(nw * s)), H = Math.max(1, Math.round(nh * s));
+    const work = canvasOf(W, H), x = work.getContext('2d', { willReadFrequently: true });
+    if(!x) return raw;
+    x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+    x.drawImage(img, 0, 0, W, H);
+    let data;
+    try { data = x.getImageData(0, 0, W, H); } catch (e) { return raw; }   // another site's picture: shown as it is
+    const px = data.data, N = W * H;
+    let clear = 0;
+    for(let i = 3; i < px.length; i += 4) if(px[i] < 250) clear++;
+    let keyed = false;
+    if(clear < N * 0.01){
+      keyed = keyGround(px, W, H);
+      if(!keyed) return { kind: 'tile', ar: nw / nh, src: url };     // its own rectangle, whole
+    }
+    // the box round everything that shows, and the logo's tone
+    let x0 = W, y0 = H, x1 = -1, y1 = -1, fn = 0, fl = 0, dk = 0, en = 0, el = 0;
+    for(let y = 0; y < H; y++) for(let xx = 0; xx < W; xx++){
+      const o = (y * W + xx) * 4, a = px[o + 3];
+      if(a > 16){ if(xx < x0) x0 = xx; if(xx > x1) x1 = xx; if(y < y0) y0 = y; if(y > y1) y1 = y; }
+      if(a < 128) continue;
+      const L = lumOf(px[o], px[o + 1], px[o + 2]);
+      fn++; fl += L; if(L < 0.24) dk++;
+      if((xx > 0 && px[o - 1] < 128) || (xx < W - 1 && px[o + 7] < 128) || (y > 0 && px[o - W * 4 + 3] < 128) || (y < H - 1 && px[o + W * 4 + 3] < 128)){ en++; el += L; }
+    }
+    if(x1 < 0 || !fn) return { kind: 'none' };                         // nothing in it to show
+    if(keyed) x.putImageData(data, 0, 0);
+    const cw = x1 - x0 + 1, ch = y1 - y0 + 1, M = Math.max(cw, ch);
+    const tone = fl / fn, edge = en ? el / en : tone;
+    const backing = tone < 0.32 && dk / fn > 0.42;                     // a mostly dark logo
+    const glow = !backing && edge < 0.42;                              // a dark rim
+    const P = Math.ceil(M * 0.13);                                     // room for the backing and the shadow
+    const art = canvasOf(cw, ch);
+    art.getContext('2d').drawImage(work, x0, y0, cw, ch, 0, 0, cw, ch);
+    const lay = canvasOf(cw + 2 * P, ch + 2 * P), g = lay.getContext('2d');
+    if(backing || glow){
+      const sil = canvasOf(cw, ch), sg = sil.getContext('2d');
+      sg.drawImage(art, 0, 0);
+      sg.globalCompositeOperation = 'source-in';
+      sg.fillStyle = backing ? '#f2f4f8' : '#ffffff';
+      sg.fillRect(0, 0, cw, ch);
+      if(backing){
+        // the logo's own outline, grown evenly all round
+        const r = M * 0.05;
+        for(let k = 0; k < 32; k++){ const t = k / 32 * Math.PI * 2; for(const f of [1, 0.6, 0.3]) g.drawImage(sil, P + Math.cos(t) * r * f, P + Math.sin(t) * r * f); }
+      } else {
+        // only the glow: the silhouette itself is drawn off the canvas
+        const off = lay.width + 10;
+        g.save(); g.shadowColor = 'rgba(255,255,255,0.5)'; g.shadowBlur = M * 0.03; g.shadowOffsetX = off; g.drawImage(sil, P - off, P); g.restore();
+      }
+    }
+    g.drawImage(art, P, P);
+    const out = canvasOf(lay.width, lay.height), o = out.getContext('2d');
+    o.shadowColor = 'rgba(0,0,0,0.42)'; o.shadowBlur = M * 0.035; o.shadowOffsetY = M * 0.018;
+    o.drawImage(lay, 0, 0);
+    return { kind: 'cut', ar: cw / ch, canvas: out, px: P / cw, py: P / ch, tone, backing, glow, keyed };
+  }
+  function encode(c){
+    return new Promise((res) => {
+      try {
+        if(c.toBlob && typeof URL !== 'undefined' && URL.createObjectURL) c.toBlob(b => res(b ? URL.createObjectURL(b) : null), 'image/png');
+        else res(c.toDataURL('image/png'));
+      } catch (e) { res(null); }
+    });
+  }
+  // the least recently used beyond MAX go (never one still on air or on its way)
+  function trim(){
+    if(cache.size <= MAX) return;
+    [...cache.entries()].filter(([, e]) => e.info).sort((a, b) => a[1].used - b[1].used).slice(0, cache.size - MAX).forEach(([k, e]) => {
+      if(e.info.blob && document.querySelector(`img.lg-art[src="${e.info.src}"]`)) return;
+      cache.delete(k);
+      if(e.info.blob) URL.revokeObjectURL(e.info.src);
+    });
+  }
+  // read (once) and draw a logo: resolves to its info — kind 'cut' (drawn
+  // anew: src), 'tile' / 'raw' (the picture as it is), 'none' (nothing to show)
+  function warm(url){
+    const u = typeof url === 'string' ? url : '';
+    if(!u) return Promise.resolve(null);
+    let e = cache.get(u);
+    if(e){ e.used = ++tick; return e.p; }
+    e = { p: null, info: null, used: ++tick };
+    cache.set(u, e);
+    if(!CAN){ e.info = { kind: 'raw', ar: 1, src: u }; e.p = Promise.resolve(e.info); return e.p; }
+    const remote = /^https?:/i.test(u) && !u.startsWith(location.origin);
+    e.p = load(u, remote).then(img => img || (remote ? load(u, false) : null)).then(img => {
+      if(!img) return { kind: 'none' };
+      let r;
+      try { r = analyse(img, u); } catch (err) { r = { kind: 'raw', ar: (img.naturalWidth || 1) / (img.naturalHeight || 1), src: u }; }
+      if(r.kind !== 'cut') return r;
+      return encode(r.canvas).then(src => {
+        delete r.canvas;
+        if(!src) return { kind: 'raw', ar: r.ar, src: u };
+        r.src = src; r.blob = src.startsWith('blob:');
+        return load(src, false).then(() => r);                         // decoded before anything shows it
+      });
+    }).then(info => {
+      e.info = info;
+      if(cache.get(u) !== e && info.blob) URL.revokeObjectURL(info.src);
+      trim();
+      return info;
+    });
+    return e.p;
+  }
+  function artOf(host){
+    let art = host.__lgArt;
+    if(!art || art.parentNode !== host){
+      art = document.createElement('img');
+      art.className = 'lg-art'; art.alt = ''; art.decoding = 'sync'; art.draggable = false;
+      art.setAttribute('aria-hidden', 'true');
+      host.appendChild(art);
+      host.__lgArt = art;
+    }
+    return art;
+  }
+  function clear(host){
+    host.classList.remove('lg', 'lg-wait', 'lg-tile', 'lg-raw');
+    if(host.__lgArt && host.__lgArt.parentNode === host) host.__lgArt.remove();
+    host.__lgArt = null;
+  }
+  // the picture sized to the box (in --lgs, the place's nominal size), its
+  // drawn margin (shadow, backing) hanging outside the box by negative margins
+  function sizeArt(art, w, h, px, py){
+    const f = (v) => v.toFixed(4);
+    art.style.cssText = `width:calc(var(--lgs, 64px) * ${f(w * (1 + 2 * px))});height:calc(var(--lgs, 64px) * ${f(h * (1 + 2 * py))});`
+      + `margin:calc(var(--lgs, 64px) * ${f(-h * py)}) calc(var(--lgs, 64px) * ${f(-w * px)})`;
+  }
+  function paint(host, info, opts){
+    if(!info || info.kind === 'none'){
+      clear(host);
+      host.__lgNone = true;
+      if(opts && opts.onNone) opts.onNone(host);
+      return;
+    }
+    host.__lgNone = false;
+    host.classList.add('lg');
+    host.classList.remove('lg-wait');
+    host.classList.toggle('lg-tile', info.kind === 'tile');
+    host.classList.toggle('lg-raw', info.kind === 'raw');
+    // the box: the logo's own proportions at the weight of a square one,
+    // within what this place allows (--lg-mw / --lg-mh, in nominal sizes)
+    const cs = getComputedStyle(host);
+    const mw = parseFloat(cs.getPropertyValue('--lg-mw')) || 1.6, mh = parseFloat(cs.getPropertyValue('--lg-mh')) || 1.15;
+    const a = info.ar > 0 && isFinite(info.ar) ? info.ar : 1;
+    let w = Math.sqrt(a), h = 1 / w;
+    if(w > mw){ w = mw; h = w / a; }
+    if(h > mh){ h = mh; w = h * a; }
+    const art = artOf(host);
+    sizeArt(art, w, h, info.px || 0, info.py || 0);
+    if(art.getAttribute('src') !== info.src) art.src = info.src;
+    host.dataset.lgBox = `${w.toFixed(3)}x${h.toFixed(3)}`;            // (what a fit beside it can key on)
+    if(opts && opts.onPaint) opts.onPaint(host);
+  }
+  // A logo into a badge; a badge already showing that logo is left as it is
+  // (every ball re-sends both logos). Until it is read the badge keeps its
+  // square, empty (a cached logo — every logo the score brings is read the
+  // moment it arrives — goes straight in).
+  function show(host, url, opts){
+    if(!host) return;
+    const u = typeof url === 'string' ? url : '';
+    if(host.__lgUrl === u && (!u || host.__lgNone || (host.__lgArt && host.__lgArt.parentNode === host))) return;
+    host.__lgUrl = u;
+    host.__lgNone = false;
+    if(!u){ clear(host); return; }
+    const e = cache.get(u);
+    if(e && e.info){ e.used = ++tick; paint(host, e.info, opts); return; }
+    host.classList.add('lg', 'lg-wait');
+    host.classList.remove('lg-tile', 'lg-raw');
+    sizeArt(artOf(host), 1, 1, 0, 0);
+    warm(u).then(info => { if(host.__lgUrl === u) paint(host, info, opts); });
+  }
+  // every [data-lg-src] under root (markup built as a string)
+  function hydrate(root){
+    if(!root) return;
+    root.querySelectorAll('[data-lg-src]').forEach(h => show(h, h.getAttribute('data-lg-src'), { onNone: (el) => {
+      el.classList.remove('has-logo');
+      el.textContent = el.getAttribute('data-lg-mono') || '';
+      const bg = el.getAttribute('data-lg-bg');
+      if(bg) el.style.background = bg;
+    } }));
+  }
+  const broken = (url) => { const e = cache.get(typeof url === 'string' ? url : ''); return !!(e && e.info && e.info.kind === 'none'); };
+  return { warm, show, hydrate, broken, info: (url) => { const e = cache.get(url); return e ? e.info : null; } };
+})();
+// 🖼 Every logo the score brings is read and drawn the moment it arrives
+// (logoKit), so every graphic that shows it later finds it ready.
+function warmLogo(url){ if(url && typeof url === 'string') logoKit.warm(url); }
 socket.on('liveCricketScore', (data) => {
   if(data){ warmLogo(data.teamA && data.teamA.logoUrl); warmLogo(data.teamB && data.teamB.logoUrl); }
   if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
@@ -3591,6 +4017,8 @@ function renderState(s){
   const finalReg = (inSO && matchDecided) ? regulationTotalOf(s, s.battingTeam === 'B' ? 'B' : 'A') : null;
   const scoreStr = finalReg ? `${finalReg.runs}-${finalReg.wickets}` : `${s.score?.runs ?? 0}-${s.score?.wickets ?? 0}`;
   renderScoreString(scoreStr);
+  // (the first state builds the score's figures only now: their rise joins the entrance)
+  if(barEntering) riseBarScore();
   document.getElementById('ov-num').textContent = finalReg ? finalReg.overs : `${s.score?.overs ?? 0}.${s.score?.balls ?? 0}`;
   {
     const soBadge = document.getElementById('so-badge');
@@ -3762,15 +4190,21 @@ function renderState(s){
   lastState = s;
 }
 
-// Sets the real logo as this box's background image, and hides the
-// placeholder dot SVG that sits inside it (that SVG is only meant to be
-// a fallback glyph before any logo is uploaded — it should never remain
-// visible on top of an actual uploaded logo).
+// The team's logo into its cap, in its own true shape (logoKit), and the
+// placeholder dot SVG hidden (that SVG is only meant to be a fallback glyph
+// before any logo is uploaded — it should never remain visible on top of an
+// actual uploaded logo). The logo's box takes the logo's own proportions,
+// so the name beside it is fitted again once it is in; a logo that will not
+// load leaves the cap to the name, as a team with no logo has it.
 function setLogo(el, url){
-  if(url) el.style.backgroundImage = `url(${url})`;
-  else el.style.backgroundImage = '';
   const placeholder = el.querySelector('svg');
   if(placeholder) placeholder.style.display = url ? 'none' : '';
+  const cap = el.closest('.cap');
+  const refit = () => { const nm = cap && cap.querySelector('.cap-name'); if(nm) fitCapName(nm); };
+  logoKit.show(el, url || '', {
+    onPaint: refit,
+    onNone: () => { if(cap && !cap.classList.contains('no-logo')){ cap.classList.add('no-logo'); refit(); } }
+  });
 }
 
 // 📏 Runs a fit with every transform under `root` switched off (.at-rest):
@@ -3801,7 +4235,8 @@ function fitCapName(el, force){
   const cap = el.closest('.cap');
   if(!cap) return;
   // (measured only when the name, the logo or the output size changed — not on every ball)
-  const key = [el.textContent, cap.classList.contains('no-logo'), innerWidth].join('|');
+  const logo = cap.querySelector('.cap-logo');
+  const key = [el.textContent, cap.classList.contains('no-logo'), logo ? logo.dataset.lgBox || '' : '', innerWidth].join('|');
   if(!force && el.dataset.fitKey === key) return;
   el.dataset.fitKey = key;
   el.classList.remove('clamp3');
@@ -3945,8 +4380,8 @@ function layoutTeams(s){
   const theme = resolveTeamTheme(s);
   paintRoleTheme('bat',  currentLeftIsA ? theme.A : theme.B);
   paintRoleTheme('bowl', currentLeftIsA ? theme.B : theme.A);
-  document.getElementById('cap-left').classList.toggle('no-logo', !leftTeam.logoUrl);
-  document.getElementById('cap-right').classList.toggle('no-logo', !rightTeam.logoUrl);
+  document.getElementById('cap-left').classList.toggle('no-logo', !leftTeam.logoUrl || logoKit.broken(leftTeam.logoUrl));
+  document.getElementById('cap-right').classList.toggle('no-logo', !rightTeam.logoUrl || logoKit.broken(rightTeam.logoUrl));
   // Bold short-code wordmark up top (the glanceable identity mark) plus
   // the full name as a small caption underneath — shown together always,
   // logo or no logo, so every team gets the same catchy treatment.
@@ -4259,10 +4694,22 @@ const barShadow = (() => {
 
 /* ============================================================
    ENTRY / EXIT
-   Deliberately choreographed in two beats, per the brief:
-   beat 1 — the coloured shapes build themselves (clip-path
-   reveal, each segment on its own unique path);
-   beat 2 — the text/numbers settle in with a staggered rise.
+   The bar comes on air in layers, left to right, and goes the other way:
+   beat 0 — a line of light is drawn along its top edge;
+   beat 1 — the coloured shapes build themselves: the batting side's cap
+            (its clip opening from the screen edge), the band growing out
+            of it, the bowling side's cap closing it from the other edge —
+            a glint running through each part as it lands;
+   beat 2 — the logos settle in (scale and fade — never a bounce), the
+            names, the score figure by figure, the overs, the batters, the
+            bowler, staggered rises of a few design px;
+   the line fades as the bar settles. The exit: the text goes first, last
+   in first out, then the shapes un-build right to left (the bowling side's
+   cap, the band back into the batting side's, that cap), the line drawn
+   back in, a last fade. Transforms, opacity and the caps' own clip only;
+   the bar stays where it is, at the foot of the picture. A new entry
+   retires a running exit and the other way round (a half-played entry is
+   fast-forwarded first), so two timelines never fight over the bar.
    ============================================================ */
 // Handles so a new entry/exit can cleanly retire the opposite one instead of
 // two timelines fighting over the same elements.
@@ -4270,14 +4717,22 @@ let barEntryTl = null, barExitTl = null;
 function reduceMotion(){
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
+const BAR_GLINTS = ['#cap-left .sb-glint b', '#mid-row .sb-glint b', '#cap-right .sb-glint b'];
+// what the exit fades (and puts back once the bar is off air)
+const BAR_EXIT_TEXT = ['#bowler-seg', '#crr-seg', '#batters-seg', '#break-seg', '#result-seg', '#overs-badge > *', '#score-block', '#cap-right .cap-text', '#cap-right .cap-logo', '#cap-left .cap-text', '#cap-left .cap-logo'];
+const CAP_L_OPEN = 'polygon(0 0,100% 0,82% 100%,0 100%)', CAP_R_OPEN = 'polygon(18% 0,100% 0,100% 100%,0 100%)';
+const CAP_L_SHUT = 'polygon(0 0,0 0,0 100%,0 100%)', CAP_R_SHUT = 'polygon(100% 0,100% 0,100% 100%,100% 100%)';
 function animateEntry(){
   if(barExitTl){ barExitTl.kill(); barExitTl = null; }
+  // whatever an exit left half-faded is whole again before anything moves
+  gsap.set(BAR_EXIT_TEXT, { opacity: 1, y: 0 });
+  gsap.set(['#sb-guide', ...BAR_GLINTS], { opacity: 0 });
   if(reduceMotion()){
     // Accessibility: plain fade, final shapes set directly. Timing logic
     // elsewhere is unaffected — only the motion is simplified.
     gsap.killTweensOf('#scorecard');
-    gsap.set('#cap-left', { clipPath: 'polygon(0 0,100% 0,82% 100%,0 100%)' });
-    gsap.set('#cap-right', { clipPath: 'polygon(18% 0,100% 0,100% 100%,0 100%)' });
+    gsap.set('#cap-left', { clipPath: CAP_L_OPEN });
+    gsap.set('#cap-right', { clipPath: CAP_R_OPEN });
     gsap.set('#mid-row', { scaleX: 1 });
     barEntryTl = gsap.fromTo('#scorecard', { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power1.out' });
     return;
@@ -4285,38 +4740,64 @@ function animateEntry(){
   const tl = barEntryTl = gsap.timeline({ defaults: { ease: 'expo.out' } });
   const u = barUnit();
   gsap.set('#scorecard', { opacity: 1 });
-  gsap.set('#cap-left', { clipPath: 'polygon(0 0,0 0,0 100%,0 100%)' });
-  gsap.set('#cap-right', { clipPath: 'polygon(100% 0,100% 0,100% 100%,100% 100%)' });
-  gsap.set('#mid-row', { scaleX: 0, transformOrigin: 'center' });
-
-  tl.to('#cap-left', { clipPath: 'polygon(0 0,100% 0,82% 100%,0 100%)', duration: 0.5 }, 0.05)
-    .to('#cap-right', { clipPath: 'polygon(18% 0,100% 0,100% 100%,0 100%)', duration: 0.5 }, 0.12)
-    .to('#mid-row', { scaleX: 1, duration: 0.55, ease: 'power3.out' }, 0.18)
-    // beat 2 — text (offsets in design px, like the bar — see --bu)
-    .from('.cap-logo', { opacity: 0, scale: 0.5, duration: 0.35, ease: 'back.out(2.4)', stagger: 0.06 }, 0.55)
-    .from('.cap-short', { opacity: 0, y: 8 * u, duration: 0.3, stagger: 0.06 }, 0.6)
-    .from('.cap-name', { opacity: 0, y: 6 * u, duration: 0.28, stagger: 0.06 }, 0.68)
-    .from('.digit-col', { opacity: 0, yPercent: 60, duration: 0.36, stagger: 0.035 }, 0.6)
-    .from('#overs-badge > *', { opacity: 0, y: 10 * u, duration: 0.3, stagger: 0.05 }, 0.66)
-    .from('#batters-seg .brow', { opacity: 0, x: -10 * u, duration: 0.32, stagger: 0.07 }, 0.72)
-    .from('#crr-seg', { opacity: 0, y: 8 * u, duration: 0.3 }, 0.78)
-    .from('#bowler-line > *', { opacity: 0, y: 8 * u, duration: 0.3, stagger: 0.05 }, 0.78)
-    .from('#bowler-sub', { opacity: 0, y: 8 * u, duration: 0.3 }, 0.86);
+  gsap.set('#cap-left', { clipPath: CAP_L_SHUT });
+  gsap.set('#cap-right', { clipPath: CAP_R_SHUT });
+  gsap.set('#mid-row', { scaleX: 0, transformOrigin: 'left center' });
+  const rise = (sel, from, at, o) => tl.fromTo(sel, { opacity: 0, ...from }, { opacity: 1, x: 0, y: 0, yPercent: 0, scale: 1, duration: 0.42, ease: 'power3.out', ...o }, at);
+  // beat 0 — the line of light
+  tl.fromTo('#sb-guide', { opacity: 1, scaleX: 0 }, { scaleX: 1, duration: 0.55 }, 0)
+  // beat 1 — the shapes, left to right, each with its glint
+    .to('#cap-left', { clipPath: CAP_L_OPEN, duration: 0.5 }, 0.06)
+    .to('#mid-row', { scaleX: 1, duration: 0.66, ease: 'power4.out' }, 0.16)
+    .to('#cap-right', { clipPath: CAP_R_OPEN, duration: 0.5 }, 0.36)
+    .fromTo(BAR_GLINTS[0], { opacity: 1, xPercent: -130 }, { xPercent: 260, duration: 0.6, ease: 'power2.inOut' }, 0.4)
+    .fromTo(BAR_GLINTS[1], { opacity: 1, xPercent: -130 }, { xPercent: 720, duration: 0.95, ease: 'power2.inOut' }, 0.52)
+    .fromTo(BAR_GLINTS[2], { opacity: 1, xPercent: -130 }, { xPercent: 260, duration: 0.6, ease: 'power2.inOut' }, 0.98)
+    .to('#sb-guide', { opacity: 0, duration: 0.5, ease: 'power1.out' }, 0.72);
+  // beat 2 — the logos, the names and the figures (offsets in design px, like the bar — see --bu)
+  rise('.cap-logo', { scale: 0.84 }, 0.5, { duration: 0.62, ease: 'expo.out', stagger: 0.12 });
+  rise('.cap-short', { y: 8 * u }, 0.56, { stagger: 0.12 });
+  rise('.cap-name', { y: 6 * u }, 0.64, { duration: 0.4, stagger: 0.12 });
+  riseBarScore();
+  rise('#score-rate-line', { y: 6 * u }, 0.66, { duration: 0.4 });
+  rise('#overs-badge > *', { y: 10 * u }, 0.62, { duration: 0.4, stagger: 0.05 });
+  rise('#batters-seg .brow', { x: -10 * u }, 0.7, { stagger: 0.07 });
+  rise('#crr-seg', { y: 8 * u }, 0.76, { duration: 0.4 });
+  rise('#bowler-line > *', { y: 8 * u }, 0.78, { duration: 0.4, stagger: 0.05 });
+  rise('#bowler-sub', { y: 8 * u }, 0.86, { duration: 0.4 });
+}
+// The score's figures rising into place with the bar's entrance — once per
+// entrance: on the very first state the figures do not exist yet when the
+// entrance starts, and are added the moment renderState has built them.
+function riseBarScore(){
+  const tl = barEntryTl;
+  if(!tl || tl.__score || reduceMotion() || typeof tl.getChildren !== 'function') return;
+  const figs = document.querySelectorAll('#score-row > *');
+  if(!figs.length || tl.time() > 0.3) return;
+  tl.__score = true;
+  tl.fromTo(figs, { opacity: 0, yPercent: 70 }, { opacity: 1, yPercent: 0, duration: 0.5, ease: 'expo.out', stagger: 0.04 }, 0.52);
 }
 function animateExit(){
-  // A half-played entry is fast-forwarded (not just killed) so its .from()
-  // children land on their real end values instead of freezing mid-tween.
+  // A half-played entry is fast-forwarded (not just killed) so its tweens
+  // land on their real end values instead of freezing mid-tween.
   if(barEntryTl){ barEntryTl.progress(1).kill(); barEntryTl = null; }
   hasEntered = false; // set up front: any state that lands mid-exit re-enters cleanly
   if(reduceMotion()){
     barExitTl = gsap.to('#scorecard', { opacity: 0, duration: 0.2, ease: 'power1.in' });
     return;
   }
+  const u = barUnit();
   const tl = barExitTl = gsap.timeline({ defaults: { ease: 'power2.in' } });
-  tl.to('#mid-row', { scaleX: 0, duration: 0.36 }, 0.04)
-    .to('#cap-left', { clipPath: 'polygon(0 0,0 0,0 100%,0 100%)', duration: 0.32 }, 0.1)
-    .to('#cap-right', { clipPath: 'polygon(100% 0,100% 0,100% 100%,100% 100%)', duration: 0.32 }, 0.1)
-    .to('#scorecard', { opacity: 0, duration: 0.15 }, 0.5);
+  // the text first, last in first out
+  tl.to(BAR_EXIT_TEXT, { opacity: 0, y: 6 * u, duration: 0.18, stagger: 0.016 }, 0)
+  // then the shapes un-build, right to left
+    .to('#cap-right', { clipPath: CAP_R_SHUT, duration: 0.3, ease: 'power3.in' }, 0.12)
+    .to('#mid-row', { scaleX: 0, transformOrigin: 'left center', duration: 0.38, ease: 'power3.in' }, 0.16)
+    .to('#cap-left', { clipPath: CAP_L_SHUT, duration: 0.3, ease: 'power3.in' }, 0.36)
+    .fromTo('#sb-guide', { opacity: 1, scaleX: 1 }, { scaleX: 0, duration: 0.34, ease: 'power3.in' }, 0.3)
+    .to('#scorecard', { opacity: 0, duration: 0.14 }, 0.56);
+  // off air: the text put back (unseen), ready for whatever brings the bar back
+  tl.eventCallback('onComplete', () => { gsap.set(BAR_EXIT_TEXT, { opacity: 1, y: 0 }); barExitTl = null; });
 }
 
 /* ============================================================
@@ -5047,12 +5528,13 @@ function addImpactCardPhase(tl, d, at){
   gsap.set([badge, kicker, word, meta, inEl, outEl, icon], { clearProps: 'transform,filter,opacity' });
   fitImpactCard(card);
   const u = barUnit();
-  gsap.set(badge, { opacity: 0, scale: 0.2, rotate: -140 });
+  // the team's logo in its own shape: it settles in (never spun round)
+  gsap.set(badge, { opacity: 0, scale: 0.6, rotate: 0 });
   gsap.set([kicker, word, meta], { opacity: 0, x: -26 * u, filter: 'blur(6px)' });
   gsap.set(outEl, { opacity: 0, x: 90 * u, filter: 'blur(8px)' });
   gsap.set(inEl, { opacity: 0, x: -90 * u, filter: 'blur(8px)' });
   gsap.set(icon, { opacity: 0, scale: 0.3, rotate: -180 });
-  tl.to(badge, { opacity: 1, scale: 1, rotate: 0, duration: 0.6, ease: 'back.out(1.8)' }, at)
+  tl.to(badge, { opacity: 1, scale: 1, duration: 0.6, ease: 'expo.out' }, at)
     .to([kicker, word, meta], { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.45, stagger: 0.09, ease: 'power3.out' }, at + 0.1)
     .to(outEl, { opacity: 1, x: 0, filter: 'blur(0px)', duration: 0.45, ease: 'power3.out' }, at + 0.35)
     .to(icon, { opacity: 1, scale: 1, rotate: 0, duration: 0.6, ease: 'back.out(2)' }, at + 0.5)
@@ -5267,17 +5749,21 @@ function badgeText(short, name){
   return words.slice(0, 3).map(w => w[0]).join('').toUpperCase();
 }
 
-// Fills a summary card's circular team emblem — an actual logo photo when
-// a logoUrl is provided, or the short-code text as a fallback when it
-// isn't. Mirrors the main scorecard's logo-or-no-logo handling so both
-// places behave the same way for a team with no uploaded logo.
+// Fills a card's team badge — the team's logo in its own true shape
+// (logoKit: the badge becomes the logo's own box, .lg), or the short-code
+// text as a fallback when there is none, or it will not load. Mirrors the
+// main scorecard's logo-or-no-logo handling so both places behave the same
+// way for a team with no uploaded logo. A badge already showing this logo is
+// left as it is.
 function setBadge(el, logoUrl, shortText){
   if(!el) return;
   if(logoUrl){
-    el.style.backgroundImage = `url(${logoUrl})`;
-    el.textContent = '';
+    if(!el.classList.contains('has-logo')) el.textContent = '';
+    el.style.backgroundImage = '';
     el.classList.add('has-logo');
+    logoKit.show(el, logoUrl, { onNone: () => { el.classList.remove('has-logo'); el.textContent = shortText || ''; } });
   } else {
+    logoKit.show(el, '');
     el.style.backgroundImage = '';
     el.textContent = shortText || '';
     el.classList.remove('has-logo');
@@ -5633,12 +6119,13 @@ function showFullPersistent(cardId, sig, after){
   if(after) after(0.75);
   return true;
 }
-// A team as a round badge: its logo, else its short name on its own colour.
+// A team as a badge: its logo in its own true shape (drawn in by
+// logoKit.hydrate once the row is in), else its short name on its own colour.
 function fxBadge(name, short, color, logo){
   const safe = String(logo || '').replace(/["'()\\\s&<>]/g, '');   // nothing that could end the url() or the attribute
-  if(safe) return `<span class="fx-badge has-logo" style="background-image:url(${safe})"></span>`;
-  const t = cardgTones(color);
-  return `<span class="fx-badge" style="background:linear-gradient(135deg, ${t.accent}, ${t.deep})">${escapeHtml(badgeText(short, name))}</span>`;
+  const t = cardgTones(color), mono = escapeHtml(badgeText(short, name)), fill = `linear-gradient(135deg, ${t.accent}, ${t.deep})`;
+  if(safe) return `<span class="fx-badge has-logo" style="background-image:url(${safe})" data-lg-src="${safe}" data-lg-mono="${mono}" data-lg-bg="${fill}"></span>`;
+  return `<span class="fx-badge" style="background:${fill}">${mono}</span>`;
 }
 // A whole number counts up from 0 to itself (a trailing '*' etc. stays put).
 // Kept per card, so a re-send that lands mid-count stops it before writing
@@ -6354,6 +6841,7 @@ function renderTeamHistoryCard(d){
       + `<span class="sc-c-num"><span class="fx-res ${k ? k.toLowerCase() : 'live'}">${escapeHtml(RES[k] || 'LIVE')}</span></span>`;
     rowsWrap.appendChild(row);
   });
+  logoKit.hydrate(rowsWrap);
   if(!allRows.length) rowsWrap.appendChild(cardEmptyRow('NO MATCHES SAVED YET'));
   if(allRows.length > shown.length){
     const more = document.createElement('div');
@@ -6417,6 +6905,7 @@ function renderPointsTableCard(d){
       + `<span class="sc-c-num"><span class="ptx-form">${formHtml}</span></span>`;
     rowsWrap.appendChild(row);
   });
+  logoKit.hydrate(rowsWrap);
   if(!standings.length) rowsWrap.appendChild(cardEmptyRow('NO MATCHES SAVED YET'));
   document.getElementById('pt-footer').textContent = d.updatedLine || '';
   showFullPersistent('points-table-card', JSON.stringify(d), (at) => {
@@ -6802,7 +7291,8 @@ function revealEndStrip(seg){
     tl.fromTo(q('.brk-head'), { opacity: 0, x: -18 * u }, { opacity: 1, x: 0, duration: 0.5 }, 0)
       .fromTo(q('.brk-item:not([hidden])'), { opacity: 0, y: 12 * u }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.1 }, 0.16);
   } else {
-    tl.fromTo(q('.res-badge'), { opacity: 0, scale: 0.4, rotation: -24 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.6, ease: 'back.out(1.8)' }, 0)
+    // (the same language as the bar's entrance: scale and fade, no bounce)
+    tl.fromTo(q('.res-badge'), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.6, ease: 'expo.out' }, 0)
       .fromTo(q('.res-kicker'), { opacity: 0, y: 8 * u }, { opacity: 1, y: 0, duration: 0.35 }, 0.1)
       .fromTo(q('.res-main'), { opacity: 0, y: 14 * u }, { opacity: 1, y: 0, duration: 0.5 }, 0.16)
       .fromTo(q('.res-rule'), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: 'power2.inOut' }, 0.32)
@@ -7373,7 +7863,7 @@ const overFlow = (() => {
   const ENTER_MS = () => reduceMotion() ? 260 : 700;          // card fully in
   const EXIT_MS = () => reduceMotion() ? 260 : 450;           // card fully out
   const BAR_RETURN_LEAD_MS = () => reduceMotion() ? 0 : 150;   // bar starts back this long after the card starts leaving
-  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 950;     // bar's own entrance animation
+  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 1300;    // bar's own entrance animation (animateEntry)
   const LEGACY_DUP_WINDOW_MS = 8000;                           // only used when a payload has no eventId
 
   // The rotation. `has` lets a face be skipped when this payload cannot fill
@@ -7598,43 +8088,10 @@ const bcg = (() => {
   }
   const toneVars = (k, p) => `--${p}-accent:${k.accent};--${p}-accent2:${k.accent2};--${p}-mid:${k.mid};--${p}-deep:${k.deep};--${p}-line:${k.line};--${p}-line-ink:${k.lineInk}`;
 
-  // ---------- logos: loaded and decoded once, before anything moves ----------
-  const logoInfo = new Map();   // url -> Promise<{ tone: 'light'|'dark', broken }>
+  // ---------- logos: read, drawn and decoded once, before anything moves (logoKit) ----------
   function safeUrl(u){
     const s = String(u || '').trim();
     return (/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(s) || /^https?:\/\/[^\s"'()<>\\]+$/i.test(s) || /^\/[^\s"'()<>\\]+$/.test(s)) ? s : '';
-  }
-  function bcgLogoInfo(url){
-    if(!url) return Promise.resolve(null);
-    if(logoInfo.has(url)) return logoInfo.get(url);
-    if(logoInfo.size > 24) logoInfo.clear();
-    const load = (cors) => new Promise((res) => {
-      const img = new Image();
-      if(cors) img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        // the plate under it: deep navy for a light crest on a clear
-        // background (it would vanish on white), white for everything else
-        let tone = 'light';
-        try {
-          const c = document.createElement('canvas'); c.width = c.height = 24;
-          const x = c.getContext('2d'); x.drawImage(img, 0, 0, 24, 24);
-          const d = x.getImageData(0, 0, 24, 24).data;
-          let n = 0, clear = 0, lum = 0;
-          for(let i = 0; i < d.length; i += 4){
-            if(d[i + 3] < 40){ clear++; continue; }
-            n++; lum += (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
-          }
-          if(n && clear / 576 > 0.08 && lum / n > 0.7) tone = 'dark';
-        } catch (e) { /* a picture from another site without CORS: keep the white plate */ }
-        const done = () => res({ tone, broken: false });
-        if(img.decode) img.decode().then(done, done); else done();
-      };
-      img.onerror = () => res(null);
-      img.src = url;
-    });
-    const p = load(/^https?:/i.test(url) && !url.startsWith(location.origin)).then(r => r || load(false)).then(r => r || { tone: 'light', broken: true });
-    logoInfo.set(url, p);
-    return p;
   }
   function initials(name){
     const w = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -7642,27 +8099,39 @@ const bcg = (() => {
     const first = (s) => (Array.from(s)[0] || '').toUpperCase();
     return w.length === 1 ? Array.from(w[0]).slice(0, 2).join('').toUpperCase() : first(w[0]) + first(w[w.length - 1]);
   }
-  // a logo on its plate — or, with none (or one that will not load), the
-  // team's initials on its own colour; never a made-up crest
-  function plateHtml(team, size, tk){
+  // A team's mark: its logo in its own true shape — or, with none (or one
+  // that will not load), the team's initials on its own colour; never a
+  // made-up crest. how: 'flow' (default) — in a row of text, the plate is
+  // the logo's own box; 'hero' — a big logo centred in its square (the
+  // Playing XI); 'ring' — inside the Match Intro's ring; 'coin' — on the
+  // toss coin, a disc, the logo whole inside it.
+  function plateHtml(team, size, tk, how){
     const url = safeUrl(team && team.logoUrl);
     const mono = escapeHtml(badgeText(team && team.short, team && team.name) || '?');
     const style = `--ps:${size};--pl-accent:${tk.accent};--pl-deep:${tk.deep};--pl-ring:${tk.line}`;
-    return `<div class="bcg-plate${url ? '' : ' mono'}" style="${style}" data-mono="${mono}"${url ? ` data-src="${escapeHtml(url)}"` : ''}>`
-      + (url ? `<span class="bcg-plate-img" style="background-image:url(&quot;${escapeHtml(url)}&quot;)"></span>` : `<span class="bcg-plate-mono">${mono}</span>`)
-      + `<span class="bcg-plate-sheen"><i></i></span></div>`;
+    const sheen = `<span class="bcg-plate-sheen"><i></i></span>`;
+    if(!url) return `<div class="bcg-plate mono" style="${style}" data-mono="${mono}"><span class="bcg-plate-mono">${mono}</span>${sheen}</div>`;
+    const src = escapeHtml(url);
+    how = how || 'flow';
+    if(how === 'flow') return `<div class="bcg-plate pl-flow" style="${style}" data-mono="${mono}" data-lg-src="${src}">${sheen}</div>`;
+    return `<div class="bcg-plate pl-${how}" style="${style}" data-mono="${mono}"><span class="bcg-art" data-lg-src="${src}"></span>${sheen}</div>`;
   }
   function brandHtml(){ return '<img class="bcg-brand" src="/logo.png" alt="" onerror="this.remove()">'; }
-  // every logo of the scene ready (or 450 ms gone) — then its plate is set to match it
+  // every logo of the scene read and in (or 450 ms gone), and the fonts
   function prepare(sc){
-    const plates = [...sc.el.querySelectorAll('.bcg-plate[data-src]')];
-    const all = Promise.all(plates.map(pl => bcgLogoInfo(pl.dataset.src).then(info => {
-      if(!info) return;
-      if(info.broken){
+    const hosts = [...sc.el.querySelectorAll('[data-lg-src]')];
+    const all = Promise.all(hosts.map(h => logoKit.warm(h.getAttribute('data-lg-src')).then(info => {
+      if(!sc.alive) return;
+      const pl = h.closest('.bcg-plate');
+      logoKit.show(h, h.getAttribute('data-lg-src'), { onNone: () => {
+        if(!pl) return;
+        if(h !== pl) h.remove();
+        pl.classList.remove('pl-flow', 'pl-hero', 'pl-ring', 'pl-coin', 'dark');
         pl.classList.add('mono');
-        const img = pl.querySelector('.bcg-plate-img');
-        if(img) img.outerHTML = `<span class="bcg-plate-mono">${escapeHtml(pl.dataset.mono || '?')}</span>`;
-      } else if(info.tone === 'dark') pl.classList.add('dark');
+        if(!pl.querySelector('.bcg-plate-mono')) pl.insertAdjacentHTML('afterbegin', `<span class="bcg-plate-mono">${escapeHtml(pl.dataset.mono || '?')}</span>`);
+      } });
+      // the coin's face: deep navy under a light logo (it would vanish on white)
+      if(pl && pl.classList.contains('pl-coin') && info && info.kind === 'cut' && info.tone > 0.72) pl.classList.add('dark');
     })));
     const fonts = document.fonts && document.fonts.ready ? document.fonts.ready.catch(() => {}) : Promise.resolve();
     return Promise.race([Promise.all([all, fonts]), new Promise(r => setTimeout(r, 450))]);
@@ -7776,7 +8245,7 @@ const bcg = (() => {
       return `<div class="xi-page" data-i="${i}" style="${toneVars(k, 'x')};--cols:${cols};--rows:${rows};--rh:${rh};--nf:${nf}">`
         + `<div class="xi-id">`
         + (tour ? `<div class="xi-tour">${tourLogo ? plateHtml({ logoUrl: tourLogo, name: tour }, 76, tones(info.tournamentColor || NEUTRAL, 'A')) : ''}<span class="xi-tour-t">${escapeHtml(tour)}</span></div>` : '')
-        + `<div class="xi-logo"><i class="bcg-burst"></i>${plateHtml(t, 220, k)}</div>`
+        + `<div class="xi-logo"><i class="bcg-burst"></i>${plateHtml(t, 220, k, 'hero')}</div>`
         + `<div class="xi-kicker">PLAYING XI</div><div class="xi-name">${escapeHtml(t.name)}</div>`
         + (stage ? `<div class="xi-stage">${escapeHtml(stage)}</div>` : '')
         + (round ? `<div class="xi-ko"><span class="bcg-ko-tag${round.tier === 'ko' ? ' ko' : ''}">${escapeHtml(round.label)}</span></div>` : '')
@@ -7929,7 +8398,7 @@ const bcg = (() => {
     const foot = [...infoLine(info, ['matchTitle', 'stage', 'venue'].filter(k => !ko || k !== ko.key)), fmtDate(info.date)].filter(Boolean).join('  ·  ');
     sc.el.innerHTML = `<div class="bcg-fill bcg-scrim toss-dim"></div><div class="bcg-canvas">${head}`
       + `<div class="toss-card bcg-glass" style="${toneVars(kw, 't')}">`
-      + `<div class="toss-coin"><div class="bcg-pattern"></div><i class="bcg-burst"></i><i class="toss-ring r2"></i><i class="toss-ring r1"></i>${plateHtml(W, 280, kw)}</div>`
+      + `<div class="toss-coin"><div class="bcg-pattern"></div><i class="bcg-burst"></i><i class="toss-ring r2"></i><i class="toss-ring r1"></i>${plateHtml(W, 280, kw, 'coin')}</div>`
       + `<div class="toss-main"><div class="toss-title"><b>${'TOSS'.split('').map(c => `<span>${c}</span>`).join('')}</b><i class="toss-rule"></i></div>`
       + `<div class="toss-name">${escapeHtml(W.name)}</div><div class="toss-won">WON THE TOSS</div>`
       + `<div class="toss-dec">${DEC_ICON[dec]}<span>ELECTED TO ${dec} FIRST</span></div></div>`
@@ -8124,7 +8593,7 @@ const bcg = (() => {
       + `<div class="ar-orbit"><svg viewBox="0 0 400 400" aria-hidden="true"><circle cx="200" cy="200" r="194" fill="none" stroke="${rgb(v)}" stroke-opacity=".55" stroke-width="1.6" stroke-dasharray="90 34 6 34" stroke-linecap="round"/>`
       + `<circle cx="200" cy="200" r="178" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1" stroke-dasharray="2 9"/></svg></div>`
       + `<div class="ar-frame"><i class="ar-ring"></i><svg class="ar-glint" viewBox="0 0 322 322" aria-hidden="true"><circle cx="161" cy="161" r="157" fill="none" stroke="#ffffff" stroke-opacity=".9" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="46 447" pathLength="986"/></svg>`
-      + `${plateHtml(t, 290, k)}</div><i class="ar-flare"></i></div>`;
+      + `${plateHtml(t, 290, k, 'ring')}</div><i class="ar-flare"></i></div>`;
     const name = (t, s) => `<div class="ar-nm ${s}"><i class="ar-bar"></i><span class="ar-name">${escapeHtml(t.name)}</span></div>`;
     const cup = (s) => ko && ko.tier === 'final' ? trophySvg(`arCup${uid}${s}`) : '';
     sc.el.setAttribute('style', P.vars);
@@ -8290,15 +8759,30 @@ const bcg = (() => {
   const ORD = (n) => n + ({ 1: 'ST', 2: 'ND', 3: 'RD' }[n] || 'TH');
   const dash = (v) => v == null || v === '' ? '—' : escapeHtml(String(v));
   function overBalls(o){ const m = /^(\d+)(?:\.(\d+))?$/.exec(String(o || '').trim()); return m ? (+m[1]) * 6 + (+(m[2] || 0)) : 0; }
+  // a figure as one span per character, so each can rise into place (its text unchanged)
+  const chars = (v) => Array.from(String(v)).map(ch => `<span class="mc-dg">${escapeHtml(ch)}</span>`).join('');
   function cardBuild(sc){
     const d = sc.g.data, bat = d.kind === 'bat', info = d.info || {}, T = d.total || {};
     const team = bat ? d.batting : d.bowling, opp = bat ? d.bowling : d.batting;
     const k = tones(team.color, bat ? 'A' : 'B');
+    // the column's own top and middle: a very dark team colour is lifted
+    // toward steel (it would read as a black hole), any other keeps its hue
+    // A light one (white, yellow, a neon) is taken deeper down the column, and
+    // the shade under the name and the total made stronger, so white type
+    // reads on it everywhere.
+    const ac = rgbOf(k.accent), L = lumOf(ac), dark = L < 0.12, light = L > 0.34;
+    const toLum = (c, t) => { const l = lumOf(c); return rgb(l > t ? c.map(v => v * t / l) : c); };   // the same hue, no brighter than t
+    const top = dark ? rgb(mixTo(ac, [74, 86, 110], 0.55)) : light ? toLum(ac, 0.44) : k.accent2;
+    const a32 = light ? toLum(ac, 0.3) : k.accent;
+    const mid = dark ? rgb(mixTo(ac, [44, 52, 70], 0.5)) : light ? toLum(ac, 0.19) : k.mid;
+    const shade = light ? 0.4 : 0.26;
     const label = d.label || `${ORD(d.inningsNo)} INNINGS`;
     const balls = overBalls(T.overs), rr = balls && T.runs != null ? (T.runs * 6 / balls).toFixed(2) : '';
-    const score = T.runs == null ? '' : `${T.runs}${T.wickets != null && T.wickets < 10 ? `<small>/${T.wickets}</small>` : ''}${T.declared ? '<small> d</small>' : ''}`;
+    const score = T.runs == null ? '' : `${chars(T.runs)}${T.wickets != null && T.wickets < 10 ? `<small>${chars('/' + T.wickets)}</small>` : ''}${T.declared ? '<small> d</small>' : ''}`;
     const scoreText = T.runs == null ? '' : `${T.runs}${T.wickets != null && T.wickets < 10 ? '/' + T.wickets : ''}${T.declared ? ' d' : ''}`;
-    const overs = [T.overs ? `${T.overs} OV` : '', rr ? `RR ${rr}` : '', T.target ? `TARGET ${T.target}` : ''].filter(Boolean).join('  ·  ');
+    // overs · run rate · target, as chips (the dots between them are read, not drawn)
+    const chips = [T.overs ? `${T.overs} OV` : '', rr ? `RR ${rr}` : '', T.target ? `TARGET ${T.target}` : ''].filter(Boolean);
+    const overs = chips.map(c => `<span${/^TARGET/.test(c) ? ' class="tg"' : ''}>${escapeHtml(c)}</span>`).join('<i> · </i>');
     const sub = [bat ? `vs ${opp.name}` : `${opp.name} batting`, info.tournament].filter(Boolean).join('  ·  ');
     const ex = T.extras || {};
     const exParts = [['wd', 'wd'], ['nb', 'nb'], ['b', 'b'], ['lb', 'lb'], ['pen', 'pen']].filter(([key]) => ex[key]).map(([key, l]) => `${l} ${ex[key]}`).join(', ');
@@ -8309,15 +8793,16 @@ const bcg = (() => {
     // once two have batted) / the best bowling (most wickets, then fewest
     // runs — once a wicket has fallen)
     const n = (v) => Number(v) || 0;
-    const top = bat ? (d.batters || []).filter(r => n(r.runs) > 0).reduce((b, r) => (!b || n(r.runs) > n(b.runs) || (n(r.runs) === n(b.runs) && n(r.balls) < n(b.balls))) ? r : b, null) : null;
-    const topOn = top && (d.batters || []).length >= 2 ? top : null;
+    const top3 = bat ? (d.batters || []).filter(r => n(r.runs) > 0).reduce((b, r) => (!b || n(r.runs) > n(b.runs) || (n(r.runs) === n(b.runs) && n(r.balls) < n(b.balls))) ? r : b, null) : null;
+    const topOn = top3 && (d.batters || []).length >= 2 ? top3 : null;
     const best = !bat ? (d.bowlers || []).filter(r => n(r.wickets) > 0).reduce((b, r) => (!b || n(r.wickets) > n(b.wickets) || (n(r.wickets) === n(b.wickets) && n(r.runs) < n(b.runs))) ? r : b, null) : null;
     if(bat){
+      // [order no. — drawn] name over how out · R B 4s 6s SR
       head = ['BATTER', '', 'R', 'B', '4s', '6s', 'SR'];
       rows = d.batters.map(r => {
         const at = r.status === 'striker' || r.status === 'nonStriker';
         const how = at ? 'batting' : r.status === 'notout' ? 'not out' : (r.howOut || (r.status === 'retired' ? 'retired' : 'out'));
-        return `<div class="mc-tr${at ? ' live' : ''}${r === topOn ? ' top' : ''}"><span class="mc-nm"${r === topOn ? ' data-tag="TOP"' : ''}>${escapeHtml(r.name)}${r.status === 'striker' ? ' *' : ''}</span><span class="mc-how${at ? ' at' : ''}">${escapeHtml(how)}</span>`
+        return `<div class="mc-tr${at ? ' live' : ''}${r.status === 'notout' ? ' no' : ''}${r === topOn ? ' top' : ''}"><span class="mc-nm"${r === topOn ? ' data-tag="TOP"' : ''}>${escapeHtml(r.name)}${r.status === 'striker' ? ' *' : ''}</span><span class="mc-how${at || r.status === 'notout' ? ' at' : ''}">${escapeHtml(how)}</span>`
           + `<span class="mc-n k">${dash(r.runs)}</span><span class="mc-n">${dash(r.balls)}</span><span class="mc-n">${dash(r.fours)}</span><span class="mc-n">${dash(r.sixes)}</span><span class="mc-n">${dash(r.sr)}</span></div>`;
       });
     } else {
@@ -8330,77 +8815,163 @@ const bcg = (() => {
     }
     const th = `<div class="mc-tr mc-th">${head.map((h, i) => `<span class="${i > (bat ? 1 : 0) ? 'c-r' : ''}">${h}</span>`).join('')}</div>`;
     const groups = (d.groups || []).map(g => `<div class="mc-group${/not in/i.test(g.label) ? ' dim' : ''}"><b>${escapeHtml(g.label)}</b><span>${g.names.map(escapeHtml).join('  ·  ')}</span></div>`).join('');
-    const fow = bat && (d.fow || []).length ? `<div class="mc-fow"><b>FALL OF WICKETS</b>${d.fow.map(f => `${dash(f.wkt)}-${dash(f.runs)}${f.over ? ` (${escapeHtml(f.over)})` : ''}`).join('  ·  ')}</div>` : '';
+    // (each fall kept whole on its line: "9-165 (19.5)" never splits at its hyphen or its space)
+    const fow = bat && (d.fow || []).length ? `<div class="mc-fow"><b>FALL OF WICKETS</b>${d.fow.map(f => `<span class="mc-fw">${dash(f.wkt)}-${dash(f.runs)}${f.over ? ` (${escapeHtml(f.over)})` : ''}</span>`).join('  ·  ')}</div>` : '';
     const foot = [String(info.venue || '').trim(), fmtDate(info.date)].filter(Boolean).join('  ·  ');
+    const glow = k.glow.replace(/[\d.]+\)$/, '0.34)'), wash = k.glow.replace(/[\d.]+\)$/, '0.12)');
     sc.el.dataset.kind = d.kind;
     sc.el.dataset.innings = String(d.inningsNo);
     sc.el.innerHTML = `<div class="bcg-fill mc-fill" style="--m-tint:${k.tint}"></div>`
-      + `<div class="bcg-canvas"><div class="mc-sheet ${bat ? 'mc-bat' : 'mc-bowl'}" style="${toneVars(k, 'm')};--m-glow:${k.glow.replace(/[\d.]+\)$/, '0.32)')}">`
-      + `<div class="mc-head"><div class="mc-id">${plateHtml(team, 112, k)}<div class="mc-id-t"><div class="mc-kicker">${bat ? 'BATTING' : 'BOWLING'} · ${escapeHtml(label)}</div>`
-      + `<div class="mc-team">${escapeHtml(team.name)}</div><div class="mc-sub">${escapeHtml(sub)}</div></div></div>`
-      + (score ? `<div class="mc-score"><div class="mc-total">${score}</div>${overs ? `<div class="mc-overs">${escapeHtml(overs)}</div>` : ''}</div>` : '') + `</div>`
+      + `<div class="bcg-canvas"><div class="mc-sheet ${bat ? 'mc-bat' : 'mc-bowl'} moving" style="${toneVars(k, 'm')};--m-top:${top};--m-a32:${a32};--m-mid:${mid};--m-shade:${shade};--m-glow:${glow};--m-wash:${wash}">`
+      // the identity column: its layers, then what it says
+      + `<div class="mc-id"><div class="mc-mask"><div class="mc-id-bg"><i class="mc-id-fill"></i><i class="mc-id-seam"></i><i class="mc-id-shade"></i><i class="mc-id-edge"></i><i class="mc-id-sweep"><b></b></i></div></div>`
+      + `<div class="mc-id-in"><div class="mc-kicker">${bat ? 'BATTING' : 'BOWLING'} · ${escapeHtml(label)}</div>`
+      + `<div class="mc-logo"><i class="mc-logo-glow"></i>${plateHtml(team, safeUrl(team.logoUrl) ? 168 : 150, k)}</div>`
+      + `<div class="mc-m"><div class="mc-team">${escapeHtml(team.name)}</div></div><div class="mc-sub">${escapeHtml(sub)}</div>`
+      + (score ? `<i class="mc-rule"></i><div class="mc-score"><div class="mc-m"><div class="mc-total">${score}</div></div>${chips.length ? `<div class="mc-overs">${overs}</div>` : ''}</div>` : '')
+      + `</div></div>`
+      // the data panel: its glass, then the table and what is under it
+      + `<div class="mc-data"><div class="mc-mask"><div class="mc-data-bg"><i class="mc-data-line"></i></div></div><div class="mc-data-in">`
       + `<div class="mc-table">${th}${rows.join('')}</div>`
-      + `<div class="mc-sum">${bat ? extras + total : total + extras}</div>`
-      + (groups ? `<div class="mc-groups">${groups}</div>` : '') + fow + `</div>`
+      + `<div class="mc-foot"><div class="mc-sum">${bat ? extras + total : total + extras}</div>${groups ? `<div class="mc-groups">${groups}</div>` : ''}${fow}</div>`
+      + `</div></div></div>`
       + `<div class="xi-foot" style="--f-line:${k.line}"><span class="xi-foot-t">${escapeHtml(foot)}</span><span class="xi-foot-brand">${brandHtml()}<span>ALL SPORTS LIVE</span></span></div></div>`;
   }
+  // one line, nowrap — like fitLine, but with room for what is drawn after
+  // the text (the TOP / BEST tag)
+  function fitName(el, max, min){
+    if(!el) return max;
+    const r = document.createRange();
+    let f = max;
+    for(let i = 0; i < 40; i++){
+      el.style.fontSize = `calc(${f} * var(--u))`;
+      r.selectNodeContents(el);
+      if((r.getBoundingClientRect().width <= el.getBoundingClientRect().width + 0.05 && el.scrollWidth <= el.clientWidth + 1) || f <= min) break;
+      f = Math.max(min, Math.floor(f * 0.94 * 10) / 10);
+    }
+    return f;
+  }
   function cardFit(sc){
-    const el = sc.el, u = U();
-    fitLine(el.querySelector('.mc-team'), 60, 32);
-    fitLine(el.querySelector('.mc-sub'), 19, 12);
-    el.querySelectorAll('.mc-group span').forEach(s => fitText(s, 19, 12, 2, 1.35));
-    fitText(el.querySelector('.mc-fow'), 17.5, 12, 2, 1.35);
-    el.querySelectorAll('.mc-sum span:not(.tot)').forEach(s => fitLine(s, 20, 13));
-    fitLine(el.querySelector('.xi-foot-t'), 20, 13);
-    // the rows share the table's height: as tall as reads best, never past the sheet
-    const table = el.querySelector('.mc-table'), rows = table.querySelectorAll('.mc-tr:not(.mc-th)');
-    const avail = table.getBoundingClientRect().height / u - 40;
-    // a short card (a few bowlers) lets its rows grow into the sheet rather
-    // than leaving an empty block under them
-    const few = rows.length <= 8;
-    const rh = Math.max(22, Math.min(few ? 84 : 62, Math.floor(avail / Math.max(rows.length, 1)) - 1));
-    const rf = Math.max(12, Math.min(few ? 30 : 28, Math.round(rh * (few ? 0.42 : 0.5))));
+    const el = sc.el, u = U(), q = (s) => el.querySelector(s), qa = (s) => [...el.querySelectorAll(s)];
+    const sheet = q('.mc-sheet'), bat = sheet.classList.contains('mc-bat');
+    // the column
+    fitLine(q('.mc-kicker'), 24, 13);
+    fitText(q('.mc-team'), 58, 28, 2, 1.04);
+    fitText(q('.mc-sub'), 18, 11, 2, 1.32);
+    fitLine(q('.mc-total'), 150, 80);
+    const ov = q('.mc-overs');
+    if(ov){
+      const chipEls = [...ov.querySelectorAll('span')];
+      for(let f = 19, i = 0; i < 30; i++){
+        chipEls.forEach(c => { c.style.fontSize = `calc(${f} * var(--u))`; });
+        if(ov.scrollWidth <= ov.clientWidth + 1 || f <= 11) break;
+        f = Math.max(11, Math.floor(f * 0.94 * 10) / 10);
+      }
+    }
+    // what is under the rows first — the rows share the height that leaves
+    qa('.mc-group span').forEach(s => fitText(s, 18, 11, 2, 1.35));
+    fitText(q('.mc-fow'), 16.5, 11, 2, 1.35);
+    qa('.mc-sum span:not(.tot)').forEach(s => fitLine(s, 19, 12));
+    fitLine(q('.xi-foot-t'), 20, 13);
+    const data = q('.mc-data-in'), table = q('.mc-table'), rows = qa('.mc-tr:not(.mc-th)');
+    const cs = getComputedStyle(data);
+    const used = (parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)) / u + (q('.mc-th').getBoundingClientRect().height / u + 4) + (q('.mc-foot').getBoundingClientRect().height / u + 14);
+    const avail = sheet.getBoundingClientRect().height / u - used - 2;
+    const n = Math.max(rows.length, 1);
+    // as tall as reads best, never past the sheet (a short card: a shorter panel, centred)
+    const rh = Math.max(34, Math.min(n <= 6 ? 92 : 80, Math.floor(avail / n)));
+    const rf = Math.max(12, Math.min(bat ? 29 : 31, Math.round(rh * (bat ? 0.41 : 0.43))));
+    const hf = Math.max(9, Math.min(19, Math.round(rf * 0.66)));
     table.style.setProperty('--rh', String(rh));
     table.style.setProperty('--rf', String(rf));
-    table.querySelectorAll('.mc-nm').forEach(n => fitLine(n, rf, Math.max(11, Math.round(rf * 0.62))));
-    table.querySelectorAll('.mc-how').forEach(n => fitLine(n, rf * 0.74, Math.max(10, Math.round(rf * 0.5))));
+    table.style.setProperty('--hf', String(hf));
+    // every name at the row's size; one too long for that is written the
+    // scorecard way — initials and surname ("MAR Siddiqui") — rather than
+    // shrunk far below the others (the full name kept as its title)
+    const nmMin = Math.max(10, Math.round(rf * 0.58));
+    qa('.mc-nm').forEach(nm => {
+      const f = fitName(nm, rf, nmMin);
+      if(f >= rf * 0.8) return;
+      const full = nm.textContent, star = / \*$/.test(full), short = initialsName(star ? full.slice(0, -2) : full);
+      if(!short) return;
+      nm.textContent = short + (star ? ' *' : '');
+      if(fitName(nm, rf, nmMin) <= f){ nm.textContent = full; fitName(nm, rf, nmMin); return; }
+      nm.title = full;
+    });
+    qa('.mc-how').forEach(h => fitLine(h, hf, Math.max(8, Math.round(hf * 0.62))));
   }
+  // The entrance, in layers: the column's colour through its mask, the data
+  // panel's glass out of the column with a line of light along its top, the
+  // logo over its bloom, the heading (the innings tag opening, the name
+  // rising out of its mask), the total figure by figure and its chips, the
+  // table head and the players row by row, what is under them, a sweep of
+  // light across the column — then the one standout figure gets its beat and
+  // its row a sweep of light. Transforms and opacity only, and as few layers
+  // moving at once as reads well: without a GPU (vMix) every moving layer is
+  // composited again on every frame.
   function cardEnter(sc){
     const el = sc.el, q = (s) => el.querySelector(s), qa = (s) => [...el.querySelectorAll(s)];
     const tl = gsap.timeline({ paused: true });
-    if(reduceMotion()) return tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.3 });
-    const rows = qa('.mc-tr:not(.mc-th)'), st = Math.min(0.05, 0.5 / Math.max(rows.length, 1));
-    tl.fromTo(q('.mc-fill'), { opacity: 0 }, { opacity: 1, duration: 0.45, ease: 'power1.out' }, 0)
-      .fromTo(q('.mc-sheet'), { opacity: 0, y: px(30), scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.6, ease: 'expo.out' }, 0.08)
-      .fromTo(q('.mc-id .bcg-plate'), { opacity: 0, scale: 0.7 }, { opacity: 1, scale: 1, duration: 0.6, ease: 'expo.out' }, 0.2)
-      .fromTo(q('.mc-id .bcg-plate-sheen i'), { xPercent: -160, opacity: 1 }, { xPercent: 330, duration: 0.7, ease: 'power2.inOut' }, 0.5)
-      .fromTo(q('.mc-kicker'), { opacity: 0, clipPath: 'inset(0% 100% 0% 0%)' }, { opacity: 1, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.45, ease: 'expo.out', clearProps: 'clipPath' }, 0.3)
-      .fromTo(q('.mc-team'), { opacity: 0, yPercent: 30 }, { opacity: 1, yPercent: 0, duration: 0.55, ease: 'expo.out' }, 0.34)
-      .fromTo(q('.mc-sub'), { opacity: 0 }, { opacity: 1, duration: 0.4 }, 0.5)
-      .fromTo(q('.mc-th'), { opacity: 0 }, { opacity: 1, duration: 0.3 }, 0.4)
-      .fromTo(rows, { opacity: 0, x: -px(24) }, { opacity: 1, x: 0, duration: 0.38, ease: 'power3.out', stagger: st }, 0.45)
-      .fromTo(qa('.mc-sum, .mc-group, .mc-fow'), { opacity: 0, y: px(12) }, { opacity: 1, y: 0, duration: 0.4, ease: 'power3.out', stagger: 0.07 }, 0.85)
-      .fromTo(q('.xi-foot'), { opacity: 0, y: px(24) }, { opacity: 1, y: 0, duration: 0.55, ease: 'expo.out' }, 0.5);
-    if(q('.mc-score')) tl.fromTo(q('.mc-score'), { opacity: 0, x: px(30) }, { opacity: 1, x: 0, duration: 0.55, ease: 'expo.out' }, 0.36);
-    // the total settles in with a small lift, then the standout figure
-    // (TOP / BEST) gets one beat — transforms only
-    if(q('.mc-total')) tl.fromTo(q('.mc-total'), { scale: 0.9 }, { scale: 1, duration: 0.7, ease: 'back.out(1.8)' }, 0.4);
-    const key = q('.mc-tr.top .mc-n.k');
-    if(key) tl.to(key, { scale: 1.22, duration: 0.18, ease: 'power2.out' }, 1.15).to(key, { scale: 1, duration: 0.34, ease: 'power2.inOut' }, 1.33);
+    const sheet = q('.mc-sheet');
+    if(reduceMotion()){ sheet.classList.remove('moving'); return tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.3 }); }
+    const rows = qa('.mc-tr:not(.mc-th)'), st = Math.min(0.05, 0.55 / Math.max(rows.length, 1));
+    tl.fromTo(qa('.mc-fill'), { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power1.out' }, 0)
+      .fromTo(qa('.mc-id-bg'), { xPercent: -101 }, { xPercent: 0, duration: 0.78, ease: 'expo.out' }, 0.04)
+      .fromTo(qa('.mc-data-bg'), { xPercent: -101 }, { xPercent: 0, duration: 0.85, ease: 'expo.out' }, 0.16)
+      .fromTo(qa('.mc-data-line'), { scaleX: 0 }, { scaleX: 1, duration: 0.75, ease: 'power3.inOut' }, 0.3)
+      .fromTo(qa('.mc-logo-glow'), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 1.0, ease: 'expo.out' }, 0.3)
+      .fromTo(qa('.mc-logo .bcg-plate'), { opacity: 0, scale: 0.86, y: px(16) }, { opacity: 1, scale: 1, y: 0, duration: 0.85, ease: 'expo.out' }, 0.34)
+      .fromTo(qa('.mc-kicker'), { opacity: 0, clipPath: 'inset(0% 100% 0% 0%)' }, { opacity: 1, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.5, ease: 'expo.out', clearProps: 'clipPath' }, 0.4)
+      .fromTo(qa('.mc-team'), { yPercent: 108 }, { yPercent: 0, duration: 0.72, ease: 'expo.out' }, 0.46)
+      .fromTo(qa('.mc-sub'), { opacity: 0, y: px(10) }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.6)
+      .fromTo(qa('.mc-rule'), { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'power3.inOut' }, 0.62)
+      .fromTo(qa('.mc-total .mc-dg'), { yPercent: 104 }, { yPercent: 0, duration: 0.62, ease: 'expo.out', stagger: 0.05 }, 0.66)
+      .fromTo(qa('.mc-overs > span'), { opacity: 0, y: px(10) }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out', stagger: 0.07 }, 0.88)
+      .fromTo(qa('.mc-th'), { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power1.out' }, 0.5)
+      .fromTo(rows, { opacity: 0, x: -px(26) }, { opacity: 1, x: 0, duration: 0.5, ease: 'power3.out', stagger: st }, 0.56)
+      .fromTo(qa('.mc-sum, .mc-group, .mc-fow'), { opacity: 0, y: px(12) }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out', stagger: 0.07 }, 0.96)
+      .fromTo(qa('.xi-foot'), { opacity: 0, y: px(24) }, { opacity: 1, y: 0, duration: 0.6, ease: 'expo.out' }, 0.5)
+      .fromTo(qa('.mc-id-sweep b'), { xPercent: -140, opacity: 1 }, { xPercent: 380, duration: 1.0, ease: 'power2.inOut' }, 0.92);
+    const key = q('.mc-tr.top .mc-n.k'), topRow = q('.mc-tr.top');
+    if(key) tl.to(key, { scale: 1.18, duration: 0.18, ease: 'power2.out' }, 1.32).to(key, { scale: 1, duration: 0.36, ease: 'power2.inOut' }, 1.5);
+    tl.call(() => { if(topRow) topRow.classList.add('glint'); }, null, 1.3);
+    // settled: the masks let go (nothing is clipped at rest)
+    tl.call(() => sheet.classList.remove('moving'), null, Math.max(tl.duration(), 1.9));
     return tl;
   }
+  // The exit, the same layers the other way: the rows go (last first), the
+  // figures drop back into their masks, the logo and the heading fade, the
+  // glass slides back into the column and the column out through its mask.
   function cardExit(sc){
-    const el = sc.el;
+    const el = sc.el, qa = (s) => [...el.querySelectorAll(s)];
+    const sheet = el.querySelector('.mc-sheet');
+    if(sheet) sheet.classList.add('moving');
+    const rows = qa('.mc-tr').reverse();
     return gsap.timeline()
-      .to([...el.querySelectorAll('.mc-tr')].reverse(), { opacity: 0, x: px(16), duration: 0.2, ease: 'power2.in', stagger: 0.012 }, 0)
-      .to(el.querySelector('.mc-sheet'), { opacity: 0, y: -px(12), duration: 0.35, ease: 'power2.in' }, 0.15)
-      .to(el, { opacity: 0, duration: 0.3, ease: 'power1.in' }, 0.3);
+      .to(rows, { opacity: 0, x: px(18), duration: 0.22, ease: 'power2.in', stagger: Math.min(0.014, 0.2 / Math.max(rows.length, 1)) }, 0)
+      .to(qa('.mc-sum, .mc-group, .mc-fow'), { opacity: 0, y: px(8), duration: 0.2, ease: 'power2.in' }, 0)
+      .to(qa('.mc-total .mc-dg'), { yPercent: 104, duration: 0.3, ease: 'power3.in', stagger: 0.025 }, 0.04)
+      .to(qa('.mc-team'), { yPercent: 108, duration: 0.32, ease: 'power3.in' }, 0.06)
+      .to(qa('.mc-kicker, .mc-sub, .mc-overs, .mc-rule'), { opacity: 0, duration: 0.22, ease: 'power2.in' }, 0.06)
+      .to(qa('.mc-logo'), { opacity: 0, scale: 0.9, duration: 0.3, ease: 'power2.in' }, 0.08)
+      .to(qa('.xi-foot'), { opacity: 0, y: px(16), duration: 0.3, ease: 'power2.in' }, 0.12)
+      .to(qa('.mc-data-bg'), { xPercent: -101, duration: 0.42, ease: 'power3.in' }, 0.16)
+      .to(qa('.mc-id-bg'), { xPercent: -101, duration: 0.42, ease: 'power3.in' }, 0.26)
+      .to(qa('.mc-fill'), { opacity: 0, duration: 0.3, ease: 'power1.in' }, 0.42)
+      .to(el, { opacity: 0, duration: 0.12, ease: 'power1.in' }, 0.62);
   }
   function cardRun(sc, first){
     clearTimers(sc);
     const g = sc.g, x = g.card || {}, t = now();
     if(x.expiresAt != null && t >= x.expiresAt){ end(sc); return; }
-    if(first){ sc.el.dataset.phase = 'card'; setTl(sc, cardEnter(sc)).play(sec(t - g.startedAt)); }
+    if(first){
+      sc.el.dataset.phase = 'card';
+      const tl = setTl(sc, cardEnter(sc)), off = sec(t - g.startedAt);
+      tl.play(off);
+      // (a page opened after the card came in shows it settled at once — the
+      // timeline's own end-of-entrance calls are skipped by that jump)
+      if(off >= tl.duration()){ const sh = sc.el.querySelector('.mc-sheet'); if(sh) sh.classList.remove('moving'); }
+    }
     sc.el.dataset.hold = x.expiresAt == null ? 'until-hidden' : String(x.durationSec);
     if(x.expiresAt != null) at(sc, x.expiresAt, () => end(sc));
   }

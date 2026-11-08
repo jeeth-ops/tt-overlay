@@ -10765,25 +10765,45 @@ function wicketCardFor(name){
    LOGO UPLOAD — client-side compression so payloads stay in KB,
    not MB, over the socket (and safe for mobile uploads).
    ============================================================ */
-function compressImageToDataURL(file, maxDim, quality){
+// 🛡 A picture made small enough to keep and send. A logo keeps its
+// see-through parts: WEBP keeps them, and where the browser cannot write
+// WEBP (Safari, iPhone / iPad) the fallback is a PNG — never a JPEG, which
+// turns every see-through pixel BLACK (the black square round a logo on
+// the broadcast graphics). A picture with nothing see-through may still go
+// as a JPEG. `budget` (characters of the data URL): a picture over it is
+// written again a size smaller until it fits, so a big upload can never
+// outgrow where it is kept (a tournament keeps a team's logo up to 40000)
+// — and a smaller picture is never blown up.
+function compressImageToDataURL(file, maxDim, quality, budget){
   return new Promise((resolve, reject) => {
     const img = new Image();
     const reader = new FileReader();
     reader.onload = () => { img.src = reader.result; };
     reader.onerror = reject;
     img.onload = () => {
-      let { width, height } = img;
-      const scale = Math.min(1, maxDim / Math.max(width, height));
-      width = Math.round(width * scale);
-      height = Math.round(height * scale);
-      const canvas = document.createElement('canvas');
-      canvas.width = width; canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0,0,width,height);
-      ctx.drawImage(img, 0, 0, width, height);
-      // WEBP gives the smallest footprint; fall back to JPEG if unsupported.
-      let dataUrl = canvas.toDataURL('image/webp', quality);
-      if(!dataUrl.startsWith('data:image/webp')) dataUrl = canvas.toDataURL('image/jpeg', quality);
+      const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+      if(!iw || !ih){ reject(new Error('empty image')); return; }
+      const encode = (dim) => {
+        const scale = Math.min(1, dim / Math.max(iw, ih));
+        const width = Math.max(1, Math.round(iw * scale)), height = Math.max(1, Math.round(ih * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, width, height);
+        ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, width, height);
+        let alpha = false;
+        try {
+          const d = ctx.getImageData(0, 0, width, height).data;
+          for(let i = 3; i < d.length; i += 4) if(d[i] < 250){ alpha = true; break; }
+        } catch (e) { alpha = true; }
+        // WEBP gives the smallest footprint (and keeps transparency)
+        let dataUrl = canvas.toDataURL('image/webp', quality);
+        if(!dataUrl.startsWith('data:image/webp')) dataUrl = alpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality);
+        return dataUrl;
+      };
+      let dataUrl = encode(maxDim);
+      for(let dim = Math.round(Math.min(maxDim, Math.max(iw, ih)) * 0.85); budget && dataUrl.length > budget && dim >= 64; dim = Math.round(dim * 0.85)) dataUrl = encode(dim);
       resolve(dataUrl);
     };
     img.onerror = reject;
@@ -10833,7 +10853,7 @@ function wireLogoUpload(teamKey){
     if(!file) return;
     meta.textContent = 'Compressing…';
     try{
-      const dataUrl = await compressImageToDataURL(file, 128, 0.72);
+      const dataUrl = await compressImageToDataURL(file, 256, 0.86, 36000);
       const kb = Math.round((dataUrl.length * 0.75) / 1024);
       state[teamKey === 'teamA' ? 'teamA' : 'teamB'].logoUrl = dataUrl;
       preview.style.backgroundImage = `url(${dataUrl})`;
@@ -23438,7 +23458,7 @@ function renderTournamentSummary(){
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if(!f || !tc) return;
-    try{ tc.logoUrl = await compressImageToDataURL(f, 320, 0.85); tcRender(); }
+    try{ tc.logoUrl = await compressImageToDataURL(f, 320, 0.88, 200000); tcRender(); }
     catch(err){ toast('⚠️ Could not read that image'); }
   });
   tcEl('tc-logo-remove').addEventListener('click', () => { if(tc){ tc.logoUrl = ''; tcRender(); } });
@@ -24785,7 +24805,7 @@ async function saveTeamEditor(){
     if(!file || !teEdit) return;
     if(!/^image\/(png|jpe?g|webp)$/i.test(file.type)){ umEl('te-msg').textContent = 'Choose a PNG, JPG or WebP image'; return; }
     try{
-      teEdit.logoUrl = await compressImageToDataURL(file, 160, 0.8);
+      teEdit.logoUrl = await compressImageToDataURL(file, 256, 0.86, 36000);
       umEl('te-msg').textContent = '';
       renderTeamEditor();
     }catch(err){ umEl('te-msg').textContent = '⚠️ That image could not be read — try another file'; }
