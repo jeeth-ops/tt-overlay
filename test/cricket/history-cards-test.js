@@ -196,7 +196,8 @@ async function overlaySuite(){
   eq('OVERLAY TEST 18: NRR signed and coloured', O.E(`[...document.querySelectorAll('#pt-rows .ptx-nrr')].map(e => e.className.replace('sc-c-num ptx-nrr', '').trim() + e.textContent).join(' ')`), 'pos+1.245 pos+0.812 neg-0.122');
   eq('OVERLAY TEST 19: a team logo shows as the badge (url cleaned — it can never close the url() or the attribute), else its short name', [O.E(`document.querySelectorAll('#pt-rows .fx-badge.has-logo').length`),
     O.E(`document.querySelector('#pt-rows .fx-badge.has-logo').getAttribute('style').replace(/^background-image:url\\([^()"'&]*\\)$/, 'ok')`), O.E(`document.querySelector('#pt-rows .fx-badge:not(.has-logo)').textContent`)], [1, 'ok', 'MW']);
-  eq('OVERLAY TEST 20: team names are text, never markup', O.E(`document.querySelectorAll('#pt-rows img').length`), 0);
+  // (the one picture a row may hold is the team's own logo, drawn by logoKit from the cleaned url)
+  eq('OVERLAY TEST 20: team names are text, never markup', [O.E(`document.querySelectorAll('#pt-rows img:not(.lg-art)').length`), O.E(`[...document.querySelectorAll('#pt-rows img.lg-art')].map(i => i.closest('.fx-badge.has-logo') ? 'logo' : '?').join()`)], [0, 'logo']);
   eq('OVERLAY TEST 21: header — name, season, matches played, team count, trophy when no logo',
     [O.text('#pt-name'), O.text('#pt-sub'), O.text('#pt-matches'), O.text('#pt-teams'), O.E(`!!document.querySelector('#pt-badge svg')`)],
     ['KANGA PREMIER LEAGUE', 'TOURNAMENT STANDINGS · SEASON 4', '28', '3 TEAMS', true]);
