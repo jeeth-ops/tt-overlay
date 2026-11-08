@@ -7,12 +7,19 @@
      • a match card image (1080 × 1350 portrait, or 1080 × 1080 square) —
        tournament, both teams with their own logos and colours, date, time,
        venue, format, and two real QR codes (Match Centre, Live Scorecard)
-     • a message carrying all three links, which are compulsory:
-         Match link      the match's own permanent page on the website
-                         (a tournament match: /score/tournament/<token>/match/<id>,
-                          a single match:     /score/match/<id>)
+     • a message carrying the match's links:
+         Video link      the match's live stream, as typed in Match Setup
+                         (a Test: the day on air, else the latest day with one)
+                         — in the message whenever the panel has one
          Scorecard link  its live scorecard (/cricket-scorecard?room=<Match ID>)
          Website         https://allsportslivestreams.com/
+       (the scorecard and the website are compulsory; the match's own
+        permanent page — /score/tournament/<token>/match/<id> or
+        /score/match/<id> — is no longer in the message: it is the link of
+        the YouTube description, and the card's QR when there is no video)
+     • a YouTube title and description for the match's stream (the website
+       match link in it, the Instagram profile link optional), and the card
+       as a 1280 × 720 YouTube thumbnail
 
    The links are the panel's own (the same routes "Copy Public Match Link",
    "Copy Public Tournament Link" and the overlay links use): nothing here
@@ -37,8 +44,9 @@
   const YOUTUBE = 'https://www.youtube.com/@allsportslive';
   const INSTAGRAM = 'https://www.instagram.com/all.sports.live/';
   const PREF_KEY = 'asl-match-share-prefs';
-  const SIZES = { portrait: [1080, 1350], square: [1080, 1080] };
-  const DEFAULT_PREFS = { theme: 'dark', size: 'portrait', qr: 'split', brand: true, venue: true, format: true, social: false };
+  const SIZES = { portrait: [1080, 1350], square: [1080, 1080], thumb: [1280, 720] };
+  const DEFAULT_PREFS = { theme: 'dark', size: 'portrait', qr: 'split', brand: true, venue: true, format: true, social: false,
+    tab: 'wa', insta: false, instaUrl: INSTAGRAM, autoOpen: true };
   const DISPLAY = '"Barlow Condensed", "Arial Narrow", "Roboto Condensed", Arial, sans-serif';
   const BODY = 'Inter, "Segoe UI", Roboto, Arial, sans-serif';
   const WA_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16.04 3C8.86 3 3.03 8.82 3.03 16c0 2.3.6 4.53 1.74 6.5L3 29l6.68-1.74A12.95 12.95 0 0 0 16.04 29C23.2 29 29 23.18 29 16S23.2 3 16.04 3Zm0 23.62c-1.98 0-3.9-.53-5.6-1.53l-.4-.24-3.96 1.03 1.06-3.86-.26-.4a10.6 10.6 0 0 1-1.63-5.62c0-5.86 4.78-10.63 10.66-10.63 5.86 0 10.62 4.77 10.62 10.63 0 5.86-4.77 10.62-10.5 10.62Zm5.84-7.96c-.32-.16-1.89-.93-2.18-1.04-.3-.1-.5-.16-.72.16-.21.32-.82 1.04-1 1.25-.19.21-.37.24-.69.08-.32-.16-1.35-.5-2.57-1.59-.95-.85-1.59-1.9-1.78-2.22-.18-.32-.02-.49.14-.65.14-.14.32-.37.48-.56.16-.18.21-.32.32-.53.1-.21.05-.4-.03-.56-.08-.16-.72-1.73-.98-2.37-.26-.62-.52-.53-.72-.54h-.61c-.21 0-.56.08-.85.4-.29.32-1.12 1.09-1.12 2.66 0 1.57 1.14 3.09 1.3 3.3.16.21 2.25 3.44 5.46 4.82.76.33 1.36.53 1.82.68.77.24 1.46.2 2.01.12.61-.09 1.89-.77 2.15-1.52.27-.74.27-1.38.19-1.52-.08-.13-.29-.21-.61-.37Z"/></svg>';
@@ -83,6 +91,8 @@
   if(!SIZES[prefs.size]) prefs.size = 'portrait';
   if(!['dark', 'light', 'team'].includes(prefs.theme)) prefs.theme = 'dark';
   if(!['split', 'right'].includes(prefs.qr)) prefs.qr = 'split';
+  if(!['wa', 'yt'].includes(prefs.tab)) prefs.tab = 'wa';
+  if(typeof prefs.instaUrl !== 'string') prefs.instaUrl = INSTAGRAM;
   const savePrefs = () => { try{ localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); }catch(e){} };
 
   /* ===================== the match, as the panel has it ===================== */
@@ -112,6 +122,20 @@
     if(h > 23) return '';
     return `${h % 12 || 12}:${mi} ${h < 12 ? 'AM' : 'PM'}`;
   }
+  // The match's video link — the one typed in Match Setup, the same link the
+  // scorecard plays. A Test has one per day: the day on air (its day label),
+  // else the latest day that has one.
+  function videoLinkOf(s){
+    const days = [s.streamUrl].concat(Array.isArray(s.streamMoreDays) ? s.streamMoreDays.slice(0, 3) : []).map(u => clean(u));
+    let pick = '';
+    if(String(s.format || '') === 'Test'){
+      const m = /day\s*(\d)/i.exec(String(s.dayLabel || ''));
+      const d = m ? Number(m[1]) - 1 : -1;
+      pick = (d >= 0 && days[d]) || days.filter(Boolean).pop() || '';
+    } else pick = days[0];
+    return /^https?:\/\/\S+$/i.test(pick || '') ? pick : '';
+  }
+  const ytId = (u) => (String(u || '').match(/(?:youtube\.com\/watch\?(?:.*&)?v=|youtube\.com\/live\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/) || [])[1] || '';
   // Everything the card and the message show — read fresh every time.
   function matchInfo(){
     const s = stateNow();
@@ -185,7 +209,7 @@
       } else match = `${origin}/score/match/${encodeURIComponent(id)}`;
     }
     const scorecard = room ? `${origin}/cricket-scorecard?room=${encodeURIComponent(room)}` : '';
-    return { match, scorecard, website: WEBSITE, id, room, tour, token, origin };
+    return { match, scorecard, website: WEBSITE, video: videoLinkOf(s), id, room, tour, token, origin };
   }
 
   // Each link checked with the website: is it there, and is it THIS match?
@@ -201,7 +225,12 @@
     return { status: res.status, json };
   }
   async function validate(links, info){
-    const out = { match: null, scorecard: null, website: null, origin: null };
+    const out = { match: null, scorecard: null, website: null, video: null, origin: null };
+    // ▶️ the match video (Match Setup) — never blocks: a match can go out before its stream exists
+    out.video = !links.video
+      ? { level: 'warn', text: 'No video link yet — add the YouTube link in Match Setup to put WATCH LIVE in the message and on the card.' }
+      : ytId(links.video) ? { level: 'ok', text: 'YouTube video — goes in the message and on the card' }
+      : { level: 'warn', text: 'Not a YouTube video link — it is shared as typed.' };
     // 🌐 the website link
     let wsOk = false; try{ const u = new URL(links.website); wsOk = u.protocol === 'https:' && u.hostname === CANON_HOST; }catch(e){}
     out.website = wsOk ? { level: 'ok', text: 'Official AllSportsLive website' } : { level: 'bad', text: 'The website address is not valid' };
@@ -276,7 +305,7 @@
     if(info.venue && prefs.venue) det.push(`📍 Venue: ${waPlain(info.venue)}`);
     if(info.format && prefs.format) det.push(`🏏 Format: ${info.format}`);
     if(det.length) L.push('', ...det);
-    L.push('', '🔴 *FOLLOW THE MATCH:*', links.match || '');
+    if(links.video) L.push('', '▶️ *WATCH LIVE:*', links.video);
     L.push('', '📊 *LIVE SCORECARD:*', links.scorecard || '');
     L.push('', '🌐 *OFFICIAL WEBSITE:*', links.website);
     if(prefs.social) L.push('', `▶️ YouTube: ${YOUTUBE}`, `📸 Instagram: ${INSTAGRAM}`);
@@ -284,14 +313,60 @@
     return L.join('\n');
   }
   const LINK_BLOCK = {
-    match: (u) => `🔴 *FOLLOW THE MATCH:*\n${u}`,
+    video: (u) => `▶️ *WATCH LIVE:*\n${u}`,
     scorecard: (u) => `📊 *LIVE SCORECARD:*\n${u}`,
     website: (u) => `🌐 *OFFICIAL WEBSITE:*\n${u}`
   };
+  // the links every message carries: the scorecard and the website — and the
+  // video, whenever the panel has one
+  const reqKeys = (links) => ['video', 'scorecard', 'website'].filter(k => k !== 'video' || (links && links.video));
+  const linkIn = (text, u) => !!u && new RegExp(`(^|\\s)${u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`).test(text);
   // the compulsory links missing from a message (each must be there exactly, as its own word)
   function missingLinks(text, links){
-    const has = (u) => !!u && new RegExp(`(^|\\s)${u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`).test(text);
-    return ['match', 'scorecard', 'website'].filter(k => !has(links[k]));
+    return reqKeys(links).filter(k => !linkIn(text, links[k]));
+  }
+
+  /* ============================ YouTube title + description ============================ */
+  // the website match link of the description: the match's own permanent page
+  // (it keeps showing this match after it), else its live scorecard
+  // (a match page the website refuses — a private tournament — is not used)
+  const ytMatchLink = (l) => (l && (l.match && !(checks && checks.match && checks.match.level === 'bad') ? l.match : l.scorecard)) || '';
+  const tagOf = (t) => clean(t).normalize('NFKD').replace(/[̀-ͯ]/g, '').split(/[^A-Za-z0-9]+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join('').slice(0, 40);
+  function instaLink(){
+    const u = clean(prefs.instaUrl);
+    try{ const x = new URL(u); return /^https?:$/.test(x.protocol) && /(^|\.)instagram\.com$/i.test(x.hostname) ? u : ''; }catch(e){ return ''; }
+  }
+  // "🔴 LIVE: A vs B | Final · Match 14 | Harris Shield 2026" — the fullest one
+  // within YouTube's 100 characters (short names, fewer parts, when it is long)
+  function buildYtTitle(info){
+    const nm = (t, sh) => sh && t.short ? t.short : t.name;
+    const tries = [];
+    [false, true].forEach(sh => {
+      const vs = `${nm(info.a, sh)} vs ${nm(info.b, sh)}`;
+      tries.push(['🔴 LIVE: ' + vs, info.round, info.tournamentFull, 'AllSportsLive'], ['🔴 LIVE: ' + vs, info.round, info.tournamentFull],
+        ['🔴 LIVE: ' + vs, info.tournamentFull], ['LIVE: ' + vs, info.tournamentFull], ['LIVE: ' + vs]);
+    });
+    for(const parts of tries){ const t = parts.map(clean).filter(Boolean).join(' | '); if(t.length <= 100) return t; }
+    return clean(`${nm(info.a, true)} vs ${nm(info.b, true)}`).slice(0, 100);
+  }
+  function buildYtDesc(info, links){
+    const L = [`🔴 LIVE CRICKET | ${info.a.name} vs ${info.b.name}`];
+    if(info.tournamentFull || info.round) L.push(`🏆 ${[info.tournamentFull, info.round].filter(Boolean).join(' — ')}`);
+    const det = [];
+    if(info.dateText) det.push(`📅 Date: ${info.dateText}`);
+    if(info.timeText) det.push(`⏰ Time: ${info.timeText}`);
+    if(info.venue) det.push(`📍 Venue: ${info.venue}`);
+    if(info.format) det.push(`🏏 Format: ${info.format}`);
+    if(det.length) L.push('', ...det);
+    L.push('', '📊 Live scorecard, ball-by-ball commentary & highlights:', ytMatchLink(links));
+    L.push('', `🌐 Official website: ${links.website || WEBSITE}`);
+    const ig = prefs.insta ? instaLink() : '';
+    if(ig) L.push(`📸 Instagram: ${ig}`);
+    L.push('', 'Watch live cricket with AllSportsLive — every ball, every wicket, live.');
+    const tags = ['Cricket', 'LiveCricket', 'AllSportsLive', tagOf(info.a.name), tagOf(info.b.name), tagOf(info.tournament)]   // full names: a short code (A-I-) reads as another word
+      .filter((t, i, a) => t && a.indexOf(t) === i);
+    L.push('', tags.map(t => '#' + t).join(' '));
+    return L.join('\n');
   }
 
   /* ============================ drawing helpers ============================ */
@@ -621,6 +696,10 @@
     P.r = Math.round((sq ? 124 : 160) * k);
     spacing(ctx, 1);
     P.names = [info.a, info.b].map(t => block(ctx, t.name.toUpperCase(), 800, Math.round((sq ? 44 : 52) * k), 24, sq ? 400 : 430, 2));
+    // both names at ONE size — the shorter one used to stand bigger than its
+    // opponent's, and the card looked lopsided
+    const nSize = Math.min(...P.names.map(n => n.size));
+    if(P.names.some(n => n.size !== nSize)) P.names = [info.a, info.b].map(t => block(ctx, t.name.toUpperCase(), 800, nSize, 24, sq ? 400 : 430, 2));
     spacing(ctx, 0);
     P.namesH = Math.max(...P.names.map(n => n.lines.length * n.size * 0.96));
     P.teamsH = P.r * 2 + Math.round((sq ? 20 : 28) * k) + P.namesH;
@@ -645,6 +724,7 @@
 
   // Draws the whole card at full size. Returns notes (a logo that could not be used, …).
   async function drawCard(canvas, info, links){
+    if(prefs.size === 'thumb') return drawThumb(canvas, info, links);
     const [W, H] = SIZES[prefs.size];
     const sq = prefs.size === 'square';
     await loadFonts();
@@ -754,7 +834,11 @@
     const footH = L.footH;
     const qs = L.qs;
     const qy = Math.round(Math.max(y + gInfo + L.labelH, H - footH - 12 - qs - Math.round(rest * 0.35)));
-    const qrA = qrMatrix(links.match), qrB = qrMatrix(links.scorecard);
+    // the first code: the live stream when the panel has its video link
+    // (WATCH LIVE), else the match's own page (MATCH CENTRE); none without either
+    const aLink = links.video || links.match || '';
+    const aLabel = links.video ? 'WATCH LIVE' : 'MATCH CENTRE';
+    const qrA = aLink ? qrMatrix(aLink) : null, qrB = qrMatrix(links.scorecard);
     const label = (txt, cx, yy) => {
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = C.ink; spacing(ctx, 2); ctx.font = F(800, sq ? 24 : 28); ctx.fillText(txt, cx, yy);
@@ -763,24 +847,30 @@
     const ctaH = Math.round((sq ? 70 : 82) * Math.max(k, 0.85));
     const mid = qy + qs / 2;
     let bx, bw;
-    if(prefs.qr === 'right'){
+    if(!aLink){
+      // only the scorecard: its code on the right, the buttons beside it
+      const qx2 = W - M - qs;
+      drawQr(ctx, qx2, qy, qs, qrB);
+      label('LIVE SCORECARD', qx2 + qs / 2, qy - 14);
+      bx = M; bw = qx2 - M - 40;
+    } else if(prefs.qr === 'right'){
       // the buttons on the left, both codes together on the right
       const gap = 22;
       const qx2 = W - M - qs, qx1 = qx2 - gap - qs;
       drawQr(ctx, qx1, qy, qs, qrA); drawQr(ctx, qx2, qy, qs, qrB);
-      label('MATCH CENTRE', qx1 + qs / 2, qy - 14); label('SCORECARD', qx2 + qs / 2, qy - 14);
+      label(aLabel, qx1 + qs / 2, qy - 14); label('SCORECARD', qx2 + qs / 2, qy - 14);
       bx = M; bw = qx1 - M - 40;
     } else {
       // a code each side, the buttons between them
       const qx1 = M, qx2 = W - M - qs;
       drawQr(ctx, qx1, qy, qs, qrA); drawQr(ctx, qx2, qy, qs, qrB);
-      label('MATCH CENTRE', qx1 + qs / 2, qy - 14); label('LIVE SCORECARD', qx2 + qs / 2, qy - 14);
+      label(aLabel, qx1 + qs / 2, qy - 14); label('LIVE SCORECARD', qx2 + qs / 2, qy - 14);
       bx = qx1 + qs + 34; bw = qx2 - 34 - bx;
     }
-    pill(ctx, bx, mid - ctaH - 10, bw, ctaH, 'WATCH MATCH', 'primary', C);
+    pill(ctx, bx, mid - ctaH - 10, bw, ctaH, links.video ? 'WATCH LIVE' : 'WATCH MATCH', 'primary', C);
     pill(ctx, bx, mid + 10, bw, ctaH, 'VIEW SCORECARD', 'ghost', C);
     ctx.fillStyle = C.soft; ctx.font = F(600, sq ? 14 : 16, BODY); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText(prefs.qr === 'right' ? 'Scan a code with your phone camera ▶' : '◀  Scan with your phone camera  ▶', bx + bw / 2, Math.min(mid + ctaH + (sq ? 40 : 48), qy + qs - 2));
+    ctx.fillText(!aLink || prefs.qr === 'right' ? 'Scan a code with your phone camera ▶' : '◀  Scan with your phone camera  ▶', bx + bw / 2, Math.min(mid + ctaH + (sq ? 40 : 48), qy + qs - 2));
 
     // ---- the website, small, at the foot ----
     const fy = H - footH;
@@ -791,7 +881,103 @@
       ctx.textAlign = 'right'; ctx.fillText('YouTube @allsportslive  ·  Instagram @all.sports.live', W - M, fy + footH / 2 + 1);
     } else { ctx.textAlign = 'center'; ctx.fillText('www.allsportslivestreams.com', W / 2, fy + footH / 2 + 1); }
     spacing(ctx, 0);
-    return { notes, qr: { match: !!qrA, scorecard: !!qrB }, scale: Math.round(k * 100) / 100, qrSize: qs };
+    return { notes, qr: { a: !aLink || !!qrA, scorecard: !!qrB, aLink }, scale: Math.round(k * 100) / 100, qrSize: qs };
+  }
+
+  // 🎬 The YouTube thumbnail (1280 × 720): the same card, laid out wide for a
+  // stream's cover — the teams big, the tournament over them, the date, time
+  // and venue in a band at the foot. No QR codes: nobody scans a thumbnail.
+  async function drawThumb(canvas, info, links){
+    const [W, H] = SIZES.thumb;
+    await loadFonts();
+    const [logoA, logoB, tLogo, brand] = await Promise.all([loadImage(info.a.logo), loadImage(info.b.logo), prefs.brand ? loadImage(info.tournamentLogo) : null, loadImage('/logo.png')]);
+    const notes = [];
+    [[info.a, logoA], [info.b, logoB]].forEach(([t, im]) => { if(im && im.blocked) notes.push(`${t.name}'s logo is on another website that does not allow it to be drawn on the card — upload the logo file in Team Squads to show it. The card shows the team's initials meanwhile.`); });
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const C = palette(info);
+    background(ctx, W, H, info, C);
+    const M = 48;
+    // ---- top: AllSportsLive, and LIVE · the format on the right ----
+    const bs = 70, by = 28;
+    if(brand && !brand.blocked){ ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = 14; rr(ctx, M, by, bs, bs, bs * 0.22); ctx.clip(); ctx.drawImage(brand, M, by, bs, bs); ctx.restore(); }
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = C.ink;
+    spacing(ctx, 3); ctx.font = F(800, 34); ctx.fillText('ALLSPORTSLIVE', M + bs + 18, by + bs * 0.52);
+    spacing(ctx, 4); ctx.font = F(700, 16, BODY); ctx.fillStyle = C.dim; ctx.fillText('LIVE CRICKET', M + bs + 20, by + bs * 0.9);
+    spacing(ctx, 0);
+    let rx = W - M;
+    const ph = 50, py = by + (bs - ph) / 2;
+    if(info.format && prefs.format){
+      const ft = info.format.split(' · ')[0].toUpperCase();
+      ctx.font = F(800, 28); spacing(ctx, 2);
+      const fw = ctx.measureText(ft).width + 40;
+      rr(ctx, rx - fw, py, fw, ph, ph / 2); ctx.fillStyle = C.light ? 'rgba(11,18,38,.08)' : 'rgba(0,0,0,.42)'; ctx.fill();
+      ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = C.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ft, rx - fw / 2, py + ph / 2 + 2);
+      spacing(ctx, 0);
+      rx -= fw + 14;
+    }
+    ctx.font = F(800, 30); spacing(ctx, 3);
+    const lw = ctx.measureText('LIVE').width + 74;
+    ctx.save(); ctx.shadowColor = rgba(C.red, 0.6); ctx.shadowBlur = 22;
+    rr(ctx, rx - lw, py, lw, ph, ph / 2); ctx.fillStyle = C.red; ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.arc(rx - lw + 30, py + ph / 2, 8, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('LIVE', rx - lw + 48, py + ph / 2 + 2);
+    spacing(ctx, 0);
+    // ---- the tournament (or the round) and its round ----
+    const hasTour = !!(info.tournament && prefs.brand);
+    const head = (hasTour ? info.tournamentFull : (info.round || 'MATCH DAY')).toUpperCase();
+    spacing(ctx, 1);
+    const hb = block(ctx, head, 800, 64, 30, W - M * 2 - 120, 1);
+    ctx.fillStyle = C.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.font = F(800, hb.size);
+    let y = 128 + hb.size * 0.82;
+    if(tLogo && !tLogo.blocked && hasTour){
+      const tw = ctx.measureText(hb.lines[0]).width, ls = Math.round(hb.size * 1.05);
+      const tx = W / 2 - (tw + ls + 18) / 2;
+      ctx.save(); rr(ctx, tx, y - hb.size * 0.86, ls, ls, ls * 0.22); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.restore();
+      contain(ctx, tLogo, tx + ls / 2, y - hb.size * 0.86 + ls / 2, ls * 0.84);
+      ctx.textAlign = 'left'; ctx.fillStyle = C.ink; ctx.fillText(hb.lines[0], tx + ls + 18, y);
+    } else ctx.fillText(hb.lines[0], W / 2, y);
+    spacing(ctx, 0);
+    y += 14;
+    const rg = ctx.createLinearGradient(W / 2 - 220, 0, W / 2 + 220, 0); rg.addColorStop(0, rgba(C.gold, 0)); rg.addColorStop(0.5, C.gold); rg.addColorStop(1, rgba(C.gold, 0));
+    ctx.fillStyle = rg; ctx.fillRect(W / 2 - 220, Math.round(y), 440, 3);
+    if(hasTour && info.round) chip(ctx, W / 2, y + 16, info.round.toUpperCase(), C, 44);
+    // ---- the teams ----
+    const r = 116, cy = 400, cxA = 252, cxB = W - cxA;
+    const bar = ctx.createLinearGradient(cxA, 0, cxB, 0); bar.addColorStop(0, rgba(info.a.color, 0.9)); bar.addColorStop(0.5, rgba(C.gold, 0.9)); bar.addColorStop(1, rgba(info.b.color, 0.9));
+    ctx.fillStyle = bar; ctx.fillRect(cxA, cy - 3, cxB - cxA, 6);
+    medallion(ctx, cxA, cy, r, info.a, logoA, C);
+    medallion(ctx, cxB, cy, r, info.b, logoB, C);
+    vsBadge(ctx, W / 2, cy, 64, C);
+    spacing(ctx, 1);
+    let names = [info.a, info.b].map(t => block(ctx, t.name.toUpperCase(), 800, 40, 22, 430, 2));
+    const nz = Math.min(...names.map(n => n.size));
+    names = [info.a, info.b].map(t => block(ctx, t.name.toUpperCase(), 800, nz, 22, 430, 2));
+    const nameTop = cy + r + 20;
+    [[names[0], cxA], [names[1], cxB]].forEach(([nb, cx]) => {
+      ctx.fillStyle = C.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      nb.lines.forEach((l, i) => { ctx.font = F(800, nb.size); ctx.fillText(l, cx, nameTop + nb.size * 0.85 + i * nb.size * 0.96); });
+    });
+    spacing(ctx, 0);
+    // ---- the band at the foot: date · time · venue, and the website ----
+    const sh = 64, sy = H - sh;
+    const band = ctx.createLinearGradient(0, sy, 0, H); band.addColorStop(0, C.light ? 'rgba(255,255,255,.75)' : 'rgba(0,0,0,.55)'); band.addColorStop(1, C.light ? 'rgba(255,255,255,.92)' : 'rgba(0,0,0,.75)');
+    ctx.fillStyle = band; ctx.fillRect(0, sy, W, sh);
+    ctx.fillStyle = C.gold; ctx.fillRect(0, sy, W, 3);
+    const when = [info.dateText, info.timeText, prefs.venue ? info.venue : ''].filter(Boolean).join('   ·   ').toUpperCase();
+    ctx.textBaseline = 'middle';
+    ctx.font = F(700, 18, BODY); spacing(ctx, 1);
+    const site = 'allsportslivestreams.com', siteW = ctx.measureText(site).width;
+    ctx.fillStyle = C.dim; ctx.textAlign = 'right'; ctx.fillText(site, W - M, sy + sh / 2 + 2);
+    if(when){
+      spacing(ctx, 1.5);
+      const sz = fit(ctx, when, 800, 30, 16, W - M * 2 - siteW - 40);
+      ctx.font = F(800, sz); ctx.fillStyle = C.ink; ctx.textAlign = 'left';
+      ctx.fillText(lines(ctx, when, W - M * 2 - siteW - 40, 1)[0], M, sy + sh / 2 + 2);
+    }
+    spacing(ctx, 0);
+    return { notes, qr: { a: true, scorecard: true, aLink: '', none: true }, scale: 1, qrSize: 0 };
   }
 
   /* ============================== workspace ============================== */
@@ -883,6 +1069,19 @@
     .msx-foot .msx-why.bad{color:#ef4444}
     .msx-done{margin:0 20px 14px;padding:11px 13px;border-radius:12px;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.35);font-size:13px;line-height:1.45;display:none}
     .msx-done.show{display:block}
+    .msx-tabs{margin-bottom:12px}
+    .msx-tabs button{white-space:normal;line-height:1.25}
+    .msx-pane{display:none}
+    .msx-pane.on{display:block}
+    .msx-lbl{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 6px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim,#8892a6)}
+    .msx-lbl b{font-size:11.5px;letter-spacing:0;color:#22c55e}
+    .msx-lbl b.over{color:#ef4444}
+    .msx-in{width:100%;padding:10px 12px;border-radius:11px;border:1px solid var(--border,#232c42);background:var(--panel-2,#182034);color:var(--text,#f2f4f8);font:600 14px/1.35 Inter,"Segoe UI",Roboto,Arial,sans-serif}
+    .msx-in:focus{outline:2px solid #ef4444;outline-offset:1px}
+    .msx-in.bad{border-color:#ef4444}
+    .msx-yt-desc{min-height:300px}
+    .msx-yt-desc:focus{outline-color:#ef4444}
+    .msx-ytmark{display:inline-grid;place-items:center;width:22px;height:16px;border-radius:5px;background:#ef0000;color:#fff;font-size:9px;margin-right:6px;vertical-align:-2px}
     @media (max-width:980px){
       .msx{padding:0}
       .msx-sheet{border-radius:0;height:auto;min-height:100vh;overflow:visible}
@@ -907,19 +1106,35 @@
     <div class="msx-sheet" role="dialog" aria-modal="true" aria-labelledby="msx-title">
       <div class="msx-head">
         <span class="msx-ic">${WA_ICON}</span>
-        <div><h3 id="msx-title">WhatsApp Match Share</h3><small>A match card and a message with the match, scorecard and website links — made from this match</small></div>
+        <div><h3 id="msx-title">WhatsApp Match Share</h3><small>The match card, the WhatsApp message and the YouTube title &amp; description — made from this match</small></div>
         <button type="button" class="msx-x" id="msx-x" aria-label="Close">×</button>
       </div>
       <div class="msx-body">
         <div class="msx-left">
           <section class="msx-sec" id="msx-match"><h4><span class="msx-n">1</span>Match</h4><div id="msx-match-in"></div></section>
-          <section class="msx-sec"><h4><span class="msx-n">2</span>Links — all three go out with every message</h4><div id="msx-links"></div>
+          <section class="msx-sec"><h4><span class="msx-n">2</span>Links</h4><div id="msx-links"></div>
             <div class="msx-row"><button type="button" class="msx-mini" id="msx-recheck">↻ Re-check links</button></div></section>
-          <section class="msx-sec"><h4><span class="msx-n">3</span>WhatsApp message</h4>
-            <textarea class="msx-msg" id="msx-msg" spellcheck="false" aria-label="WhatsApp message"></textarea>
-            <div class="msx-req" id="msx-req"></div>
-            <div class="msx-row"><button type="button" class="msx-mini" id="msx-restore" hidden>⤺ Put the links back</button><button type="button" class="msx-mini" id="msx-reset">Rebuild message from the match</button></div>
-            <div class="msx-hint" id="msx-msg-hint">Edit freely — the three links must stay. *Bold* and _italic_ work in WhatsApp.</div></section>
+          <section class="msx-sec"><h4><span class="msx-n">3</span>Message</h4>
+            <div class="msx-seg msx-tabs" data-pref="tab" role="tablist"><button type="button" data-v="wa">💬 WhatsApp<span class="px"> message</span></button><button type="button" data-v="yt"><span class="msx-ytmark">▶</span>YouTube<span class="px"> title &amp; description</span></button></div>
+            <div class="msx-pane" data-pane="wa">
+              <textarea class="msx-msg" id="msx-msg" spellcheck="false" aria-label="WhatsApp message"></textarea>
+              <div class="msx-req" id="msx-req"></div>
+              <div class="msx-row"><button type="button" class="msx-mini" id="msx-restore" hidden>⤺ Put the links back</button><button type="button" class="msx-mini" id="msx-reset">Rebuild message from the match</button></div>
+              <div class="msx-hint" id="msx-msg-hint">Edit freely — the links must stay. *Bold* and _italic_ work in WhatsApp. The video link is the one in Match Setup.</div>
+            </div>
+            <div class="msx-pane" data-pane="yt">
+              <div class="msx-lbl"><span>Title</span><b id="msx-yt-count">0/100</b></div>
+              <input class="msx-in" id="msx-yt-title" maxlength="100" spellcheck="false" aria-label="YouTube title">
+              <div class="msx-row"><button type="button" class="msx-mini" id="msx-yt-copy-title">Copy title</button></div>
+              <div class="msx-lbl" style="margin-top:12px"><span>Description</span></div>
+              <textarea class="msx-msg msx-yt-desc" id="msx-yt-desc" spellcheck="false" aria-label="YouTube description"></textarea>
+              <div class="msx-req" id="msx-yt-req"></div>
+              <div class="msx-note" id="msx-yt-note" hidden></div>
+              <div class="msx-toggles"><label class="msx-tg"><input type="checkbox" data-pref-tg="insta">Instagram profile link</label></div>
+              <input class="msx-in" id="msx-yt-insta" style="margin-top:8px" placeholder="https://www.instagram.com/your.profile/" spellcheck="false" aria-label="Instagram profile link" hidden>
+              <div class="msx-row"><button type="button" class="msx-mini" id="msx-yt-copy-desc">Copy description</button><button type="button" class="msx-mini" id="msx-yt-thumb">🖼 YouTube thumbnail (16:9)</button><button type="button" class="msx-mini" id="msx-yt-reset">Rebuild from the match</button></div>
+              <div class="msx-hint">Paste these into YouTube Studio when you set up the stream. The description carries the match's own page on the website (it keeps showing this match afterwards); the Instagram link only when you tick it.</div>
+            </div></section>
           <section class="msx-sec"><h4><span class="msx-n">4</span>Design</h4>
             <div class="msx-grid">
               <span>Style</span><div class="msx-seg" data-pref="theme"><button type="button" data-v="dark">Premium dark</button><button type="button" data-v="light">Premium light</button><button type="button" data-v="team">Team colours</button></div>
@@ -930,16 +1145,17 @@
               <label class="msx-tg"><input type="checkbox" data-pref-tg="venue">Venue</label>
               <label class="msx-tg"><input type="checkbox" data-pref-tg="format">Match format</label>
               <label class="msx-tg"><input type="checkbox" data-pref-tg="social">YouTube &amp; Instagram</label>
+              <label class="msx-tg"><input type="checkbox" data-pref-tg="autoOpen">Open after Create New Match</label>
             </div>
             <div class="msx-hint">Your choices are remembered for the next match.</div></section>
         </div>
         <div class="msx-right">
-          <div class="msx-prev-head"><div class="msx-seg" data-pref="size"><button type="button" data-v="portrait">Portrait 4:5<span class="px"> · 1080×1350</span></button><button type="button" data-v="square">Square 1:1<span class="px"> · 1080×1080</span></button></div>
+          <div class="msx-prev-head"><div class="msx-seg" data-pref="size"><button type="button" data-v="portrait">Portrait 4:5<span class="px"> · 1080×1350</span></button><button type="button" data-v="square">Square 1:1<span class="px"> · 1080×1080</span></button><button type="button" data-v="thumb">YouTube 16:9<span class="px"> · 1280×720</span></button></div>
             <button type="button" class="msx-mini" id="msx-regen" title="Draw the card again from the match">↻ Regenerate</button></div>
           <div class="msx-stage" id="msx-stage" title="Click to see the card at full size"><canvas id="msx-card" width="1080" height="1350" aria-label="Match card preview"></canvas><span class="msx-busy" id="msx-busy">Updating…</span></div>
           <div id="msx-card-notes"></div>
           <div class="msx-qrs">
-            <div class="msx-qr"><canvas id="msx-qr-a" width="168" height="168"></canvas><div><b>Match Centre QR</b><small id="msx-qr-a-u">—</small></div></div>
+            <div class="msx-qr"><canvas id="msx-qr-a" width="168" height="168"></canvas><div><b id="msx-qr-a-t">Watch Live QR</b><small id="msx-qr-a-u">—</small></div></div>
             <div class="msx-qr"><canvas id="msx-qr-b" width="168" height="168"></canvas><div><b>Live Scorecard QR</b><small id="msx-qr-b-u">—</small></div></div>
           </div>
         </div>
@@ -958,7 +1174,7 @@
   // the button, beside 📱 Phone Remote
   const btn = document.createElement('button');
   btn.id = 'ms-share-btn'; btn.className = 'small'; btn.type = 'button';
-  btn.title = 'Make a match card and a WhatsApp message with the match, scorecard and website links';
+  btn.title = 'Make a match card, the WhatsApp message (video, scorecard and website links) and the YouTube title & description';
   btn.innerHTML = `${WA_ICON}<span>WhatsApp Match Share</span>`;
   function placeButton(){
     const anchor = $('cr-remote-btn') || $('connect-btn');
@@ -975,11 +1191,13 @@
   let info = null, links = null, checks = null;
   let msgAuto = '';      // the message as last built from the match
   let msgEdited = false; // the operator has typed in it
+  let ytTitleAuto = '', ytDescAuto = '', ytTitleEdited = false, ytDescEdited = false;
+  let dlAfterRender = false; // "YouTube thumbnail": download once the 16:9 card is drawn
   let file = null, fileUrl = '', blob = null;
   let renderSeq = 0, lastSig = '', lastLinkSig = '', checkSeq = 0, pollTimer = null, checkTimer = null;
 
   function filename(){
-    return `${slug(info.a.name)}-vs-${slug(info.b.name)}-AllSportsLive-Match-Card${prefs.size === 'square' ? '-Square' : ''}.png`;
+    return `${slug(info.a.name)}-vs-${slug(info.b.name)}-AllSportsLive-${prefs.size === 'thumb' ? 'YouTube-Thumbnail' : 'Match-Card' + (prefs.size === 'square' ? '-Square' : '')}.png`;
   }
   function setStatus(el, c){
     if(!c){ el.className = 'msx-st wait'; el.innerHTML = '<i>…</i><span>Checking with the website…</span>'; return; }
@@ -1004,14 +1222,16 @@
   }
   function renderLinks(){
     const row = (k, icon, title, url) => `<div class="msx-link"><span class="li">${icon}</span><div class="lt"><b>${title}</b><a ${url ? `href="${esc(url)}" target="_blank" rel="noopener"` : 'class="none"'}>${esc(url || 'Not available yet')}</a><div class="msx-st" id="msx-st-${k}"></div></div><button type="button" class="msx-mini" data-copy-link="${k}"${url ? '' : ' disabled'}>Copy</button></div>`;
-    $('msx-links').innerHTML = row('match', '🔴', 'Match link — the match\'s own page', links.match)
+    $('msx-links').innerHTML = row('video', '▶️', 'Video link — the live stream (Match Setup)', links.video)
       + row('scorecard', '📊', 'Scorecard link — the live scorecard', links.scorecard)
       + row('website', '🌐', 'AllSportsLive website', links.website)
+      + row('match', '🔗', 'Match page — the link of the YouTube description', links.match)
       + (checks && checks.origin ? `<div class="msx-note">⚠ ${esc(checks.origin.text)}</div>` : '');
-    ['match', 'scorecard', 'website'].forEach(k => setStatus($('msx-st-' + k), checks && checks[k]));
+    ['video', 'scorecard', 'website', 'match'].forEach(k => setStatus($('msx-st-' + k), checks && checks[k]));
   }
   function renderQrPreviews(){
-    [['a', links.match], ['b', links.scorecard]].forEach(([k, u]) => {
+    $('msx-qr-a-t').textContent = links.video ? 'Watch Live QR' : 'Match Centre QR';
+    [['a', links.video || links.match], ['b', links.scorecard]].forEach(([k, u]) => {
       const c = $('msx-qr-' + k), ctx = c.getContext('2d');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
       const m = qrMatrix(u);
@@ -1023,6 +1243,9 @@
   function renderPrefs(){
     ov.querySelectorAll('.msx-seg[data-pref]').forEach(seg => seg.querySelectorAll('button').forEach(b => { const on = b.dataset.v === prefs[seg.dataset.pref]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }));
     ov.querySelectorAll('[data-pref-tg]').forEach(i => { i.checked = !!prefs[i.dataset.prefTg]; });
+    ov.querySelectorAll('.msx-pane').forEach(p => p.classList.toggle('on', p.dataset.pane === prefs.tab));
+    const ig = $('msx-yt-insta');
+    if(ig){ ig.hidden = !prefs.insta; if(document.activeElement !== ig) ig.value = prefs.instaUrl || ''; }
   }
 
   // the message box: kept in step with the match unless the operator has written in it
@@ -1033,7 +1256,7 @@
     else if(prevLinks){
       // the operator's words stay; a link that changed is changed in them too
       let v = box.value;
-      ['match', 'scorecard'].forEach(k => { const a = prevLinks[k], b = links[k]; if(a && b && a !== b) v = v.split(a).join(b); });
+      ['video', 'scorecard'].forEach(k => { const a = prevLinks[k], b = links[k]; if(a && b && a !== b) v = v.split(a).join(b); });
       if(v !== box.value) box.value = v;
     }
     msgAuto = fresh;
@@ -1041,27 +1264,52 @@
   }
   function checkMessage(){
     const miss = missingLinks($('msx-msg').value, links);
-    const name = { match: 'Match link', scorecard: 'Scorecard link', website: 'Website link' };
-    $('msx-req').innerHTML = ['match', 'scorecard', 'website'].map(k => `<span class="${miss.includes(k) ? 'no' : ''}">${miss.includes(k) ? '✕' : '✓'} ${name[k]}</span>`).join('');
+    const name = { video: 'Video link', scorecard: 'Scorecard link', website: 'Website link' };
+    $('msx-req').innerHTML = reqKeys(links).map(k => `<span class="${miss.includes(k) ? 'no' : ''}">${miss.includes(k) ? '✕' : '✓'} ${name[k]}</span>`).join('');
     $('msx-restore').hidden = !miss.length || miss.every(k => !links[k]);
     updateActions();
     return miss;
+  }
+  // the YouTube title + description: kept in step with the match unless edited
+  function refreshYt(prevLinks){
+    const t = $('msx-yt-title'), d = $('msx-yt-desc');
+    const ft = buildYtTitle(info), fd = buildYtDesc(info, links);
+    if(!ytTitleEdited){ if(t.value !== ft) t.value = ft; }
+    if(!ytDescEdited){ if(d.value !== fd) d.value = fd; }
+    else if(prevLinks){ const a = ytMatchLink(prevLinks), b = ytMatchLink(links); if(a && b && a !== b) d.value = d.value.split(a).join(b); }
+    ytTitleAuto = ft; ytDescAuto = fd;
+    checkYt();
+  }
+  function checkYt(){
+    const t = $('msx-yt-title'), d = $('msx-yt-desc'), n = t.value.length;
+    const cnt = $('msx-yt-count'); cnt.textContent = `${n}/100`; cnt.classList.toggle('over', n > 100);
+    const ml = ytMatchLink(links), ig = prefs.insta ? instaLink() : '';
+    const chips = [[linkIn(d.value, ml), 'Website match link']];
+    if(prefs.insta) chips.push([!!ig && linkIn(d.value, ig), 'Instagram link']);
+    $('msx-yt-req').innerHTML = chips.map(([y, nm]) => `<span class="${y ? '' : 'no'}">${y ? '✓' : '✕'} ${nm}</span>`).join('');
+    const note = $('msx-yt-note');
+    const badPage = links.match && checks && checks.match && checks.match.level === 'bad';
+    const msg = prefs.insta && !ig ? 'That is not an Instagram profile link — it is left out until it is one (https://www.instagram.com/…).'
+      : badPage && links.scorecard ? `${checks.match.text} The live scorecard link is in the description instead.${checks.match.fix ? ' ' + checks.match.fix : ''}`
+      : !links.match && links.scorecard ? 'The match\'s own page is not available yet (a tournament match needs you signed in) — the live scorecard link is in the description meanwhile.'
+      : !ml ? 'No website link yet — type the Match ID and press Connect.' : '';
+    note.textContent = msg; note.hidden = !msg;
+    $('msx-yt-insta').classList.toggle('bad', !!prefs.insta && !ig);
   }
   // can it be shared now — and if not, why
   function blockers(){
     const out = [];
     if(!links) return ['Getting the links…'];
-    if(!links.match) out.push(checks && checks.match && checks.match.level === 'bad' ? checks.match.text : 'The match link is missing.');
     if(!links.scorecard) out.push('The scorecard link is missing — type the Match ID and press Connect.');
     if(!checks) out.push('Checking the links with the website…');   // nothing goes out before they are checked
-    if(checks){ ['match', 'scorecard', 'website'].forEach(k => { const c = checks[k]; if(c && c.level === 'bad' && !out.includes(c.text)) out.push(c.text); if(c && c.level === 'wait') out.push('Bringing the website up to date with this match — one moment…'); }); }
+    if(checks){ ['scorecard', 'website'].forEach(k => { const c = checks[k]; if(c && c.level === 'bad' && !out.includes(c.text)) out.push(c.text); if(c && c.level === 'wait') out.push('Bringing the website up to date with this match — one moment…'); }); }
     const miss = missingLinks($('msx-msg').value, links).filter(k => links[k]);
     if(miss.length) out.push('The message is missing a compulsory link — press "Put the links back".');
     if(!file) out.push('The card is still being drawn…');
-    else if(!cardInfo.qr.match || !cardInfo.qr.scorecard) out.push('The QR codes could not be made — the QR library did not load. Check the connection and reopen.');
+    else if(!cardInfo.qr.a || !cardInfo.qr.scorecard) out.push('The QR codes could not be made — the QR library did not load. Check the connection and reopen.');
     return out;
   }
-  let cardInfo = { notes: [], qr: { match: false, scorecard: false } };
+  let cardInfo = { notes: [], qr: { a: false, scorecard: false } };
   function canShareFiles(){
     try{ return !!(file && navigator.canShare && navigator.canShare({ files: [file] })); }catch(e){ return false; }
   }
@@ -1075,7 +1323,7 @@
     const why = $('msx-why');
     if(!ok){ why.className = 'msx-why bad'; why.textContent = b[0]; }
     else if(!canShareFiles()){ why.className = 'msx-why'; why.textContent = 'This browser cannot hand an image to WhatsApp directly — use Open WhatsApp: the message opens and the card is downloaded to attach.'; }
-    else { why.className = 'msx-why'; why.textContent = 'Ready — the card and the message, with all three links.'; }
+    else { why.className = 'msx-why'; why.textContent = `Ready — the card and the message, with the ${links.video ? 'video, ' : ''}scorecard and website links.`; }
   }
 
   async function renderCard(force){
@@ -1100,6 +1348,7 @@
     if(b) fileUrl = URL.createObjectURL(b);
     $('msx-busy').classList.remove('on');
     updateActions();
+    if(dlAfterRender && prefs.size === 'thumb' && file){ dlAfterRender = false; download(); done(`⬇️ YouTube thumbnail downloaded — <b>${esc(filename())}</b> (1280 × 720). Upload it as the stream's thumbnail in YouTube Studio.`); }
   }
 
   async function refresh(force){
@@ -1108,8 +1357,8 @@
     info = matchInfo();
     links = await computeLinks(force);
     if(!open) return;
-    const linkSig = JSON.stringify([links.match, links.scorecard, info.a.name, info.b.name]);
-    const sig = JSON.stringify([info, links.match, links.scorecard, prefs]);
+    const linkSig = JSON.stringify([links.match, links.scorecard, links.video, info.a.name, info.b.name]);
+    const sig = JSON.stringify([info, links.match, links.scorecard, links.video, prefs]);
     if(!force && sig === lastSig) return;
     lastSig = sig;
     if(document.activeElement && document.activeElement.closest && !document.activeElement.closest('#msx-match')) renderMatchSection();
@@ -1117,6 +1366,7 @@
     renderLinks();
     renderQrPreviews();
     refreshMessage(prevLinks);
+    refreshYt(prevLinks);
     renderCard(force);
     if(force || linkSig !== lastLinkSig){ lastLinkSig = linkSig; healed = 0; scheduleCheck(force ? 0 : 500); }
   }
@@ -1134,17 +1384,17 @@
         healed++;
         if(res.match && res.match.stale){ safe(() => autoSyncMatchSnapshot()); res.match = { level: 'wait', text: 'Updating the website with this match\'s current teams…' }; }
         if(res.scorecard && res.scorecard.stale){ safe(() => pushState(true)); res.scorecard = { level: 'wait', text: 'Updating the live scorecard with this match…' }; }
-        checks = res; renderLinks(); updateActions();
+        checks = res; renderLinks(); updateActions(); refreshYt();
         scheduleCheck(3500);
         return;
       }
-      checks = res; renderLinks(); updateActions();
+      checks = res; renderLinks(); updateActions(); refreshYt();
     }, ms);
   }
   let healed = 0;
 
   function openWorkspace(){
-    open = true; msgEdited = false; lastSig = ''; lastLinkSig = '';
+    open = true; msgEdited = false; ytTitleEdited = false; ytDescEdited = false; lastSig = ''; lastLinkSig = '';
     $('msx-done').classList.remove('show');
     ov.classList.add('show');
     document.documentElement.style.overflow = 'hidden';
@@ -1221,6 +1471,20 @@
     checkMessage();
   });
   $('msx-msg').addEventListener('input', () => { msgEdited = $('msx-msg').value !== msgAuto; checkMessage(); });
+  $('msx-yt-title').addEventListener('input', () => { ytTitleEdited = $('msx-yt-title').value !== ytTitleAuto; checkYt(); });
+  $('msx-yt-desc').addEventListener('input', () => { ytDescEdited = $('msx-yt-desc').value !== ytDescAuto; checkYt(); });
+  $('msx-yt-insta').addEventListener('input', () => {
+    prefs.instaUrl = $('msx-yt-insta').value.trim(); savePrefs();
+    if(info && links) refreshYt(); else checkYt();
+  });
+  $('msx-yt-copy-title').addEventListener('click', async () => { const ok = await copyText($('msx-yt-title').value.trim()); done(ok ? '📋 YouTube title copied — paste it as the stream\'s title.' : '⚠️ Could not copy — select the title and copy it.'); });
+  $('msx-yt-copy-desc').addEventListener('click', async () => { const ok = await copyText($('msx-yt-desc').value.trim()); done(ok ? '📋 YouTube description copied, with the website match link — paste it into the stream\'s description.' : '⚠️ Could not copy — select the description and copy it.'); });
+  $('msx-yt-reset').addEventListener('click', () => { ytTitleEdited = false; ytDescEdited = false; if(info && links) refreshYt(); });
+  $('msx-yt-thumb').addEventListener('click', () => {
+    dlAfterRender = true;
+    if(prefs.size !== 'thumb'){ prefs.size = 'thumb'; savePrefs(); renderPrefs(); }
+    refresh(true);
+  });
   ov.addEventListener('click', async (e) => {
     const c = e.target.closest('[data-copy-link]');
     if(c && links){ const u = links[c.dataset.copyLink]; if(u && await copyText(u)){ c.textContent = 'Copied'; setTimeout(() => { c.textContent = 'Copy'; }, 1200); } return; }
@@ -1230,11 +1494,14 @@
       return;
     }
     const sb = e.target.closest('.msx-seg[data-pref] button');
-    if(sb){ const key = sb.closest('.msx-seg').dataset.pref; if(prefs[key] !== sb.dataset.v){ prefs[key] = sb.dataset.v; savePrefs(); renderPrefs(); refresh(true); } }
+    if(sb){
+      const key = sb.closest('.msx-seg').dataset.pref;
+      if(prefs[key] !== sb.dataset.v){ prefs[key] = sb.dataset.v; savePrefs(); renderPrefs(); if(key !== 'tab') refresh(true); }
+    }
   });
   ov.addEventListener('change', (e) => {
     const tg = e.target.closest('[data-pref-tg]');
-    if(tg){ prefs[tg.dataset.prefTg] = !!tg.checked; savePrefs(); refresh(true); return; }
+    if(tg){ prefs[tg.dataset.prefTg] = !!tg.checked; savePrefs(); renderPrefs(); refresh(true); return; }
     const s = stateNow();
     // the date is Match Setup's own date; the time is kept with the match — entered once, here
     if(e.target.id === 'msx-date'){
@@ -1250,9 +1517,19 @@
     }
   });
 
+  // ➕ A match has just been created on the panel: the share opens with its
+  // card and messages ready (unless "Open after Create New Match" is off).
+  function afterNewMatch(){
+    if(prefs.autoOpen === false) return false;
+    setTimeout(() => { if(!open) openWorkspace(); else refresh(true); }, 450);
+    return true;
+  }
+
   // for tests / support
   window.__matchShare = {
-    open: openWorkspace, close: closeWorkspace, refresh: () => refresh(true),
+    open: openWorkspace, close: closeWorkspace, refresh: () => refresh(true), afterNewMatch,
+    get ytTitle(){ return $('msx-yt-title').value; }, get ytDesc(){ return $('msx-yt-desc').value; },
+    buildYtTitle: () => buildYtTitle(info), buildYtDesc: () => buildYtDesc(info, links), get cardInfo(){ return cardInfo; }, get isOpen(){ return open; },
     get info(){ return info; }, get links(){ return links; }, get checks(){ return checks; }, get prefs(){ return Object.assign({}, prefs); },
     get file(){ return file; }, blockers, missingLinks: (t) => missingLinks(t, links), buildMessage: () => buildMessage(info, links),
     qrMatrix, filename: () => filename()

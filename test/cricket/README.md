@@ -51,12 +51,15 @@ NODE_PATH=$(npm root -g) node test/cricket/match-share-test.js  # 🟢 WhatsApp 
                                                   # real server + both panels in Chromium — the button beside Phone Remote; the
                                                   # match / scorecard / website links are the site's own routes for THIS match and
                                                   # the website confirms each; every card style and size is a 1080-wide PNG whose two
-                                                  # QR codes decode to exactly those links, and a viewer who scans them lands on the
-                                                  # match; the message keeps all three links (a removed one blocks sharing), wa.me +
+                                                  # QR codes decode to exactly those links (WATCH LIVE = the Match Setup video link,
+                                                  # else MATCH CENTRE), the 16:9 YouTube thumbnail has none; the message keeps the
+                                                  # video, scorecard and website links, no Follow-the-match (a removed one blocks sharing), wa.me +
                                                   # download, share-sheet file, copy; the card follows Match Setup; before the match a
                                                   # viewer of either link sees "This match hasn't started yet" (fixtures with their teams
                                                   # and date) and the page shows the scorecard by itself after the first ball; a room
-                                                  # showing another match, an out-of-date website copy, a private tournament; phone width
+                                                  # showing another match, an out-of-date website copy, a private tournament; the YouTube
+                                                  # title (<=100) + description (website match link, Instagram optional), copied; Create New
+                                                  # Match opens the share by itself (can be turned off); phone width
 node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the REAL panel: a saved team keeps its WHOLE squad with the same Player IDs
                                                   # (Save Team in the squads card; Create New Match brings it back; roster edits change only that
                                                   # team; an older laptop is asked, never saved over — rev / TEAM_CHANGED), teams saved before

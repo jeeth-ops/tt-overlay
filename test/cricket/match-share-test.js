@@ -4,16 +4,19 @@
    anonymous viewers opening every link the way a WhatsApp reader would.
 
      • the 🟢 button sits right beside 📱 Phone Remote
-     • the three links are the site's own routes for THIS match:
+     • the links are the site's own routes for THIS match:
          tournament match  /score/tournament/<its token>/match/<its id>
          single match      /score/match/<its id>
          live scorecard    /cricket-scorecard?room=<Match ID>
          website           https://allsportslivestreams.com/
-       and the website confirms each one (it knows the match, the room shows it)
+       plus the match's video link from Match Setup; the website confirms each
+       one (it knows the match, the room shows it)
      • the card: 1080×1350 and 1080×1080 PNGs in every style; both QR codes
-       decode (jsQR) to exactly the match and scorecard links; a viewer who
-       scans them lands on this match
-     • the message: all three links, nothing "undefined"; a removed link blocks
+       decode (jsQR): WATCH LIVE → the video link (MATCH CENTRE → the match's
+       page when there is no video), LIVE SCORECARD → the scorecard; the 16:9
+       YouTube thumbnail (1280×720, no codes)
+     • the message: the video, scorecard and website links — no "Follow the
+       match" — nothing "undefined"; a removed link blocks
        sharing until put back; Open WhatsApp = wa.me with the edited message +
        the card downloaded (named Team-A-vs-Team-B-AllSportsLive-Match-Card.png)
        and says the image must be attached by hand; Share = the PNG file + the
@@ -26,6 +29,9 @@
      • "Connect this match" from the share window; a room showing another match
        blocks sharing; an out-of-date website copy is brought up to date; a
        private tournament is refused with how to make it public
+     • the YouTube title (≤ 100 characters) and description (the website match
+       link, the Instagram profile link only when ticked — any profile), copied
+     • Create New Match opens the share by itself (unless turned off)
      • phone width: one column, no sideways scroll
 
      npm install --no-save jsqr pngjs qrcodejs   (qrcodejs stands in for the CDN copy the panels load)
@@ -124,12 +130,13 @@ function decodeAll(buf){
     await c.close();
     return txt.replace(/\s+/g, ' ');
   }
-  const missing = (text, l) => ['match', 'scorecard', 'website'].filter(k => !text.includes(l[k]));
+  const missing = (text, l) => ['video', 'scorecard', 'website'].filter(k => (k !== 'video' || l.video) && !text.includes(l[k]));
   const tourSetup = (tour, room, names, extra, connect) => ({ room, connect: connect !== false, arg: { tour, names, extra: extra || {} }, fn: async ({ tour, names, extra }) => {
     state.matchMode = 'tournament'; state.leagueName = tour; state.matchLeague = tour;
     state.teamA.name = names[0]; state.teamA.short = names[2]; state.teamA.color = '#0b4ea2';
     state.teamB.name = names[1]; state.teamB.short = names[3]; state.teamB.color = '#c8102e';
     state.venue = 'Wankhede Stadium, Mumbai'; state.matchDate = '2026-11-14'; state.matchTime = '19:30'; state.format = 'T20'; state.matchNo = extra.no || 12; state.matchStage = extra.stage || 'semi';
+    state.streamUrl = extra.video || '';
     saveLocal(); pushState(true); autoSyncMatchSnapshot();   // what an edit in Match Setup does
   } });
 
@@ -141,30 +148,39 @@ function decodeAll(buf){
     ok(!!TOKEN, 'a public tournament on the real server');
 
     // ---- A. a tournament match, connected ----
-    const pa = await panel(file, 'owner', tourSetup(TOUR, `${tag}-M12`, ['Mumbai Indians', 'Royal Challengers Bengaluru', 'MI', 'RCB']));
+    const VIDEO = 'https://www.youtube.com/watch?v=Kl8vT2xYq0A';
+    const pa = await panel(file, 'owner', tourSetup(TOUR, `${tag}-M12`, ['Mumbai Indians', 'Royal Challengers Bengaluru', 'MI', 'RCB'], { video: VIDEO }));
     await pa.evaluate((l) => { state.teamA.logoUrl = eval(l[0]); state.teamB.logoUrl = eval(l[1]); saveLocal(); }, [LOGO('#0b4ea2', '#f5c451', 'MI'), LOGO('#111111', '#c8102e', 'RCB')]);
     ok(await pa.evaluate(() => { const b = document.getElementById('ms-share-btn'); return !!b.previousElementSibling && b.previousElementSibling.id === 'cr-remote-btn'; }), 'the WhatsApp Match Share button sits right beside Phone Remote');
     const A = await share(pa);
     ok(A.links.match === `${base}/score/tournament/${TOKEN}/match/${A.tmid}`, 'tournament match link = /score/tournament/<token>/match/<this match id>', A.links.match);
     ok(A.links.scorecard === `${base}/cricket-scorecard?room=${tag}-M12`, 'scorecard link = the live scorecard of this match\'s room', A.links.scorecard);
     ok(A.links.website === 'https://allsportslivestreams.com/', 'website link');
-    ok(A.checks.match.level === 'ok' && A.checks.scorecard.level === 'ok' && A.checks.website.level === 'ok', 'the website confirms all three', JSON.stringify(A.checks));
+    ok(A.links.video === VIDEO && A.checks.video.level === 'ok', 'the video link = the one typed in Match Setup (a YouTube video)', A.links.video);
+    ok(A.checks.match.level === 'ok' && A.checks.scorecard.level === 'ok' && A.checks.website.level === 'ok', 'the website confirms the match page, the scorecard and the website', JSON.stringify(A.checks));
     ok(A.checks.origin && A.checks.origin.level === 'warn', 'links on another host than allsportslivestreams.com are pointed out');
-    ok(missing(A.msg, A.links).length === 0 && !/undefined|null|NaN/.test(A.msg), 'the message has all three links and nothing "undefined"', A.msg);
+    ok(missing(A.msg, A.links).length === 0 && !/undefined|null|NaN/.test(A.msg), 'the message has the video, scorecard and website links and nothing "undefined"', A.msg);
+    ok(A.msg.includes('▶️ *WATCH LIVE:*\n' + VIDEO), 'the message: ▶️ WATCH LIVE with the panel\'s video link', A.msg);
+    ok(!/FOLLOW THE MATCH/i.test(A.msg) && !A.msg.includes(A.links.match), 'no "Follow the match" link in the message any more', A.msg);
     const dA = decodeAll(await cardPng(pa));
-    ok(dA.size.join('x') === '1080x1350' && dA.codes[0] === A.links.match && dA.codes[1] === A.links.scorecard, 'portrait card 1080×1350: Match Centre QR → match link, Live Scorecard QR → scorecard link', JSON.stringify(dA));
-    ok(/Mumbai Indians/i.test(await viewer(dA.codes[0], /Mumbai Indians/i)), 'a viewer scanning the match QR lands on this match');
+    ok(dA.size.join('x') === '1080x1350' && dA.codes[0] === VIDEO && dA.codes[1] === A.links.scorecard, 'portrait card 1080×1350: WATCH LIVE QR → the video link, Live Scorecard QR → scorecard link', JSON.stringify(dA));
+    ok(/Mumbai Indians/i.test(await viewer(A.links.match, /Mumbai Indians/i)), 'a viewer of the match\'s own page (the YouTube description\'s link) lands on this match');
     ok(/Mumbai Indians/i.test(await viewer(dA.codes[1], /Mumbai Indians/i)), 'a viewer scanning the scorecard QR lands on its live scorecard');
     // every style and size: a 1080-wide PNG whose two codes still scan
     for(const size of ['portrait', 'square']) for(const theme of ['dark', 'light', 'team']){
       await pa.click(`.msx-seg[data-pref="size"] button[data-v="${size}"]`); await pa.click(`.msx-seg[data-pref="theme"] button[data-v="${theme}"]`);
       await sleep(1400);
       const d = decodeAll(await cardPng(pa));
-      ok(d.size.join('x') === (size === 'square' ? '1080x1080' : '1080x1350') && d.codes[0] === A.links.match && d.codes[1] === A.links.scorecard, `${size} / ${theme}: ${d.size.join('×')}, both QR codes scan`, JSON.stringify(d));
+      ok(d.size.join('x') === (size === 'square' ? '1080x1080' : '1080x1350') && d.codes[0] === VIDEO && d.codes[1] === A.links.scorecard, `${size} / ${theme}: ${d.size.join('×')}, both QR codes scan`, JSON.stringify(d));
     }
+    // the YouTube thumbnail: 16:9, no codes on it
+    await pa.click('.msx-seg[data-pref="size"] button[data-v="thumb"]'); await sleep(1600);
+    const dT = decodeAll(await cardPng(pa));
+    ok(dT.size.join('x') === '1280x720' && dT.codes.length === 0, 'YouTube thumbnail: 1280×720, no QR codes on it', JSON.stringify(dT));
+    ok((await pa.evaluate(() => window.__matchShare.filename())) === 'Mumbai-Indians-vs-Royal-Challengers-Bengaluru-AllSportsLive-YouTube-Thumbnail.png', '…named Team-A-vs-Team-B-AllSportsLive-YouTube-Thumbnail.png');
     await pa.click('.msx-seg[data-pref="qr"] button[data-v="right"]'); await pa.click('.msx-seg[data-pref="size"] button[data-v="portrait"]'); await sleep(1400);
     const dR = decodeAll(await cardPng(pa));
-    ok(dR.codes[0] === A.links.match && dR.codes[1] === A.links.scorecard, 'QR codes both on the right: still Match Centre then Live Scorecard, both scan', JSON.stringify(dR));
+    ok(dR.codes[0] === VIDEO && dR.codes[1] === A.links.scorecard, 'QR codes both on the right: still Watch Live then Live Scorecard, both scan', JSON.stringify(dR));
     await pa.click('.msx-seg[data-pref="qr"] button[data-v="split"]'); await pa.click('.msx-seg[data-pref="theme"] button[data-v="dark"]'); await sleep(900);
     ok(await pa.evaluate(() => JSON.parse(localStorage.getItem('asl-match-share-prefs')).theme === 'dark'), 'design choices are remembered');
 
@@ -180,20 +196,49 @@ function decodeAll(buf){
     const [dl] = await Promise.all([pa.waitForEvent('download', { timeout: 8000 }), pa.click('#msx-wa')]);
     const opened = await pa.evaluate(() => window.__opened);
     const waText = opened && decodeURIComponent(opened.split('?text=')[1] || '');
-    ok(/^https:\/\/wa\.me\/\?text=/.test(opened || '') && waText.startsWith('🔥 BIG SEMI FINAL TONIGHT!') && missing(waText, A.links).length === 0, 'Open WhatsApp: wa.me with the edited message and all three links', opened);
+    ok(/^https:\/\/wa\.me\/\?text=/.test(opened || '') && waText.startsWith('🔥 BIG SEMI FINAL TONIGHT!') && missing(waText, A.links).length === 0, 'Open WhatsApp: wa.me with the edited message and its links', opened);
     ok(dl.suggestedFilename() === 'Mumbai-Indians-vs-Royal-Challengers-Bengaluru-AllSportsLive-Match-Card.png', '…the card downloaded as Team-A-vs-Team-B-AllSportsLive-Match-Card.png', dl.suggestedFilename());
     const dlFile = path.join(require('os').tmpdir(), `ms-${tag}-${Date.now()}.png`); await dl.saveAs(dlFile);
     const dd = decodeAll(fs.readFileSync(dlFile)); fs.unlinkSync(dlFile);
-    ok(dd.size.join('x') === '1080x1350' && dd.codes[0] === A.links.match && dd.codes[1] === A.links.scorecard, '…the downloaded PNG is the preview: 1080×1350, both QR codes scan', JSON.stringify(dd));
+    ok(dd.size.join('x') === '1080x1350' && dd.codes[0] === VIDEO && dd.codes[1] === A.links.scorecard, '…the downloaded PNG is the preview: 1080×1350, both QR codes scan', JSON.stringify(dd));
     ok(/attach it in WhatsApp/.test(await pa.evaluate(() => document.getElementById('msx-done').textContent)), '…and it says the image has to be attached by hand');
     await pa.evaluate(() => { window.__shared = null; navigator.canShare = (d) => !!(d && d.files && d.files.length); navigator.share = async (d) => { window.__shared = { files: d.files.map(f => ({ name: f.name, type: f.type, size: f.size })), text: d.text }; }; window.__matchShare.refresh(); });
     await pa.waitForFunction(() => !document.getElementById('msx-share').disabled, null, { timeout: 8000 }).catch(() => {});
     await pa.click('#msx-share'); await sleep(300);
     const shared = await pa.evaluate(() => window.__shared);
-    ok(shared && shared.files.length === 1 && shared.files[0].type === 'image/png' && shared.files[0].size > 50000 && missing(shared.text, A.links).length === 0, 'Share image + message: the PNG card as a file + the message with all three links', JSON.stringify(shared && shared.files));
+    ok(shared && shared.files.length === 1 && shared.files[0].type === 'image/png' && shared.files[0].size > 50000 && missing(shared.text, A.links).length === 0, 'Share image + message: the PNG card as a file + the message with its links', JSON.stringify(shared && shared.files));
     await pa.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     await pa.click('#msx-copy'); await sleep(200);
-    ok(missing(await pa.evaluate(() => navigator.clipboard.readText()), A.links).length === 0, 'Copy message: all three links');
+    ok(missing(await pa.evaluate(() => navigator.clipboard.readText()), A.links).length === 0, 'Copy message: its links');
+
+    // ---- the YouTube title + description ----
+    await pa.click('.msx-seg[data-pref="tab"] button[data-v="yt"]'); await sleep(200);
+    let yt = await pa.evaluate(() => ({ pane: getComputedStyle(document.querySelector('.msx-pane[data-pane="yt"]')).display, wa: getComputedStyle(document.querySelector('.msx-pane[data-pane="wa"]')).display,
+      t: document.getElementById('msx-yt-title').value, d: document.getElementById('msx-yt-desc').value, count: document.getElementById('msx-yt-count').textContent }));
+    ok(yt.pane === 'block' && yt.wa === 'none', 'the YouTube tab: its own pane beside the WhatsApp message', JSON.stringify(yt).slice(0, 120));
+    ok(yt.t.length <= 100 && /Mumbai Indians vs Royal Challengers Bengaluru/.test(yt.t) && /Kanga League/.test(yt.t) && yt.count === `${yt.t.length}/100`, 'title: both teams and the tournament, within YouTube\'s 100 characters (counted)', yt.t);
+    ok(yt.d.includes(A.links.match) && yt.d.includes('https://allsportslivestreams.com/') && /Wankhede Stadium/.test(yt.d) && /#Cricket/.test(yt.d) && !/undefined|null/.test(yt.d), 'description: the match details, the website match link, the website and hashtags', yt.d);
+    ok(!/instagram/i.test(yt.d), '…no Instagram link until it is ticked');
+    await pa.click('[data-pref-tg="insta"]'); await sleep(1200);
+    yt = await pa.evaluate(() => ({ d: document.getElementById('msx-yt-desc').value, f: !document.getElementById('msx-yt-insta').hidden }));
+    ok(yt.f && yt.d.includes('📸 Instagram: https://www.instagram.com/all.sports.live/'), 'Instagram ticked → the AllSportsLive profile link in the description, and a field to change it', yt.d);
+    await pa.fill('#msx-yt-insta', 'https://www.instagram.com/kanga.league/'); await sleep(300);
+    yt = await pa.evaluate(() => ({ d: document.getElementById('msx-yt-desc').value, p: JSON.parse(localStorage.getItem('asl-match-share-prefs')).instaUrl }));
+    ok(yt.d.includes('📸 Instagram: https://www.instagram.com/kanga.league/') && yt.p === 'https://www.instagram.com/kanga.league/', 'any profile link typed there goes in instead (and is remembered)', yt.d);
+    await pa.fill('#msx-yt-insta', 'not a link'); await sleep(300);
+    yt = await pa.evaluate(() => ({ d: document.getElementById('msx-yt-desc').value, note: document.getElementById('msx-yt-note').textContent }));
+    ok(!/📸 Instagram/.test(yt.d) && /not an Instagram profile link/.test(yt.note), 'a line that is not an Instagram link is left out, and said so', yt.note);
+    await pa.fill('#msx-yt-insta', 'https://www.instagram.com/all.sports.live/'); await pa.click('[data-pref-tg="insta"]'); await sleep(800);
+    await pa.click('#msx-yt-copy-title'); await sleep(150);
+    ok((await pa.evaluate(() => navigator.clipboard.readText())) === (await pa.evaluate(() => document.getElementById('msx-yt-title').value.trim())), 'Copy title');
+    await pa.click('#msx-yt-copy-desc'); await sleep(150);
+    ok((await pa.evaluate(() => navigator.clipboard.readText())).includes(A.links.match), 'Copy description: with the website match link');
+    const [tdl] = await Promise.all([pa.waitForEvent('download', { timeout: 10000 }), pa.click('#msx-yt-thumb')]);
+    ok(/YouTube-Thumbnail\.png$/.test(tdl.suggestedFilename()), '🖼 YouTube thumbnail: the 16:9 card is drawn and downloaded', tdl.suggestedFilename());
+    const tFile = path.join(require('os').tmpdir(), `ms-t-${tag}-${Date.now()}.png`); await tdl.saveAs(tFile);
+    const tt = decodeAll(fs.readFileSync(tFile)); fs.unlinkSync(tFile);
+    ok(tt.size.join('x') === '1280x720', '…1280×720', JSON.stringify(tt.size));
+    await pa.click('.msx-seg[data-pref="size"] button[data-v="portrait"]'); await pa.click('.msx-seg[data-pref="tab"] button[data-v="wa"]'); await sleep(1200);
 
     // ---- the card follows the match ----
     await pa.click('#msx-reset');
@@ -215,6 +260,9 @@ function decodeAll(buf){
     ok(B.links.match === `${base}/score/match/${B.tmid}`, 'single match link = /score/match/<this match id>', B.links.match);
     ok(B.checks.match.level === 'ok' && B.checks.scorecard.level === 'ok', 'the website confirms both', JSON.stringify(B.checks));
     ok(!/TOURNAMENT/.test(B.msg) && !/⏰/.test(B.msg), 'no tournament and no start time: those lines are left out, never "undefined"', B.msg);
+    ok(!B.links.video && !/WATCH LIVE/.test(B.msg) && B.blockers.length === 0, 'no video link yet: no WATCH LIVE line, and sharing is not held back for it', B.msg);
+    const dB = decodeAll(await cardPng(pb));
+    ok(dB.codes[0] === B.links.match && dB.codes[1] === B.links.scorecard, '…the card\'s first code is then the MATCH CENTRE (the match\'s own page)', JSON.stringify(dB));
     ok(/Parel SC/i.test(await viewer(B.links.match, /Parel SC/i)), 'a viewer of the single match link lands on this match');
 
     // ---- C. a tournament match before Connect ----
@@ -267,7 +315,22 @@ function decodeAll(buf){
       state.matchMode = 'tournament'; state.leagueName = t; state.matchLeague = t; state.teamA.name = 'Alpha XI'; state.teamB.name = 'Beta XI'; saveLocal(); pushState(true);
     } });
     const E = await share(pe);
-    ok(E.checks.match.level === 'bad' && /private/.test(E.checks.match.text) && /public/.test(E.checks.match.fix || '') && E.blockers.length > 0, 'a private tournament: refused, with how to make it public', JSON.stringify(E.checks.match));
+    ok(E.checks.match.level === 'bad' && /private/.test(E.checks.match.text) && /public/.test(E.checks.match.fix || ''), 'a private tournament: its match page refused, with how to make it public', JSON.stringify(E.checks.match));
+    ok(!E.blockers.some(x => /private/.test(x)), '…the WhatsApp message does not carry that page, so it is not held back by it', JSON.stringify(E.blockers));
+    const eYt = await pe.evaluate(() => ({ d: document.getElementById('msx-yt-desc').value, note: document.getElementById('msx-yt-note').textContent }));
+    ok(!eYt.d.includes(E.links.match) && eYt.d.includes(E.links.scorecard) && /private/.test(eYt.note), '…and the YouTube description uses the live scorecard instead, saying why', eYt.note);
+
+    // ---- E2. Create New Match opens the share by itself ----
+    await pb.evaluate(() => window.__matchShare.close());
+    // (the button sits in Match Type, folded away here: pressed the way a click does it)
+    await pb.evaluate(() => document.getElementById('new-match-btn').click()); await sleep(400);
+    await pb.evaluate(() => document.getElementById('newmatch-start').click());
+    await pb.waitForFunction(() => window.__matchShare.isOpen, null, { timeout: 8000 }).catch(() => {});
+    ok(await pb.evaluate(() => window.__matchShare.isOpen && document.getElementById('msx').classList.contains('show')), 'Create New Match → the share opens by itself, card and messages ready');
+    await pb.evaluate(() => window.__matchShare.close());
+    await pb.click('[data-pref-tg="autoOpen"]').catch(() => {});
+    await pb.evaluate(() => { const i = document.querySelector('[data-pref-tg="autoOpen"]'); if(i && i.checked){ i.checked = false; i.dispatchEvent(new Event('change', { bubbles: true })); } });
+    ok(await pb.evaluate(() => window.__matchShare.afterNewMatch() === false && !window.__matchShare.isOpen), '…unless "Open after Create New Match" is turned off');
 
     // ---- F. phone width ----
     await pa.setViewportSize({ width: 390, height: 844 }); await sleep(900);
