@@ -114,7 +114,7 @@ async function logos(browser){
   const O = await openOverlay(browser);
   const info = await O.page.evaluate(async () => {
     const out = {};
-    for(const [k, u] of Object.entries(window.__L)){ const i = await logoKit.warm(u); out[k] = i && { kind: i.kind, ar: i.ar && +i.ar.toFixed(2), keyed: !!i.keyed, backing: !!i.backing, blob: !!i.blob }; }
+    for(const [k, u] of Object.entries(window.__L)){ const i = await logoKit.warm(u); const v = logoKit.variantOf(u); out[k] = i && { kind: i.kind, ar: i.ar && +i.ar.toFixed(2), keyed: !!i.keyed, sticker: !!(v && v.px > 0) }; }
     return out;
   });
   eq('a transparent tall shield → drawn anew (trimmed): its own 0.78 : 1', [info.shield.kind, info.shield.ar], ['cut', 0.78]);
@@ -122,13 +122,13 @@ async function logos(browser){
   eq('a round emblem saved on BLACK as a JPEG → the black ground keyed out (a round logo, 1 : 1)', [info.blackjpg.kind, info.blackjpg.keyed, info.blackjpg.ar], ['cut', true, 1]);
   eq('a crest saved on WHITE as a JPEG → the white ground keyed out (the crest\'s own shape)', [info.whitejpg.kind, info.whitejpg.keyed, info.whitejpg.ar < 0.9], ['cut', true, true]);
   eq('a coloured tile (its own square design) → kept whole as the picture it is', [info.tile.kind, info.tile.ar], ['tile', 1]);
-  eq('a dark logo → a light backing in its own outline (it reads on the dark graphics)', [info.dark.kind, info.dark.backing], ['cut', true]);
+  eq('every logo drawn anew sits on a die-cut white backing in its own outline (the default "Sticker" style) — a dark one too', [info.dark.kind, info.dark.sticker, info.shield.sticker, info.wide.sticker], ['cut', true, true, true]);
   eq('a crest with lots of empty margin → trimmed to the crest (the same shape as the shield)', [info.padded.kind, Math.abs(info.padded.ar - info.shield.ar) < 0.05], ['cut', true]);
   eq('an SVG with no size of its own → drawn, round', [info.svg.kind, info.svg.ar], ['cut', 1]);
   eq('a logo that will not load → nothing to show (initials are used)', info.broken.kind, 'none');
   // the keyed corners are really see-through, the emblem itself opaque
   const px = await O.page.evaluate(async () => {
-    const i = logoKit.info(window.__L.blackjpg);
+    const i = logoKit.variantOf(window.__L.blackjpg);
     const img = new Image(); img.src = i.src; await img.decode();
     const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
     const x = c.getContext('2d'); x.drawImage(img, 0, 0);
@@ -179,6 +179,7 @@ async function logos(browser){
   eq('…a logo that will not load: the team\'s initials, as with no logo', boxes.broken.map(b => [b.lg, b.text]), [[false, 'TM'], [false, 'TM'], [false, 'TM']]);
 
   // the score bar's caps
+  const L0 = await O.page.evaluate(() => window.__L);
   await O.emit('liveCricketScore', barState({ teamA: { name: 'Goregaon Sports Club', short: 'GSC', color: '#e8590c', logoUrl: await O.page.evaluate(() => window.__L.shield) },
     teamB: { name: 'MIG Cricket Club', short: 'MIG', color: '#0b1f4d', logoUrl: await O.page.evaluate(() => window.__L.blackjpg) } }));
   await sleep(1800);
@@ -190,6 +191,18 @@ async function logos(browser){
   await O.emit('liveCricketScore', barState({ teamB: { name: 'MIG Cricket Club', short: 'MIG', color: '#0b1f4d', logoUrl: await O.page.evaluate(() => window.__L.broken) } }));
   await sleep(700);
   eq('…a logo that will not load: the cap gives its room to the name (as with no logo)', await O.page.evaluate(() => document.getElementById('cap-right').classList.contains('no-logo')), true);
+  // Teams → Logo style "Circle", Logo background: the logo whole inside a round badge of that colour
+  await O.emit('liveCricketScore', barState({ teamA: { name: 'Goregaon Sports Club', short: 'GSC', color: '#e8590c', logoUrl: L0.shield, logoStyle: 'circle', logoBg: '#fde047' },
+    teamB: { name: 'MIG Cricket Club', short: 'MIG', color: '#0b1f4d', logoUrl: L0.wide, logoStyle: 'circle' } }));
+  await sleep(900);
+  const circ = await O.page.evaluate(() => ['logo-left', 'logo-right'].map(id => { const e = document.getElementById(id), r = e.getBoundingClientRect(), a = e.querySelector('img.lg-art').getBoundingClientRect(), cs = getComputedStyle(e);
+    const R = r.width / 2, cx = r.left + R, cy = r.top + r.height / 2, far = Math.max(...[[a.left, a.top], [a.right, a.top], [a.left, a.bottom], [a.right, a.bottom]].map(([x, y]) => Math.hypot(x - cx, y - cy)));
+    return { circle: e.classList.contains('lg-circle'), round: Math.abs(r.width - r.height) < 1 && cs.borderTopLeftRadius === '50%', bg: cs.backgroundColor, inside: a.width <= r.width && a.height <= r.height, cornersIn: far <= R * 1.02 }; }));
+  eq('CIRCLE style: a round badge in the team\'s chosen colour (white unless picked), the whole logo inside it — a wide wordmark\'s corners too',
+    circ.map(c => [c.circle, c.round, c.bg, c.inside, c.cornersIn]), [[true, true, 'rgb(253, 224, 71)', true, true], [true, true, 'rgb(255, 255, 255)', true, true]]);
+  await O.emit('liveCricketScore', barState({ teamA: { name: 'Goregaon Sports Club', short: 'GSC', color: '#e8590c', logoUrl: L0.shield, logoStyle: 'sticker', logoBg: '#ffffff' } }));
+  await sleep(600);
+  eq('…back to Sticker: the logo in its own shape again', await O.page.evaluate(() => [document.getElementById('logo-left').classList.contains('lg-circle'), getComputedStyle(document.getElementById('logo-left')).borderTopLeftRadius]), [false, '0px']);
 
   // the full-screen graphics: the Playing XI hero, the toss coin, the Match Intro's ring
   const L = await O.page.evaluate(() => window.__L);
@@ -379,6 +392,10 @@ async function panels(browser){
     const opaque = await page.evaluate(async () => { const c = document.createElement('canvas'); c.width = c.height = 300; const x = c.getContext('2d'); x.fillStyle = '#123'; x.fillRect(0, 0, 300, 300);
       const b = await new Promise(r => c.toBlob(r, 'image/jpeg')); const u = await compressImageToDataURL(new File([b], 'p.jpg', { type: 'image/jpeg' }), 256, 0.86, 36000); return u.slice(5, u.indexOf(';')); });
     eq(`${p}: …a picture with nothing see-through may still go as a JPEG there`, opaque, 'image/jpeg');
+    await page.selectOption('#teamA-logo-style', 'circle');
+    await page.fill('#teamA-logo-bg', '#fde047');
+    await sleep(200);
+    eq(`${p}: Teams → Logo style / Logo background → kept with the team (sent to the overlay)`, await page.evaluate(() => [state.teamA.logoStyle, state.teamA.logoBg, state.teamB.logoStyle || 'sticker']), ['circle', '#fde047', 'sticker']);
     eq(`${p}: no script errors`, errors, []);
     await ctx.close();
   }
