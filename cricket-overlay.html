@@ -200,6 +200,12 @@
   }
   .lg > .lg-art{ display:block; flex:none; max-width:none; max-height:none; object-fit:contain; pointer-events:none; user-select:none; -webkit-user-drag:none; }
   .lg.lg-wait > .lg-art{ visibility:hidden; }
+  /* 'circle' (the team's choice in Teams): one round badge of the team's
+     chosen colour, the logo whole inside it, clear of the rim */
+  .lg.lg-circle{ width:var(--lgs, 64px) !important; height:var(--lgs, 64px) !important; border-radius:50% !important; overflow:hidden !important;
+    background:var(--lg-bg, #ffffff) !important;
+    box-shadow:0 0 0 calc(var(--lgs, 64px) * .03) rgba(255,255,255,.85), 0 calc(var(--lgs, 64px) * .05) calc(var(--lgs, 64px) * .14) rgba(0,0,0,.35) !important; }
+  .lg.lg-circle.lg-tile > .lg-art{ box-shadow:none; border-radius:calc(var(--lgs, 64px) * .06); }
   .lg.lg-tile > .lg-art{ border-radius:calc(var(--lgs, 64px) * .12);
     box-shadow:0 0 0 calc(var(--lgs, 64px) * .016) rgba(255,255,255,.32), 0 calc(var(--lgs, 64px) * .05) calc(var(--lgs, 64px) * .14) rgba(0,0,0,.36); }
 
@@ -3351,34 +3357,15 @@ const logoKit = (() => {
     if(x1 < 0 || !fn) return { kind: 'none' };                         // nothing in it to show
     if(keyed) x.putImageData(data, 0, 0);
     const cw = x1 - x0 + 1, ch = y1 - y0 + 1, M = Math.max(cw, ch);
-    const tone = fl / fn, edge = en ? el / en : tone;
-    const backing = tone < 0.32 && dk / fn > 0.42;                     // a mostly dark logo
-    const glow = !backing && edge < 0.42;                              // a dark rim
-    const P = Math.ceil(M * 0.13);                                     // room for the backing and the shadow
+    // how far the logo reaches from its middle (a round emblem's corners are
+    // empty: in a circle it may be drawn bigger than a square one)
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    let R = 0;
+    for(let y = y0; y <= y1; y += 2) for(let xx = x0; xx <= x1; xx += 2){ if(px[(y * W + xx) * 4 + 3] > 40){ const d = (xx - cx) * (xx - cx) + (y - cy) * (y - cy); if(d > R) R = d; } }
+    const rf = Math.min(1, (Math.sqrt(R) + 1) / (0.5 * Math.sqrt(cw * cw + ch * ch)));
     const art = canvasOf(cw, ch);
     art.getContext('2d').drawImage(work, x0, y0, cw, ch, 0, 0, cw, ch);
-    const lay = canvasOf(cw + 2 * P, ch + 2 * P), g = lay.getContext('2d');
-    if(backing || glow){
-      const sil = canvasOf(cw, ch), sg = sil.getContext('2d');
-      sg.drawImage(art, 0, 0);
-      sg.globalCompositeOperation = 'source-in';
-      sg.fillStyle = backing ? '#f2f4f8' : '#ffffff';
-      sg.fillRect(0, 0, cw, ch);
-      if(backing){
-        // the logo's own outline, grown evenly all round
-        const r = M * 0.05;
-        for(let k = 0; k < 32; k++){ const t = k / 32 * Math.PI * 2; for(const f of [1, 0.6, 0.3]) g.drawImage(sil, P + Math.cos(t) * r * f, P + Math.sin(t) * r * f); }
-      } else {
-        // only the glow: the silhouette itself is drawn off the canvas
-        const off = lay.width + 10;
-        g.save(); g.shadowColor = 'rgba(255,255,255,0.5)'; g.shadowBlur = M * 0.03; g.shadowOffsetX = off; g.drawImage(sil, P - off, P); g.restore();
-      }
-    }
-    g.drawImage(art, P, P);
-    const out = canvasOf(lay.width, lay.height), o = out.getContext('2d');
-    o.shadowColor = 'rgba(0,0,0,0.42)'; o.shadowBlur = M * 0.035; o.shadowOffsetY = M * 0.018;
-    o.drawImage(lay, 0, 0);
-    return { kind: 'cut', ar: cw / ch, canvas: out, px: P / cw, py: P / ch, tone, backing, glow, keyed };
+    return { kind: 'cut', ar: cw / ch, art, M, tone: fl / fn, rf, keyed, v: {}, vs: {} };
   }
   function encode(c){
     return new Promise((res) => {
@@ -3388,17 +3375,62 @@ const logoKit = (() => {
       } catch (e) { res(null); }
     });
   }
+  // ---- how each team wants its logo shown (Teams in the panel): 'sticker'
+  // — the logo in its own shape on a die-cut backing of the chosen colour,
+  // a soft shadow under it — or 'circle' — the logo whole inside a round
+  // badge of the chosen colour. White unless the team picked another.
+  const prefs = new Map();   // url -> { style, bg }
+  const HEX = /^#[0-9a-f]{6}$/i;
+  function setPref(url, style, bg){
+    if(!url || typeof url !== 'string') return;
+    prefs.set(url, { style: style === 'circle' ? 'circle' : 'sticker', bg: HEX.test(String(bg || '')) ? String(bg).toLowerCase() : '#ffffff' });
+    if(prefs.size > 60) prefs.delete(prefs.keys().next().value);
+  }
+  const prefOf = (url) => prefs.get(url) || { style: 'sticker', bg: '#ffffff' };
+  const hexLum = (h) => lumOf(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16));
+  // the backing actually drawn: the chosen colour, unless the logo would
+  // vanish on it (a white logo on white) — then a deep navy instead
+  const backOf = (info, bg) => info && info.tone != null && Math.abs(info.tone - hexLum(bg)) < 0.16 ? (hexLum(bg) > 0.5 ? '#141b2d' : '#ffffff') : bg;
+  // one drawing of a logo for a style and colour, made once and decoded
+  function variant(info, style, bg){
+    if(info.kind !== 'cut') return Promise.resolve({ src: info.src, px: 0, py: 0 });
+    const key = style === 'circle' ? 'circle' : 'sticker|' + backOf(info, bg);
+    if(info.v[key]) return info.v[key];
+    const { art, M } = info, cw = art.width, ch = art.height;
+    let canvas = art, px = 0, py = 0;
+    if(style !== 'circle'){
+      const P = Math.ceil(M * 0.13), lay = canvasOf(cw + 2 * P, ch + 2 * P), g = lay.getContext('2d');
+      const sil = canvasOf(cw, ch), sg = sil.getContext('2d');
+      sg.drawImage(art, 0, 0); sg.globalCompositeOperation = 'source-in'; sg.fillStyle = backOf(info, bg); sg.fillRect(0, 0, cw, ch);
+      // the logo's own outline, grown evenly all round: the die-cut backing
+      const r = M * 0.05;
+      for(let k = 0; k < 32; k++){ const t = k / 32 * Math.PI * 2; for(const f of [1, 0.6, 0.3]) g.drawImage(sil, P + Math.cos(t) * r * f, P + Math.sin(t) * r * f); }
+      g.drawImage(sil, P, P);
+      g.drawImage(art, P, P);
+      canvas = canvasOf(lay.width, lay.height);
+      const o = canvas.getContext('2d');
+      o.shadowColor = 'rgba(0,0,0,0.42)'; o.shadowBlur = M * 0.035; o.shadowOffsetY = M * 0.018;
+      o.drawImage(lay, 0, 0);
+      px = P / cw; py = P / ch;
+    }
+    info.v[key] = encode(canvas).then(src => src ? load(src, false).then(() => ({ src, px, py, blob: src.startsWith('blob:') })) : { src: '', px: 0, py: 0 })
+      .then(r => { info.vs[key] = r; return r; });
+    return info.v[key];
+  }
+  const ready = (info, style, bg) => info.kind !== 'cut' ? { src: info.src, px: 0, py: 0 } : info.vs[style === 'circle' ? 'circle' : 'sticker|' + backOf(info, bg)];
   // the least recently used beyond MAX go (never one still on air or on its way)
   function trim(){
     if(cache.size <= MAX) return;
     [...cache.entries()].filter(([, e]) => e.info).sort((a, b) => a[1].used - b[1].used).slice(0, cache.size - MAX).forEach(([k, e]) => {
-      if(e.info.blob && document.querySelector(`img.lg-art[src="${e.info.src}"]`)) return;
+      const vs = Object.values((e.info && e.info.vs) || {}).filter(v => v.blob);
+      if(vs.some(v => document.querySelector(`img.lg-art[src="${v.src}"]`))) return;
       cache.delete(k);
-      if(e.info.blob) URL.revokeObjectURL(e.info.src);
+      vs.forEach(v => URL.revokeObjectURL(v.src));
     });
   }
-  // read (once) and draw a logo: resolves to its info — kind 'cut' (drawn
-  // anew: src), 'tile' / 'raw' (the picture as it is), 'none' (nothing to show)
+  // read (once) a logo: resolves to its info — kind 'cut' (drawn anew in the
+  // style asked), 'tile' / 'raw' (the picture as it is), 'none' (nothing to
+  // show); the team's own style is drawn and decoded before this resolves
   function warm(url){
     const u = typeof url === 'string' ? url : '';
     if(!u) return Promise.resolve(null);
@@ -3413,15 +3445,10 @@ const logoKit = (() => {
       let r;
       try { r = analyse(img, u); } catch (err) { r = { kind: 'raw', ar: (img.naturalWidth || 1) / (img.naturalHeight || 1), src: u }; }
       if(r.kind !== 'cut') return r;
-      return encode(r.canvas).then(src => {
-        delete r.canvas;
-        if(!src) return { kind: 'raw', ar: r.ar, src: u };
-        r.src = src; r.blob = src.startsWith('blob:');
-        return load(src, false).then(() => r);                         // decoded before anything shows it
-      });
+      const p = prefOf(u);
+      return variant(r, p.style, p.bg).then(() => r);
     }).then(info => {
       e.info = info;
-      if(cache.get(u) !== e && info.blob) URL.revokeObjectURL(info.src);
       trim();
       return info;
     });
@@ -3439,7 +3466,7 @@ const logoKit = (() => {
     return art;
   }
   function clear(host){
-    host.classList.remove('lg', 'lg-wait', 'lg-tile', 'lg-raw');
+    host.classList.remove('lg', 'lg-wait', 'lg-tile', 'lg-raw', 'lg-circle');
     if(host.__lgArt && host.__lgArt.parentNode === host) host.__lgArt.remove();
     host.__lgArt = null;
   }
@@ -3458,33 +3485,57 @@ const logoKit = (() => {
       return;
     }
     host.__lgNone = false;
+    const p = prefOf(host.__lgUrl), circle = p.style === 'circle';
+    const v = ready(info, p.style, p.bg);
+    if(!v){
+      // this style / colour not drawn yet: drawn now, then put in
+      const key = host.__lgKey;
+      host.classList.add('lg', 'lg-wait');
+      variant(info, p.style, p.bg).then(() => { if(host.__lgKey === key) paint(host, info, opts); });
+      return;
+    }
     host.classList.add('lg');
     host.classList.remove('lg-wait');
+    host.classList.toggle('lg-circle', circle);
     host.classList.toggle('lg-tile', info.kind === 'tile');
     host.classList.toggle('lg-raw', info.kind === 'raw');
-    // the box: the logo's own proportions at the weight of a square one,
-    // within what this place allows (--lg-mw / --lg-mh, in nominal sizes)
-    const cs = getComputedStyle(host);
-    const mw = parseFloat(cs.getPropertyValue('--lg-mw')) || 1.6, mh = parseFloat(cs.getPropertyValue('--lg-mh')) || 1.15;
+    if(circle) host.style.setProperty('--lg-bg', backOf(info, p.bg));
+    else if(host.style.getPropertyValue('--lg-bg')) host.style.removeProperty('--lg-bg');
     const a = info.ar > 0 && isFinite(info.ar) ? info.ar : 1;
-    let w = Math.sqrt(a), h = 1 / w;
-    if(w > mw){ w = mw; h = w / a; }
-    if(h > mh){ h = mh; w = h * a; }
+    let w, h;
+    if(circle){
+      // the whole logo inside the circle: contained, and its farthest point
+      // clear of the rim
+      const s = 0.8;
+      if(a >= 1){ w = s; h = s / a; } else { h = s; w = s * a; }
+      const reach = (info.rf || 1) * 0.5 * Math.sqrt(w * w + h * h);
+      if(reach > 0.42){ w *= 0.42 / reach; h *= 0.42 / reach; }
+    } else {
+      // the box: the logo's own proportions at the weight of a square one,
+      // within what this place allows (--lg-mw / --lg-mh, in nominal sizes)
+      const cs = getComputedStyle(host);
+      const mw = parseFloat(cs.getPropertyValue('--lg-mw')) || 1.6, mh = parseFloat(cs.getPropertyValue('--lg-mh')) || 1.15;
+      w = Math.sqrt(a); h = 1 / w;
+      if(w > mw){ w = mw; h = w / a; }
+      if(h > mh){ h = mh; w = h * a; }
+    }
     const art = artOf(host);
-    sizeArt(art, w, h, info.px || 0, info.py || 0);
-    if(art.getAttribute('src') !== info.src) art.src = info.src;
-    host.dataset.lgBox = `${w.toFixed(3)}x${h.toFixed(3)}`;            // (what a fit beside it can key on)
+    sizeArt(art, w, h, v.px || 0, v.py || 0);
+    if(art.getAttribute('src') !== v.src) art.src = v.src;
+    host.dataset.lgBox = circle ? 'circle' : `${w.toFixed(3)}x${h.toFixed(3)}`;            // (what a fit beside it can key on)
     if(opts && opts.onPaint) opts.onPaint(host);
   }
-  // A logo into a badge; a badge already showing that logo is left as it is
-  // (every ball re-sends both logos). Until it is read the badge keeps its
-  // square, empty (a cached logo — every logo the score brings is read the
-  // moment it arrives — goes straight in).
+  // A logo into a badge; a badge already showing that logo (in that style
+  // and colour) is left as it is (every ball re-sends both logos). Until it
+  // is read the badge keeps its square, empty (a cached logo — every logo
+  // the score brings is read the moment it arrives — goes straight in).
   function show(host, url, opts){
     if(!host) return;
     const u = typeof url === 'string' ? url : '';
-    if(host.__lgUrl === u && (!u || host.__lgNone || (host.__lgArt && host.__lgArt.parentNode === host))) return;
+    const p = prefOf(u), key = u + '|' + p.style + '|' + p.bg;
+    if(host.__lgKey === key && (!u || host.__lgNone || (host.__lgArt && host.__lgArt.parentNode === host))) return;
     host.__lgUrl = u;
+    host.__lgKey = key;
     host.__lgNone = false;
     if(!u){ clear(host); return; }
     const e = cache.get(u);
@@ -3492,7 +3543,7 @@ const logoKit = (() => {
     host.classList.add('lg', 'lg-wait');
     host.classList.remove('lg-tile', 'lg-raw');
     sizeArt(artOf(host), 1, 1, 0, 0);
-    warm(u).then(info => { if(host.__lgUrl === u) paint(host, info, opts); });
+    warm(u).then(info => { if(host.__lgKey === key) paint(host, info, opts); });
   }
   // every [data-lg-src] under root (markup built as a string)
   function hydrate(root){
@@ -3505,13 +3556,19 @@ const logoKit = (() => {
     } }));
   }
   const broken = (url) => { const e = cache.get(typeof url === 'string' ? url : ''); return !!(e && e.info && e.info.kind === 'none'); };
-  return { warm, show, hydrate, broken, info: (url) => { const e = cache.get(url); return e ? e.info : null; } };
+  return { warm, show, hydrate, broken, pref: setPref, info: (url) => { const e = cache.get(url); return e ? e.info : null; },
+    // (a test can read the drawing a badge shows)
+    variantOf: (url) => { const e = cache.get(url); if(!e || !e.info) return null; const p = prefOf(url); return ready(e.info, p.style, p.bg) || null; } };
 })();
 // 🖼 Every logo the score brings is read and drawn the moment it arrives
 // (logoKit), so every graphic that shows it later finds it ready.
 function warmLogo(url){ if(url && typeof url === 'string') logoKit.warm(url); }
 socket.on('liveCricketScore', (data) => {
-  if(data){ warmLogo(data.teamA && data.teamA.logoUrl); warmLogo(data.teamB && data.teamB.logoUrl); }
+  if(data){
+    // each team's logo style (sticker / circle) and its colour, from Teams in the panel
+    [data.teamA, data.teamB].forEach(t => { if(t && t.logoUrl) logoKit.pref(t.logoUrl, t.logoStyle, t.logoBg); });
+    warmLogo(data.teamA && data.teamA.logoUrl); warmLogo(data.teamB && data.teamB.logoUrl);
+  }
   if(data && data.visible === false){ pendingStateUpdate = null; renderState(data); return; }
   // While an event graphic is on the bar, OR the over-summary sequencer is
   // holding the bar off-air, the newest state is parked (latest wins) and
