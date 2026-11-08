@@ -242,6 +242,34 @@
     background:linear-gradient(90deg, rgba(255,255,255,0) 0%, var(--badge) 16%, #ffffff 50%, var(--badge) 84%, rgba(255,255,255,0) 100%);
     opacity:0; transform:scaleX(0);
   }
+  /* the motion layer: every piece only moved (transform) or faded, each on
+     its own path and its own timing — at rest all of it is invisible */
+  #sb-fx{ position:absolute; left:0; right:0; top:0; height:calc(118 * var(--bu)); pointer-events:none; z-index:6; }
+  #sb-fx > i{ position:absolute; display:block; opacity:0; }
+  /* the two teams' colour shards: each team's colour into its lighter tone, a white leading edge */
+  .fx-shard{ top:calc(-6 * var(--bu)); bottom:calc(-6 * var(--bu)); width:34%; }
+  .fx-shard.a{ left:0; background:linear-gradient(100deg, var(--bat-dark) 0%, var(--bat) 52%, var(--bat-2) 100%); box-shadow:inset calc(-7 * var(--bu)) 0 0 rgba(255,255,255,.9); }
+  .fx-shard.b{ right:0; background:linear-gradient(260deg, var(--bowl-dark) 0%, var(--bowl) 52%, var(--bowl-2) 100%); box-shadow:inset calc(7 * var(--bu)) 0 0 rgba(255,255,255,.9); }
+  /* diagonal strips in the accent colour, and a thin white one chasing it */
+  .fx-slash{ top:calc(-14 * var(--bu)); bottom:calc(-14 * var(--bu)); left:0; width:calc(30 * var(--bu)); background:linear-gradient(180deg, var(--badge-2), var(--badge)); }
+  .fx-slash.s2{ width:calc(8 * var(--bu)); background:#ffffff; }
+  /* the band's colour lead: runs ahead of the white panel as it opens */
+  .fx-lead{ top:0; bottom:0; left:0; width:calc(90 * var(--bu)); background:linear-gradient(90deg, rgba(255,255,255,0), var(--bat-2) 40%, #ffffff 92%, rgba(255,255,255,0)); }
+  .fx-line.b{ left:1.5%; right:1.5%; bottom:calc(-7 * var(--bu)); height:calc(3 * var(--bu)); border-radius:99px;
+    background:linear-gradient(90deg, rgba(255,255,255,0), var(--bat-2) 22%, #ffffff 50%, var(--bowl-2) 78%, rgba(255,255,255,0)); }
+  /* the clearing flash of the exit */
+  .fx-flash{ top:calc(-10 * var(--bu)); bottom:calc(-10 * var(--bu)); left:0; width:calc(180 * var(--bu)); background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.95) 50%, rgba(255,255,255,0)); }
+  /* the logo's reveal rig: two corner brackets, a ring of light and a flare,
+     centred on the logo (placed by the entrance) — round it, never over it,
+     the logo itself untouched */
+  .sb-lfx{ position:absolute; left:0; top:0; width:0; height:0; pointer-events:none; z-index:3; --lf:70px; }
+  .sb-lfx b{ position:absolute; display:block; opacity:0; }
+  .sb-lfx .br{ width:calc(var(--lf) * .5); height:calc(var(--lf) * .5); border:calc(3.5 * var(--bu)) solid #ffffff; }
+  .sb-lfx .br.a{ left:calc(var(--lf) * -.62); top:calc(var(--lf) * -.62); border-right:0; border-bottom:0; }
+  .sb-lfx .br.b{ left:calc(var(--lf) * .12); top:calc(var(--lf) * .12); border-left:0; border-top:0; }
+  .sb-lfx .ring{ width:var(--lf); height:var(--lf); left:calc(var(--lf) * -.5); top:calc(var(--lf) * -.5); border-radius:50%; border:calc(3 * var(--bu)) solid var(--badge-2); }
+  .sb-lfx .flare{ width:calc(var(--lf) * 3); height:calc(3 * var(--bu)); left:calc(var(--lf) * -1.5); top:calc(-1.5 * var(--bu)); border-radius:99px;
+    background:linear-gradient(90deg, rgba(255,255,255,0), #ffffff 50%, rgba(255,255,255,0)); }
   .sb-glint{ position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:2; }
   .sb-glint b{ position:absolute; top:-20%; bottom:-20%; left:0; width:calc(140 * var(--bu)); opacity:0; transform:translateX(-130%) skewX(-18deg);
     background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.3) 50%, rgba(255,255,255,0) 100%); }
@@ -2677,6 +2705,9 @@
   <div id="scorecard">
     <canvas id="sb-shadow" aria-hidden="true"></canvas>
     <i id="sb-guide" aria-hidden="true"></i>
+    <!-- 🎬 the bar's motion layer (animateEntry / animateExit): team-colour shards,
+         diagonal strips, accent lines, the colour lead of the band, the clearing flash -->
+    <div id="sb-fx" aria-hidden="true"><i class="fx-shard a"></i><i class="fx-shard b"></i><i class="fx-slash s1"></i><i class="fx-slash s2"></i><i class="fx-lead"></i><i class="fx-line b"></i><i class="fx-flash"></i></div>
     <div id="top-row">
       <div class="cap" id="cap-left">
         <div class="cap-logo" id="logo-left"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
@@ -2685,6 +2716,7 @@
           <div class="cap-name" id="name-left">TEAM A</div>
         </div>
         <i class="sb-glint" aria-hidden="true"><b></b></i>
+        <i class="sb-lfx" aria-hidden="true"><b class="br a"></b><b class="br b"></b><b class="ring"></b><b class="flare"></b></i>
       </div>
       <div id="mid-row">
         <i class="sb-glint" aria-hidden="true"><b></b></i>
@@ -2766,6 +2798,7 @@
         </div>
         <div class="cap-logo" id="logo-right"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="12" r="10"/></svg></div>
         <i class="sb-glint" aria-hidden="true"><b></b></i>
+        <i class="sb-lfx" aria-hidden="true"><b class="br a"></b><b class="br b"></b><b class="ring"></b><b class="flare"></b></i>
       </div>
       <div id="event-stage">
         <div id="event-bg">
@@ -3225,6 +3258,25 @@ if(params.get('layers') === '1') document.documentElement.classList.add('gfx-lay
       + `panel → overlay ${lag == null ? '—' : lag + ' ms'}${lag == null ? '' : '  (max ' + lagMax + ')'}${document.documentElement.classList.contains('gfx-layers') ? '\nlayers=1' : ''}`;
     frames = 0; drops = 0; long = 0; worst = 0;
   }, 1000);
+})();
+/* 🔁 ?perf=1&loop=30 — a soak test for the vMix PC: once the first score is on
+   air the bar goes off and on again by itself, 30 times (3 s each way),
+   with the meter above running — so the entrance and exit can be watched,
+   and measured, in vMix's own browser input. Nothing is sent anywhere; the
+   panel's next score simply carries on. */
+(function barLoop(){
+  const n = Math.min(500, parseInt(params.get('loop'), 10) || 0);
+  if(!n) return;
+  let done = 0;
+  const step = () => {
+    if(done >= n * 2) return;
+    if(lastState && Object.keys(lastState).length && lastState.visible !== false && eventState === 'idle' && !overFlow.holdsBar() && !fullBar.holds()){
+      if(hasEntered) animateExit(); else renderState(lastState);
+      done++;
+    }
+    setTimeout(step, 3000);
+  };
+  setTimeout(step, 4000);
 })();
 socket.on('connect', () => connStatus.classList.remove('visible'));
 socket.on('disconnect', () => { connStatus.classList.add('visible'); connStatus.textContent = 'Overlay disconnected — retrying…'; });
@@ -4750,23 +4802,40 @@ const barShadow = (() => {
 })();
 
 /* ============================================================
-   ENTRY / EXIT
-   The bar comes on air in layers, left to right, and goes the other way:
-   beat 0 — a line of light is drawn along its top edge;
-   beat 1 — the coloured shapes build themselves: the batting side's cap
-            (its clip opening from the screen edge), the band growing out
-            of it, the bowling side's cap closing it from the other edge —
-            a glint running through each part as it lands;
-   beat 2 — the logos settle in (scale and fade — never a bounce), the
-            names, the score figure by figure, the overs, the batters, the
-            bowler, staggered rises of a few design px;
-   the line fades as the bar settles. The exit: the text goes first, last
-   in first out, then the shapes un-build right to left (the bowling side's
-   cap, the band back into the batting side's, that cap), the line drawn
-   back in, a last fade. Transforms, opacity and the caps' own clip only;
-   the bar stays where it is, at the foot of the picture. A new entry
-   retires a running exit and the other way round (a half-played entry is
-   fast-forwarded first), so two timelines never fight over the bar.
+   ENTRY / EXIT — a motion-graphics sequence, not a slide
+   Every part of the bar has its own path and its own timing; the bar
+   itself never moves from the foot of the picture.
+   IN (about 1.6 s):
+   1 · activation — a line of light is drawn along the top edge from the
+       middle out and another along the foot from the left; the two teams'
+       colour shards cross the whole bar in opposite directions (the
+       batting side's left to right, the bowling side's right to left), an
+       accent strip and a thin white one slicing after them;
+   2 · team colour — in their wake the caps open from the screen edges and
+       the band grows out of the batting side's cap, its colour lead
+       running ahead of the white panel;
+   3 · the logos — two corner brackets fly in and lock round each logo, a
+       ring of light opens from it and a flare runs through it as the logo
+       settles in (scale and a few px of travel — never stretched, cut or
+       masked: the logo itself is never touched);
+   4 · typography — the short names wipe open from the inside out, the full
+       names drop open under them, the score rises figure by figure, the
+       batters wipe in from the left and the bowler from the right, the
+       overs and rates with them;
+   5 · assembly — a glint runs through each part as it lands, the lines
+       fade, everything settles still.
+   OUT (about 0.9 s), its own choreography: the text leaves through the
+   same masks the other way (batters to the left, bowler to the right, the
+   score dropping), the brackets close in on each logo as it shrinks away
+   through a last flare, both colour shards sweep across the bar again —
+   each part un-building in their wake (the caps shutting to the screen
+   edges, the band collapsing into its middle) — the lines retract, the
+   accent strips cross back, a flash of light clears the bar.
+   Transforms and opacity, plus a clip on the caps and on small text boxes
+   only while they open; no filter, no blur. Every piece is set to its
+   start at the top of each run, so a new trigger never inherits a
+   half-played one: an entry kills a running exit and an exit fast-forwards
+   a running entry.
    ============================================================ */
 // Handles so a new entry/exit can cleanly retire the opposite one instead of
 // two timelines fighting over the same elements.
@@ -4775,15 +4844,45 @@ function reduceMotion(){
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 const BAR_GLINTS = ['#cap-left .sb-glint b', '#mid-row .sb-glint b', '#cap-right .sb-glint b'];
-// what the exit fades (and puts back once the bar is off air)
+const BAR_FX = ['#sb-guide', '#sb-fx > i', '.sb-lfx b', ...BAR_GLINTS];
+// what the exit takes away (and puts back once the bar is off air)
 const BAR_EXIT_TEXT = ['#bowler-seg', '#crr-seg', '#batters-seg', '#break-seg', '#result-seg', '#overs-badge > *', '#score-block', '#cap-right .cap-text', '#cap-right .cap-logo', '#cap-left .cap-text', '#cap-left .cap-logo'];
+// the text opened through masks (clip-path on small boxes, cleared once it is in)
+const BAR_MASKED = ['.cap-short', '.cap-name', '.cap-text', '#batters-seg .brow', '#bowler-line', '#bowler-sub', '#score-rate-line', '#overs-badge > *'];
 const CAP_L_OPEN = 'polygon(0 0,100% 0,82% 100%,0 100%)', CAP_R_OPEN = 'polygon(18% 0,100% 0,100% 100%,0 100%)';
 const CAP_L_SHUT = 'polygon(0 0,0 0,0 100%,0 100%)', CAP_R_SHUT = 'polygon(100% 0,100% 0,100% 100%,100% 100%)';
+const OPEN = 'inset(0% 0% 0% 0%)', FROM_L = 'inset(0% 100% 0% 0%)', FROM_R = 'inset(0% 0% 0% 100%)', FROM_T = 'inset(0% 0% 100% 0%)', FROM_B = 'inset(100% 0% 0% 0%)';
+// Each cap's logo-reveal rig sits on the centre of its logo, sized to it —
+// measured once per run, never while anything moves.
+function placeLogoRigs(){
+  document.querySelectorAll('.cap').forEach(cap => {
+    const rig = cap.querySelector('.sb-lfx'), logo = cap.querySelector('.cap-logo');
+    if(!rig || !logo) return;
+    const on = !cap.classList.contains('no-logo') && logo.offsetWidth > 0;
+    rig.style.display = on ? '' : 'none';
+    if(!on) return;
+    rig.style.left = (logo.offsetLeft + logo.offsetWidth / 2) + 'px';
+    rig.style.top = (logo.offsetTop + logo.offsetHeight / 2) + 'px';
+    rig.style.setProperty('--lf', Math.max(logo.offsetWidth, logo.offsetHeight) * 1.25 + 'px');
+  });
+}
+// the band's colour lead runs the band's own width
+function placeLead(){
+  const mid = document.getElementById('mid-row'), lead = document.querySelector('#sb-fx .fx-lead');
+  if(!mid || !lead) return 0;
+  lead.style.left = mid.offsetLeft + 'px';
+  return mid.offsetWidth;
+}
+function resetBarFx(){
+  gsap.killTweensOf(BAR_FX);
+  gsap.set(BAR_FX, { opacity: 0, x: 0, y: 0, xPercent: 0, yPercent: 0, scale: 1, scaleX: 1, skewX: 0 });
+}
 function animateEntry(){
   if(barExitTl){ barExitTl.kill(); barExitTl = null; }
-  // whatever an exit left half-faded is whole again before anything moves
-  gsap.set(BAR_EXIT_TEXT, { opacity: 1, y: 0 });
-  gsap.set(['#sb-guide', ...BAR_GLINTS], { opacity: 0 });
+  // whatever an exit left half-taken is whole again before anything moves
+  gsap.set(BAR_EXIT_TEXT, { opacity: 1, y: 0, x: 0, scale: 1, clearProps: 'clipPath' });
+  gsap.set([...BAR_MASKED, '#score-row > *', '#score-row .digit-inner', '#crr-seg'], { opacity: 1, x: 0, y: 0, yPercent: 0, clearProps: 'clipPath' });
+  resetBarFx();
   if(reduceMotion()){
     // Accessibility: plain fade, final shapes set directly. Timing logic
     // elsewhere is unaffected — only the motion is simplified.
@@ -4796,32 +4895,56 @@ function animateEntry(){
   }
   const tl = barEntryTl = gsap.timeline({ defaults: { ease: 'expo.out' } });
   const u = barUnit();
+  placeLogoRigs();
+  const midW = placeLead();
   gsap.set('#scorecard', { opacity: 1 });
   gsap.set('#cap-left', { clipPath: CAP_L_SHUT });
   gsap.set('#cap-right', { clipPath: CAP_R_SHUT });
   gsap.set('#mid-row', { scaleX: 0, transformOrigin: 'left center' });
-  const rise = (sel, from, at, o) => tl.fromTo(sel, { opacity: 0, ...from }, { opacity: 1, x: 0, y: 0, yPercent: 0, scale: 1, duration: 0.42, ease: 'power3.out', ...o }, at);
-  // beat 0 — the line of light
-  tl.fromTo('#sb-guide', { opacity: 1, scaleX: 0 }, { scaleX: 1, duration: 0.55 }, 0)
-  // beat 1 — the shapes, left to right, each with its glint
-    .to('#cap-left', { clipPath: CAP_L_OPEN, duration: 0.5 }, 0.06)
-    .to('#mid-row', { scaleX: 1, duration: 0.66, ease: 'power4.out' }, 0.16)
-    .to('#cap-right', { clipPath: CAP_R_OPEN, duration: 0.5 }, 0.36)
-    .fromTo(BAR_GLINTS[0], { opacity: 1, xPercent: -130 }, { xPercent: 260, duration: 0.6, ease: 'power2.inOut' }, 0.4)
-    .fromTo(BAR_GLINTS[1], { opacity: 1, xPercent: -130 }, { xPercent: 720, duration: 0.95, ease: 'power2.inOut' }, 0.52)
-    .fromTo(BAR_GLINTS[2], { opacity: 1, xPercent: -130 }, { xPercent: 260, duration: 0.6, ease: 'power2.inOut' }, 0.98)
-    .to('#sb-guide', { opacity: 0, duration: 0.5, ease: 'power1.out' }, 0.72);
-  // beat 2 — the logos, the names and the figures (offsets in design px, like the bar — see --bu)
-  rise('.cap-logo', { scale: 0.84 }, 0.5, { duration: 0.62, ease: 'expo.out', stagger: 0.12 });
-  rise('.cap-short', { y: 8 * u }, 0.56, { stagger: 0.12 });
-  rise('.cap-name', { y: 6 * u }, 0.64, { duration: 0.4, stagger: 0.12 });
+  // ── 1 · activation: lines of light, the two teams' shards crossing, the strips slicing after them
+  tl.fromTo('#sb-guide', { opacity: 1, scaleX: 0 }, { scaleX: 1, duration: 0.6 }, 0)
+    .fromTo('#sb-fx .fx-line.b', { opacity: 1, scaleX: 0, transformOrigin: 'left center' }, { scaleX: 1, duration: 0.7, ease: 'power3.out' }, 0.08)
+    .fromTo('#sb-fx .fx-shard.a', { opacity: 1, xPercent: -115, skewX: -22 }, { xPercent: 300, duration: 0.62, ease: 'power2.inOut' }, 0)
+    .fromTo('#sb-fx .fx-shard.b', { opacity: 1, xPercent: 115, skewX: -22 }, { xPercent: -300, duration: 0.62, ease: 'power2.inOut' }, 0.04)
+    .fromTo('#sb-fx .fx-slash.s1', { opacity: 1, x: -60 * u, skewX: -24 }, { x: innerWidth + 60 * u, duration: 0.5, ease: 'power3.in' }, 0.16)
+    .fromTo('#sb-fx .fx-slash.s2', { opacity: 1, x: -40 * u, skewX: -24 }, { x: innerWidth + 40 * u, duration: 0.46, ease: 'power3.in' }, 0.24)
+    .set(['#sb-fx .fx-shard', '#sb-fx .fx-slash'], { opacity: 0 }, 0.72)   // (off the bar by now: off for good)
+  // ── 2 · team colour: the caps open from the screen edges, the band grows out of the batting side's cap with its colour lead
+    .to('#cap-left', { clipPath: CAP_L_OPEN, duration: 0.5, ease: 'power4.out' }, 0.1)
+    .to('#cap-right', { clipPath: CAP_R_OPEN, duration: 0.5, ease: 'power4.out' }, 0.12)
+    .to('#mid-row', { scaleX: 1, duration: 0.66, ease: 'power4.out' }, 0.18)
+    .fromTo('#sb-fx .fx-lead', { opacity: 1, x: 0, skewX: -20 }, { x: midW, duration: 0.66, ease: 'power4.out' }, 0.18)
+    .to('#sb-fx .fx-lead', { opacity: 0, duration: 0.2, ease: 'power1.out' }, 0.62);
+  // ── 3 · the logos: brackets lock round each, a ring of light opens, a flare runs through, the logo settles
+  [['#cap-left', 0.48], ['#cap-right', 0.6]].forEach(([cap, t]) => {
+    tl.fromTo(`${cap} .sb-lfx .br.a`, { opacity: 1, x: -26 * u, y: -26 * u }, { x: 0, y: 0, duration: 0.42, ease: 'power4.out' }, t)
+      .fromTo(`${cap} .sb-lfx .br.b`, { opacity: 1, x: 26 * u, y: 26 * u }, { x: 0, y: 0, duration: 0.42, ease: 'power4.out' }, t)
+      .to(`${cap} .sb-lfx .br`, { x: (i) => (i ? 9 : -9) * u, y: (i) => (i ? 9 : -9) * u, opacity: 0, duration: 0.4, ease: 'power2.in' }, t + 0.5)
+      .fromTo(`${cap} .sb-lfx .ring`, { opacity: 0.9, scale: 0.35 }, { scale: 1.5, opacity: 0, duration: 0.7, ease: 'power2.out' }, t + 0.16)
+      .fromTo(`${cap} .sb-lfx .flare`, { opacity: 1, scaleX: 0 }, { scaleX: 1, duration: 0.36, ease: 'power3.out' }, t + 0.2)
+      .to(`${cap} .sb-lfx .flare`, { opacity: 0, duration: 0.3, ease: 'power1.in' }, t + 0.5)
+      .fromTo(`${cap} .cap-logo`, { opacity: 0, scale: 0.62, y: 8 * u }, { opacity: 1, scale: 1, y: 0, duration: 0.7, ease: 'expo.out' }, t + 0.12);
+  });
+  // ── 4 · typography, through masks: the names first, then the figures, then what supports them
+  const wipe = (sel, from, at, o) => tl.fromTo(sel, { clipPath: from, ...((o && o.from) || {}) }, { clipPath: OPEN, x: 0, y: 0, duration: 0.5, ease: 'power4.out', ...((o && o.to) || {}) }, at);
+  wipe('#cap-left .cap-short', FROM_L, 0.62, { from: { x: -10 * u } });
+  wipe('#cap-right .cap-short', FROM_R, 0.74, { from: { x: 10 * u } });
+  wipe('#cap-left .cap-name', FROM_T, 0.72, { from: { y: -5 * u }, to: { duration: 0.45 } });
+  wipe('#cap-right .cap-name', FROM_T, 0.84, { from: { y: -5 * u }, to: { duration: 0.45 } });
   riseBarScore();
-  rise('#score-rate-line', { y: 6 * u }, 0.66, { duration: 0.4 });
-  rise('#overs-badge > *', { y: 10 * u }, 0.62, { duration: 0.4, stagger: 0.05 });
-  rise('#batters-seg .brow', { x: -10 * u }, 0.7, { stagger: 0.07 });
-  rise('#crr-seg', { y: 8 * u }, 0.76, { duration: 0.4 });
-  rise('#bowler-line > *', { y: 8 * u }, 0.78, { duration: 0.4, stagger: 0.05 });
-  rise('#bowler-sub', { y: 8 * u }, 0.86, { duration: 0.4 });
+  wipe('#overs-badge > *', FROM_B, 0.66, { from: { y: 8 * u }, to: { stagger: 0.06, duration: 0.42 } });
+  wipe('#score-rate-line', FROM_L, 0.74, { to: { duration: 0.45 } });
+  wipe('#batters-seg .brow', FROM_L, 0.7, { from: { x: -14 * u }, to: { stagger: 0.08, duration: 0.55 } });
+  tl.fromTo('#crr-seg', { opacity: 0, y: 8 * u }, { opacity: 1, y: 0, duration: 0.42, ease: 'power3.out' }, 0.8);
+  wipe('#bowler-line', FROM_R, 0.8, { from: { x: 14 * u }, to: { duration: 0.55 } });
+  wipe('#bowler-sub', FROM_R, 0.9, { from: { x: 10 * u }, to: { duration: 0.5 } });
+  // ── 5 · assembly: a glint through each part, the lines fade, all still
+  tl.fromTo(BAR_GLINTS[0], { opacity: 1, xPercent: -130 }, { xPercent: 260, duration: 0.6, ease: 'power2.inOut' }, 0.95)
+    .fromTo(BAR_GLINTS[1], { opacity: 1, xPercent: -130 }, { xPercent: 720, duration: 0.9, ease: 'power2.inOut' }, 1.02)
+    .fromTo(BAR_GLINTS[2], { opacity: 1, xPercent: -130 }, { xPercent: 260, duration: 0.6, ease: 'power2.inOut' }, 1.3)
+    .to(['#sb-guide', '#sb-fx .fx-line.b'], { opacity: 0, duration: 0.5, ease: 'power1.out', stagger: 0.08 }, 1.0);
+  // settled: the masks let go (a later ball event moves these same boxes without one)
+  tl.eventCallback('onComplete', () => { gsap.set(BAR_MASKED, { clearProps: 'clipPath' }); });
 }
 // The score's figures rising into place with the bar's entrance — once per
 // entrance: on the very first state the figures do not exist yet when the
@@ -4829,10 +4952,12 @@ function animateEntry(){
 function riseBarScore(){
   const tl = barEntryTl;
   if(!tl || tl.__score || reduceMotion() || typeof tl.getChildren !== 'function') return;
-  const figs = document.querySelectorAll('#score-row > *');
+  const figs = document.querySelectorAll('#score-row .digit-inner');
   if(!figs.length || tl.time() > 0.3) return;
   tl.__score = true;
-  tl.fromTo(figs, { opacity: 0, yPercent: 70 }, { opacity: 1, yPercent: 0, duration: 0.5, ease: 'expo.out', stagger: 0.04 }, 0.52);
+  // each figure rises inside its own column (the odometer's mask), so it never crosses the rates under it
+  tl.fromTo(figs, { opacity: 0, yPercent: 100 }, { opacity: 1, yPercent: 0, duration: 0.55, ease: 'expo.out', stagger: 0.05 }, 0.6)
+    .fromTo('#score-row .score-sep', { opacity: 0 }, { opacity: 1, duration: 0.4, ease: 'power1.out' }, 0.7);
 }
 function animateExit(){
   // A half-played entry is fast-forwarded (not just killed) so its tweens
@@ -4844,17 +4969,48 @@ function animateExit(){
     return;
   }
   const u = barUnit();
-  const tl = barExitTl = gsap.timeline({ defaults: { ease: 'power2.in' } });
-  // the text first, last in first out
-  tl.to(BAR_EXIT_TEXT, { opacity: 0, y: 6 * u, duration: 0.18, stagger: 0.016 }, 0)
-  // then the shapes un-build, right to left
-    .to('#cap-right', { clipPath: CAP_R_SHUT, duration: 0.3, ease: 'power3.in' }, 0.12)
-    .to('#mid-row', { scaleX: 0, transformOrigin: 'left center', duration: 0.38, ease: 'power3.in' }, 0.16)
-    .to('#cap-left', { clipPath: CAP_L_SHUT, duration: 0.3, ease: 'power3.in' }, 0.36)
-    .fromTo('#sb-guide', { opacity: 1, scaleX: 1 }, { scaleX: 0, duration: 0.34, ease: 'power3.in' }, 0.3)
-    .to('#scorecard', { opacity: 0, duration: 0.14 }, 0.56);
-  // off air: the text put back (unseen), ready for whatever brings the bar back
-  tl.eventCallback('onComplete', () => { gsap.set(BAR_EXIT_TEXT, { opacity: 1, y: 0 }); barExitTl = null; });
+  resetBarFx();
+  placeLogoRigs();
+  const tl = barExitTl = gsap.timeline({ defaults: { ease: 'power3.in' } });
+  // 1 · the supporting text leaves through its masks, the other way
+  tl.to('#bowler-sub', { clipPath: FROM_R, x: 10 * u, duration: 0.22 }, 0)
+    .to('#bowler-line', { clipPath: FROM_R, x: 14 * u, duration: 0.24 }, 0.02)
+    .to('#batters-seg .brow', { clipPath: FROM_L, x: -14 * u, duration: 0.24, stagger: 0.04 }, 0.02)
+    .to(['#crr-seg', '#score-rate-line'], { opacity: 0, y: 6 * u, duration: 0.18 }, 0.04)
+    .to('#score-row .digit-inner', { yPercent: 100, opacity: 0, duration: 0.24, stagger: 0.03 }, 0.06)
+    .to('#score-row .score-sep', { opacity: 0, duration: 0.18 }, 0.06)
+    .to('#overs-badge > *', { clipPath: FROM_B, y: 6 * u, duration: 0.22, stagger: 0.04 }, 0.08)
+    .to('#cap-left .cap-text', { clipPath: FROM_L, x: -8 * u, duration: 0.24 }, 0.1)
+    .to('#cap-right .cap-text', { clipPath: FROM_R, x: 8 * u, duration: 0.24 }, 0.1)
+    .to(['#break-seg', '#result-seg'], { opacity: 0, duration: 0.2 }, 0.04);
+  // 2 · each logo: the brackets close in, it shrinks away through a last flare
+  [['#cap-left', 0.12], ['#cap-right', 0.16]].forEach(([cap, t]) => {
+    tl.fromTo(`${cap} .sb-lfx .br.a`, { opacity: 1, x: -16 * u, y: -16 * u }, { x: 6 * u, y: 6 * u, duration: 0.26, ease: 'power3.inOut' }, t)
+      .fromTo(`${cap} .sb-lfx .br.b`, { opacity: 1, x: 16 * u, y: 16 * u }, { x: -6 * u, y: -6 * u, duration: 0.26, ease: 'power3.inOut' }, t)
+      .to(`${cap} .sb-lfx .br`, { opacity: 0, duration: 0.12, ease: 'power1.in' }, t + 0.24)
+      .to(`${cap} .cap-logo`, { scale: 0.55, opacity: 0, duration: 0.28, ease: 'power3.in' }, t + 0.06)
+      .fromTo(`${cap} .sb-lfx .flare`, { opacity: 1, scaleX: 1 }, { scaleX: 0, duration: 0.3, ease: 'power3.in' }, t + 0.18);
+  });
+  // 3 · the colour shards sweep across again, each part un-building in their wake
+  tl.fromTo('#sb-fx .fx-shard.a', { opacity: 1, xPercent: -115, skewX: -22 }, { xPercent: 300, duration: 0.56, ease: 'power2.inOut' }, 0.2)
+    .fromTo('#sb-fx .fx-shard.b', { opacity: 1, xPercent: 115, skewX: -22 }, { xPercent: -300, duration: 0.56, ease: 'power2.inOut' }, 0.24)
+    .to('#cap-left', { clipPath: CAP_L_SHUT, duration: 0.3, ease: 'power3.in' }, 0.3)
+    .to('#cap-right', { clipPath: CAP_R_SHUT, duration: 0.3, ease: 'power3.in' }, 0.3)
+    .to('#mid-row', { scaleX: 0, transformOrigin: '50% 50%', duration: 0.36, ease: 'power3.in' }, 0.34)
+  // 4 · the lines retract, the strips cross back, a flash clears the bar
+    .fromTo('#sb-guide', { opacity: 1, scaleX: 1 }, { scaleX: 0, duration: 0.4, ease: 'power3.in' }, 0.3)
+    .fromTo('#sb-fx .fx-line.b', { opacity: 1, scaleX: 1, transformOrigin: 'right center' }, { scaleX: 0, duration: 0.42, ease: 'power3.in' }, 0.34)
+    .fromTo('#sb-fx .fx-slash.s1', { opacity: 1, x: innerWidth + 40 * u, skewX: -24 }, { x: -60 * u, duration: 0.42, ease: 'power3.inOut' }, 0.4)
+    .fromTo('#sb-fx .fx-slash.s2', { opacity: 1, x: innerWidth + 20 * u, skewX: -24 }, { x: -40 * u, duration: 0.4, ease: 'power3.inOut' }, 0.46)
+    .fromTo('#sb-fx .fx-flash', { opacity: 1, x: innerWidth, skewX: -20 }, { x: -200 * u, duration: 0.34, ease: 'power2.in' }, 0.56)
+    .to('#scorecard', { opacity: 0, duration: 0.12, ease: 'power1.in' }, 0.8);
+  // off air: everything put back (unseen), ready for whatever brings the bar back
+  tl.eventCallback('onComplete', () => {
+    gsap.set(BAR_EXIT_TEXT, { opacity: 1, y: 0, x: 0, scale: 1, clearProps: 'clipPath' });
+    gsap.set([...BAR_MASKED, '#score-row > *', '#score-row .digit-inner', '#crr-seg'], { opacity: 1, x: 0, y: 0, yPercent: 0, clearProps: 'clipPath' });
+    gsap.set(BAR_FX, { opacity: 0 });
+    barExitTl = null;
+  });
 }
 
 /* ============================================================
@@ -7345,19 +7501,20 @@ function revealEndStrip(seg){
   const tl = endStripTl = gsap.timeline({ delay, defaults: { ease: 'power3.out' } });
   const u = barUnit(); // (offsets in design px, like the strip — see --bu)
   if(seg.id === 'break-seg'){
-    tl.fromTo(q('.brk-head'), { opacity: 0, x: -18 * u }, { opacity: 1, x: 0, duration: 0.5 }, 0)
+    // (the same language as the bar: a mask wipe with a few px of travel)
+    tl.fromTo(q('.brk-head'), { opacity: 0, x: -18 * u, clipPath: 'inset(0% 100% 0% 0%)' }, { opacity: 1, x: 0, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.55, ease: 'power4.out' }, 0)
       .fromTo(q('.brk-item:not([hidden])'), { opacity: 0, y: 12 * u }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.1 }, 0.16);
   } else {
     // (the same language as the bar's entrance: scale and fade, no bounce)
     tl.fromTo(q('.res-badge'), { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.6, ease: 'expo.out' }, 0)
       .fromTo(q('.res-kicker'), { opacity: 0, y: 8 * u }, { opacity: 1, y: 0, duration: 0.35 }, 0.1)
-      .fromTo(q('.res-main'), { opacity: 0, y: 14 * u }, { opacity: 1, y: 0, duration: 0.5 }, 0.16)
+      .fromTo(q('.res-main'), { opacity: 0, x: -16 * u, clipPath: 'inset(0% 100% 0% 0%)' }, { opacity: 1, x: 0, clipPath: 'inset(0% 0% 0% 0%)', duration: 0.6, ease: 'power4.out' }, 0.16)
       .fromTo(q('.res-rule'), { scaleX: 0 }, { scaleX: 1, duration: 0.6, ease: 'power2.inOut' }, 0.32)
       .fromTo(q('.res-sub'), { opacity: 0, y: 8 * u }, { opacity: 1, y: 0, duration: 0.4 }, 0.4)
       .fromTo(q('.res-shine'), { opacity: 1, xPercent: -110 }, { xPercent: 440, duration: 0.95, ease: 'power2.inOut', immediateRender: false }, 0.62);
   }
   tl.eventCallback('onComplete', () => {
-    gsap.set(q('.brk-head, .brk-item, .res-badge, .res-kicker, .res-main, .res-rule, .res-sub, .res-shine'), { clearProps: 'transform,opacity' });
+    gsap.set(q('.brk-head, .brk-item, .res-badge, .res-kicker, .res-main, .res-rule, .res-sub, .res-shine'), { clearProps: 'transform,opacity,clipPath' });
     endStripTl = null;
   });
 }
@@ -7920,7 +8077,7 @@ const overFlow = (() => {
   const ENTER_MS = () => reduceMotion() ? 260 : 700;          // card fully in
   const EXIT_MS = () => reduceMotion() ? 260 : 450;           // card fully out
   const BAR_RETURN_LEAD_MS = () => reduceMotion() ? 0 : 150;   // bar starts back this long after the card starts leaving
-  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 1300;    // bar's own entrance animation (animateEntry)
+  const BAR_SETTLE_MS = () => reduceMotion() ? 300 : 1500;    // bar's own entrance animation (animateEntry: content in by ~1.45 s)
   const LEGACY_DUP_WINDOW_MS = 8000;                           // only used when a payload has no eventId
 
   // The rotation. `has` lets a face be skipped when this payload cannot fill

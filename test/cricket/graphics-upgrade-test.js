@@ -317,11 +317,13 @@ async function bar(browser){
   const ent = await O.page.evaluate(() => {
     const kids = barEntryTl.getChildren(true, true, false);
     const at = (sel) => { const t = kids.filter(x => x.targets().some(e => e.matches && e.matches(sel))); return t.length ? +Math.min(...t.map(x => x.startTime())).toFixed(2) : null; };
-    return { guide: at('#sb-guide'), capL: at('#cap-left'), mid: at('#mid-row'), capR: at('#cap-right'), logo: at('.cap-logo'), score: at('#score-row > *'), batters: at('#batters-seg .brow'), bowler: at('#bowler-line > *'),
+    return { guide: at('#sb-guide'), shardA: at('#sb-fx .fx-shard.a'), shardB: at('#sb-fx .fx-shard.b'), slash: at('#sb-fx .fx-slash.s1'), capL: at('#cap-left'), mid: at('#mid-row'), capR: at('#cap-right'),
+      bracket: at('.sb-lfx .br'), ring: at('.sb-lfx .ring'), logo: at('.cap-logo'), short: at('.cap-short'), score: at('#score-row .digit-inner'), batters: at('#batters-seg .brow'), bowler: at('#bowler-line'), glint: at('.sb-glint b'),
       eases: kids.map(x => String(x.vars.ease || '')).filter(e => /back|elastic|bounce/i.test(e)), origin: getComputedStyle(document.getElementById('mid-row')).transformOrigin };
   });
-  ok('ENTRANCE: the line of light first, then the batting side\'s cap, the band, the bowling side\'s cap — then the logos, the score, the batters, the bowler',
-    ent.guide === 0 && ent.guide < ent.capL && ent.capL < ent.mid && ent.mid < ent.capR && ent.capR < ent.logo && ent.logo <= ent.score + 0.1 && ent.score < ent.batters && ent.batters < ent.bowler, ent);
+  ok('ENTRANCE, in stages: lines of light + the two teams\' colour shards crossing + the accent strips, then the caps and the band in their wake, then each logo\'s brackets and ring before the logo, then the names, the score, the batters, the bowler, then the glints',
+    ent.guide === 0 && ent.shardA === 0 && ent.shardB > 0 && ent.slash > ent.shardB && ent.capL > ent.shardA && ent.capL < ent.mid && ent.capR < ent.mid && ent.mid < ent.bracket
+      && ent.bracket < ent.logo && ent.bracket < ent.ring && ent.mid < ent.short && ent.mid < ent.score && Math.max(ent.short, ent.score) < ent.batters && ent.batters < ent.bowler && ent.bowler < ent.glint, ent);
   eq('…the band grows out of the batting side\'s cap (from its left edge); no bounce, elastic or back easing', [ent.origin.split(' ')[0], ent.eases], ['0px', []]);
   const gaps = [];
   for(let i = 0; i < 8; i++){ gaps.push(Math.round(await bottomGap())); await sleep(150); }
@@ -336,9 +338,10 @@ async function bar(browser){
   const ex = await O.page.evaluate(() => {
     const kids = barExitTl.getChildren(true, true, false);
     const at = (sel) => { const t = kids.filter(x => x.targets().some(e => e.matches && e.matches(sel))); return t.length ? +Math.min(...t.map(x => x.startTime())).toFixed(2) : null; };
-    return { text: at('#bowler-seg'), capR: at('#cap-right'), mid: at('#mid-row'), capL: at('#cap-left'), fade: at('#scorecard') };
+    return { text: at('#bowler-sub'), logo: at('.cap-logo'), shards: at('#sb-fx .fx-shard.a'), capR: at('#cap-right'), capL: at('#cap-left'), mid: at('#mid-row'), flash: at('#sb-fx .fx-flash'), fade: at('#scorecard') };
   });
-  ok('EXIT: the text first, then the bowling side\'s cap, the band, the batting side\'s cap, a last fade', ex.text === 0 && ex.text < ex.capR && ex.capR < ex.mid && ex.mid < ex.capL && ex.capL < ex.fade, ex);
+  ok('EXIT, its own sequence: the text through its masks first, the logos into their brackets, the colour shards sweeping across, the caps and the band un-building in their wake, a clearing flash, a last fade',
+    ex.text === 0 && ex.text < ex.logo && ex.logo < ex.shards && ex.shards < ex.capL && ex.capL === ex.capR && ex.capL < ex.mid && ex.mid < ex.flash && ex.flash < ex.fade, ex);
   await sleep(900);
   r = await rest();
   eq('…off air, its text put back unseen (whatever brings it back finds it whole)', [r.bar, r.text], [0, []]);
