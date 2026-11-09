@@ -242,8 +242,8 @@ async function search(page, text) {
     eq('a title and a description for search results', [/Instant Highlights/.test(head.title), head.desc > 120 && head.desc < 260], [true, true]);
     let ld = null; try { ld = JSON.parse(head.ld[0]); } catch (e) { /* stays null */ }
     const org = ld && ld['@graph'].find((n) => n['@type'] === 'Organization'), site = ld && ld['@graph'].find((n) => n['@type'] === 'WebSite');
-    eq('JSON-LD: an Organization with the channels and both contacts, and the WebSite', [!!org, org && org.sameAs, org && org.contactPoint.map((c) => c.telephone), site && site.url, site && site.publisher['@id'] === org['@id']],
-      [true, ['https://www.youtube.com/@allsportslive', 'https://www.instagram.com/all.sports.live'], ['+91-79001-57214', '+91-83569-93593'], 'https://allsportslivestreams.com/', true]);
+    eq('JSON-LD: an Organization with the channels and the three contacts, and the WebSite', [!!org, org && org.sameAs, org && org.contactPoint.map((c) => c.telephone), site && site.url, site && site.publisher['@id'] === org['@id']],
+      [true, ['https://www.youtube.com/@allsportslive', 'https://www.instagram.com/all.sports.live'], ['+91-79001-57214', '+91-83569-93593', '+91-99305-99772'], 'https://allsportslivestreams.com/', true]);
     eq('sitemap.xml exists for the robots.txt line', [fs.existsSync(path.join(ROOT, 'sitemap.xml')), /<loc>https:\/\/allsportslivestreams\.com\/<\/loc>/.test(fs.readFileSync(path.join(ROOT, 'sitemap.xml'), 'utf8'))], [true, true]);
     eq('no picture from another site (YouTube thumbnails aside)', offsite, []);
     eq('no page errors', errors, []);
@@ -422,9 +422,10 @@ async function search(page, text) {
     eq('the button is on screen, the card closed', [await page.isVisible('#waBtn'), await page.isHidden('#waMenu'), await page.getAttribute('#waBtn', 'aria-expanded')], [true, true, 'false']);
     await page.click('#waBtn');
     const links = await page.$$eval('#waMenu a', (a) => a.map((x) => [x.querySelector('b').textContent, x.href.split('?')[0], decodeURIComponent(x.href.split('text=')[1] || ''), x.target, x.rel]));
-    eq('open: both contacts, each a WhatsApp chat with the message typed in', [await page.isVisible('#waMenu'), await page.getAttribute('#waBtn', 'aria-expanded'), links],
+    eq('open: the three contacts, each a WhatsApp chat with the message typed in', [await page.isVisible('#waMenu'), await page.getAttribute('#waBtn', 'aria-expanded'), links],
       [true, 'true', [['Deepak Roy', 'https://wa.me/917900157214', "Hi All Sports Live! I'd like live scoring & streaming for my tournament.", '_blank', 'noopener noreferrer'],
-        ['Vinit Karkera', 'https://wa.me/918356993593', "Hi All Sports Live! I'd like live scoring & streaming for my tournament.", '_blank', 'noopener noreferrer']]]);
+        ['Vinit Karkera', 'https://wa.me/918356993593', "Hi All Sports Live! I'd like live scoring & streaming for my tournament.", '_blank', 'noopener noreferrer'],
+        ['Vishal Gole', 'https://wa.me/919930599772', "Hi All Sports Live! I'd like live scoring & streaming for my tournament.", '_blank', 'noopener noreferrer']]]);
     eq('… and the first contact has the focus', await page.evaluate(() => document.activeElement && document.activeElement.textContent.includes('Deepak Roy')), true);
     const r = await page.$eval('#waMenu', (m) => { const b = m.getBoundingClientRect(); return [b.left >= 0, b.right <= innerWidth, b.top >= 0, b.bottom <= innerHeight]; });
     eq('the card fits on a 390px phone', r, [true, true, true, true]);
