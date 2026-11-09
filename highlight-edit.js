@@ -226,9 +226,16 @@ function createHighlightEditor(opts = {}) {
   const cacheDir = opts.cacheDir || path.join(require('os').tmpdir(), 'scorvix-highlight-cache');
   const cacheMaxBytes = opts.cacheMaxBytes || 1536 * 1048576;
   const preset = opts.preset || 'superfast';
-  // Decoder / encoder threads: the cores really available, at most 3 (beyond
-  // that each thread only adds frames held in memory on a small server).
-  const threads = Math.max(1, Math.min(opts.threads || cpuBudget(), 3));
+  // ⚡ How many ffmpegs at once: the cores really available, two per ffmpeg —
+  // ONE on a small server (one CPU or less: the live server on it comes
+  // first, exactly as before), two on four cores, at most four. A clip's
+  // segment is a filtergraph (drawtext, overlays) that runs mostly on one
+  // core, so separate clips side by side use the machine far better than
+  // more threads inside one. HIGHLIGHT_PARALLEL / opts.parallel overrides.
+  const parallel = Math.max(1, Math.min(4, Number(opts.parallel) || Math.floor(cpuBudget() / 2) || 1));
+  // Decoder / encoder threads each: the cores left per ffmpeg, at most 3
+  // (beyond that each thread only adds frames held in memory on a small server).
+  const threads = Math.max(1, Math.min(opts.threads || Math.floor(cpuBudget() / parallel) || 1, 3));
   fs.mkdirSync(cacheDir, { recursive: true });
 
   // Low priority where the OS has it: the live server on the same machine
@@ -239,17 +246,40 @@ function createHighlightEditor(opts = {}) {
   }
   const niceLevel = String(opts.niceLevel == null ? 12 : opts.niceLevel);
 
-  // One ffmpeg at a time across every job: jobs interleave segment by
-  // segment instead of fighting over the CPU.
-  let chain = Promise.resolve();
-  let queued = 0;
-  function run(args, { timeoutMs = 15 * 60 * 1000, totalSec = 0, onProgress } = {}) {
-    queued++;
-    const p = chain.then(() => { queued--; return exec(args, timeoutMs, totalSec, onProgress); }, () => { queued--; return exec(args, timeoutMs, totalSec, onProgress); });
-    chain = p.catch(() => {});
-    return p;
+  // At most `parallel` ffmpegs across every job (one, on a small server):
+  // jobs interleave segment by segment instead of fighting over the CPU.
+  // A job's `signal` (AbortController) cancels it: a command still waiting
+  // never starts, a running one is killed.
+  let active = 0, queued = 0;
+  const waiting = [];
+  const abortError = () => Object.assign(new Error('cancelled'), { cancelled: true });
+  // Waits for shared work (the band's frames, the graphics — made once, kept
+  // for every video) — but a cancelled video stops waiting at once; the
+  // shared work itself goes on and is kept for the next one.
+  function untilAbort(pr, signal) {
+    if (!signal) return pr;
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(abortError());
+      const on = () => reject(abortError());
+      signal.addEventListener('abort', on, { once: true });
+      pr.then((v) => { signal.removeEventListener('abort', on); resolve(v); }, (e) => { signal.removeEventListener('abort', on); reject(e); });
+    });
   }
-  function exec(args, timeoutMs, totalSec, onProgress) {
+  function run(args, { timeoutMs = 15 * 60 * 1000, totalSec = 0, onProgress, signal } = {}) {
+    if (signal && signal.aborted) return Promise.reject(abortError());
+    const go = () => {
+      active++;
+      return exec(args, timeoutMs, totalSec, onProgress, signal).finally(() => { active--; const n = waiting.shift(); if (n) n(); });
+    };
+    if (active < parallel) return go();
+    queued++;
+    return new Promise((resolve, reject) => waiting.push(() => {
+      queued--;
+      if (signal && signal.aborted) { reject(abortError()); const n = waiting.shift(); if (n) n(); return; }
+      go().then(resolve, reject);
+    }));
+  }
+  function exec(args, timeoutMs, totalSec, onProgress, signal) {
     return new Promise((resolve, reject) => {
       const full = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', ...(onProgress ? ['-progress', 'pipe:1', '-nostats'] : []), ...args];
       const p = niceOk ? spawn('nice', ['-n', niceLevel, ffmpegPath, ...full], { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -268,8 +298,11 @@ function createHighlightEditor(opts = {}) {
         }
       });
       const timer = setTimeout(() => { p.kill('SIGKILL'); reject(new Error('ffmpeg timed out')); }, timeoutMs);
-      p.on('error', (e) => { clearTimeout(timer); reject(e); });
-      p.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.trim().slice(-1500)}`)); });
+      const onAbort = () => { p.kill('SIGKILL'); };
+      if (signal) { signal.addEventListener('abort', onAbort, { once: true }); if (signal.aborted) onAbort(); }
+      const off = () => { clearTimeout(timer); if (signal) signal.removeEventListener('abort', onAbort); };
+      p.on('error', (e) => { off(); reject(e); });
+      p.on('close', (code) => { off(); if (signal && signal.aborted) return reject(abortError()); code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.trim().slice(-1500)}`)); });
     });
   }
   // A long filtergraph goes in a script file (no command-line length limit,
@@ -530,11 +563,11 @@ function createHighlightEditor(opts = {}) {
   // is timed to its own frames: before it the overlay passes the picture
   // through untouched, after it likewise (eof_action=pass). Nothing is split
   // or held back, so the clip streams through in a few frames of memory.
-  async function withWipes(G, p, a, inLabel, outLabel, n, { head, tail }) {
+  async function withWipes(G, p, a, inLabel, outLabel, n, { head, tail, signal }) {
     let cur = inLabel;
     const lay = async (kind, side, at) => {
       const ly = G.label('ly'), o = G.label('w');
-      G.add(`[${G.file(await a.sting(kind, side))}:v]settb=1/${p.fps},setpts=N+${at}[${ly}]`);
+      G.add(`[${G.file(await untilAbort(a.sting(kind, side), signal))}:v]settb=1/${p.fps},setpts=N+${at}[${ly}]`);
       G.add(`[${cur}][${ly}]overlay=0:0:eof_action=pass[${o}]`);
       cur = o;
     };
@@ -679,7 +712,7 @@ function createHighlightEditor(opts = {}) {
   // (wheelOn: the video has wheels; wheel: this clip's delivery), both wipe
   // halves, and its own sound (nothing added: a touch of fade at each end,
   // against clicks).
-  async function renderClip({ src, info, card, wheel, wheelOn, profile: p, assets, out, workDir, onProgress }) {
+  async function renderClip({ src, info, card, wheel, wheelOn, profile: p, assets, out, workDir, onProgress, signal }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'seg-'));
     try {
       const n = clipFrames(info, p), T = n / p.fps, k = p.k;
@@ -708,11 +741,11 @@ function createHighlightEditor(opts = {}) {
       }
       const spec = wheelOn ? wheelFor(wheel) : null;
       const cur = spec && addWheel(G, p, dir, spec, T, 'v0', 'vw', box) ? 'vw' : 'v0';
-      await withWipes(G, p, assets, cur, 'vout', n, { head: card.kind in ACCENT ? card.kind : 'HIGHLIGHT', tail: 'BRAND' });
+      await withWipes(G, p, assets, cur, 'vout', n, { head: card.kind in ACCENT ? card.kind : 'HIGHLIGHT', tail: 'BRAND', signal });
       // mono goes to both ears at its own level (the default upmix would lower it 3 dB)
       const up = info.hasAudio && info.mono ? 'pan=stereo|c0=c0|c1=c0,' : '';
       G.add(`[${aIn}]${up}${cutAudio(T)},afade=t=in:d=0.05,afade=t=out:st=${f6(T - 0.12)}:d=0.12[aout]`);
-      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, onProgress });
+      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, onProgress, signal });
       return { duration: T, wheel: cur === 'vw' };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
@@ -827,7 +860,7 @@ function createHighlightEditor(opts = {}) {
   // Title card: the band clears onto the player — kicker, match, name, what
   // the video holds and their figures, the team panel at the right.
   // title: { kicker, line, first, title, pill, meta, stats: [{ value, label, sub }], team: { name, short, color, logo }, kind }
-  async function renderIntro({ title, bgSrc, bgInfo, profile: p, assets, out, workDir }) {
+  async function renderIntro({ title, bgSrc, bgInfo, profile: p, assets, out, workDir, signal }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'intro-'));
     try {
       const k = p.k, W = p.w, H = p.h, n = gridLength(INTRO_SEC, p.fps), T = n / p.fps;
@@ -926,9 +959,9 @@ function createHighlightEditor(opts = {}) {
       }
       if (rest.length) { G.add(`[${cur}]${rest.join(',')}[c_rest]`); cur = 'c_rest'; }
       // opens on the band leaving (in the video's colour), ends on it arriving
-      await withWipes(G, p, assets, cur, 'vout', n, { head: kind, tail: 'BRAND' });
+      await withWipes(G, p, assets, cur, 'vout', n, { head: kind, tail: 'BRAND', signal });
       G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
-      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T });
+      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, signal });
       return { duration: T };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
@@ -937,7 +970,7 @@ function createHighlightEditor(opts = {}) {
 
   // End card: the band clears onto our logo, which springs into place under a
   // sweep of light; the website rises under it; then black.
-  async function renderOutro({ kind = 'BRAND', profile: p, assets, out, workDir, site }) {
+  async function renderOutro({ kind = 'BRAND', profile: p, assets, out, workDir, site, signal }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'outro-'));
     try {
       const k = p.k, W = p.w, H = p.h, n = gridLength(OUTRO_SEC, p.fps), T = n / p.fps, C = assets.C, fps = p.fps;
@@ -965,10 +998,10 @@ function createHighlightEditor(opts = {}) {
       G.add(`[b1]${drawtext({ font: FONTS.body, file: textFile(dir, 'site', siteText), size: Math.round(36 * k), color: 'white',
         x: '(w-text_w)/2', y: `${ySite}+${Math.round(22 * k)}*(1-${easeOut(prog(0.42, 0.4))})`, alpha: prog(0.42, 0.3) })}[b2]`);
       G.add(`[b2][${ul}]overlay=x=${Math.round(W / 2 - 60 * k)}:y=${ySite + Math.round(60 * k)}:shortest=1[b3]`);
-      await withWipes(G, p, assets, 'b3', 'bw', n, { head: kind, tail: null });
+      await withWipes(G, p, assets, 'b3', 'bw', n, { head: kind, tail: null, signal });
       G.add(`[bw]fade=t=out:st=${f6(T - 0.32)}:d=0.32[vout]`);
       G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
-      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T });
+      await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, signal });
       return { duration: T };
     } finally {
       fs.rm(dir, { recursive: true, force: true }, () => {});
@@ -980,12 +1013,12 @@ function createHighlightEditor(opts = {}) {
   // segs: [{ file, dur }]. Each segment is cut to exactly its own length: the
   // AAC encoder flushes one frame past the end, which would otherwise push the
   // next segment ~20 ms late and leave a jolt at every join.
-  async function concat(segs, out, workDir) {
+  async function concat(segs, out, workDir, signal) {
     const list = path.join(workDir, `concat-${Date.now()}.txt`);
     fs.writeFileSync(list, segs.map(s => `file '${String(s.file).replace(/'/g, "'\\''")}'\nduration ${s.dur.toFixed(6)}\noutpoint ${s.dur.toFixed(6)}`).join('\n'));
     try {
       await run(['-f', 'concat', '-safe', '0', '-i', list, '-map', '0:v', '-map', '0:a', '-c:v', 'copy',
-        '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', '-f', 'mp4', out]);
+        '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', '-f', 'mp4', out], { signal });
     } finally {
       fs.unlink(list, () => {});
     }
@@ -996,6 +1029,11 @@ function createHighlightEditor(opts = {}) {
   fs.mkdirSync(segDir, { recursive: true });
   function segmentKey(clipKey, card, p, wheelOn, spec) { return sha1({ STYLE, clipKey, card, p: p.key, wheelOn: !!wheelOn, spec: spec || null }); }
   const inflight = new Map(); // segment key → the render making it
+  // segments a video being made is using: never trimmed from under it (a
+  // long video's own segments can be more than the whole cache allows)
+  const pinned = new Map(); // file → how many videos are using it
+  const pin = (f) => pinned.set(f, (pinned.get(f) || 0) + 1);
+  const unpin = (f) => { const n = (pinned.get(f) || 0) - 1; if (n > 0) pinned.set(f, n); else pinned.delete(f); };
   function cached(key) {
     const f = path.join(segDir, `${key}.mkv`);
     try { const st = fs.statSync(f); if (st.size > 1024) { const now = new Date(); fs.utimesSync(f, now, now); return f; } } catch (e) { /* not there */ }
@@ -1009,9 +1047,10 @@ function createHighlightEditor(opts = {}) {
       const files = fs.readdirSync(segDir).map(n => { const f = path.join(segDir, n); const st = fs.statSync(f); return { f, n, size: st.size, at: st.mtimeMs }; })
         .filter(x => { if (/\.part\.mkv$/.test(x.n) && now - x.at > 3600000) { fs.unlink(x.f, () => {}); return false; } return true; }) // an abandoned half-render
         .sort((a, b) => a.at - b.at);
+      const removable = files.filter(x => !pinned.has(x.f) && !/\.part\.mkv$/.test(x.n));
       let total = files.reduce((n, x) => n + x.size, 0);
       let free = freeBytes();
-      for (const x of files) {
+      for (const x of removable) {
         if (total <= cacheMaxBytes && free >= 1024 * 1048576) break;
         fs.unlinkSync(x.f); total -= x.size; free += x.size;
       }
@@ -1022,64 +1061,143 @@ function createHighlightEditor(opts = {}) {
   // clips: [{ file, clipKey, card, wheel? }] in play order (files already
   // local; wheel: the delivery's data, see wheelFor). title: see renderIntro.
   // format: '16:9' (default) or '9:16'; wheel: lay each clip's wagon wheel on.
-  // onProgress(0…1, message).
-  async function renderHighlight({ clips, title, out, workDir, site, format, wheel: wheelOn, onProgress = () => {} }) {
+  // onProgress(0…1, message); onStage(stage, done, total) — 'probe', 'assets',
+  // 'intro', 'clips', 'outro', 'encode', 'validate' — what is really being done;
+  // signal: an AbortController's signal, to cancel (rejects with .cancelled).
+  // strict: a clip that cannot be played fails the whole video (with
+  // .unusable, the clips' indexes) instead of being left out quietly.
+  // dropSources: each clip's local file is removed once its segment is made
+  // (the first clip's once the title card, which shows its picture, is made
+  // too) — about half the disk a long video needs. Only for a caller that
+  // will not read those files again.
+  // Segments are rendered `parallel` at a time (see above), kept in play order;
+  // the title and end cards are made alongside them. The finished file is
+  // written beside `out` and moved into place only once it has been checked:
+  // its picture and sound are there and it is as long as its parts — a
+  // half-written or short video is never handed out.
+  async function renderHighlight(args) {
+    const mine = [];
+    try { return await renderHighlightNow(args, mine); } finally { mine.forEach(unpin); }
+  }
+  async function renderHighlightNow({ clips, title, out, workDir, site, format, wheel: wheelOn, onProgress = () => {}, onStage = () => {}, signal, strict = false, dropSources = false }, mine) {
     const started = Date.now();
     let reused = 0;
-    const infos = await Promise.all(clips.map(c => probe(c.file)));
-    const usable = clips.map((c, i) => ({ ...c, info: infos[i] })).filter(c => c.info && c.info.duration > 0.8);
-    if (!usable.length) throw new Error('no playable clips');
+    const stop = () => { if (signal && signal.aborted) throw abortError(); };
+    onStage('probe', 0, clips.length);
+    // four at a time: a probe is a whole ffmpeg, and two hundred of them at
+    // once would swamp a small server
+    const infos = new Array(clips.length);
+    let probed = 0, pi = 0;
+    await Promise.all(Array.from({ length: Math.min(4, clips.length) }, async () => {
+      while (pi < clips.length) {
+        if (signal && signal.aborted) return;
+        const i = pi++;
+        infos[i] = await probe(clips[i].file);
+        if (++probed % 10 === 0) onStage('probe', probed, clips.length);
+      }
+    }));
+    stop();
+    const usable = clips.map((c, i) => ({ ...c, info: infos[i], index: i })).filter(c => c.info && c.info.duration > 0.8);
+    const unusable = clips.map((c, i) => (infos[i] && infos[i].duration > 0.8) ? null : i).filter(i => i !== null);
+    if (!usable.length) throw Object.assign(new Error('no playable clips'), { unusable });
+    if (strict && unusable.length) throw Object.assign(new Error(`${unusable.length} clip(s) could not be played`), { unusable });
+    onStage('probe', clips.length, clips.length);
     const p = pickProfile(usable.map(c => c.info), format);
     onProgress(0.02, 'Getting the graphics ready…');
-    const assets = await ensureAssets(p);
-    const segs = [];
+    onStage('assets', 0, 1);
+    const assets = await untilAbort(ensureAssets(p), signal);
+    stop();
+    onStage('assets', 1, 1);
     const total = usable.reduce((n, c) => n + c.info.duration, 0) + INTRO_SEC + OUTRO_SEC;
-    let done = 0;
-    const step = (sec, msg) => (f) => onProgress(Math.min(0.97, 0.04 + 0.92 * (done + sec * f) / total), msg);
+    const doneSec = new Array(usable.length + 2).fill(0);   // seconds of source done: each clip, the intro, the outro
+    let lastMsg = '';
+    const report = (msg) => { if (msg) lastMsg = msg; onProgress(Math.min(0.97, 0.04 + 0.92 * doneSec.reduce((a, b) => a + b, 0) / total), lastMsg); };
 
-    const intro = path.join(workDir, 'intro.mkv');
-    const introLen = await renderIntro({ title: title || {}, bgSrc: usable[0].file, bgInfo: usable[0].info, profile: p, assets, out: intro, workDir });
-    done += INTRO_SEC; step(0, 'Title card done')(0);
-    segs.push({ file: intro, dur: introLen.duration });
+    // the title and end cards, alongside the clips (each waits for a free ffmpeg like any segment)
+    const clipSegs = new Array(usable.length);
+    let introDone = false;
+    onStage('intro', 0, 1);
+    const intro = path.join(workDir, 'intro.mkv'), outro = path.join(workDir, 'outro.mkv');
+    const introP = renderIntro({ title: title || {}, bgSrc: usable[0].file, bgInfo: usable[0].info, profile: p, assets, out: intro, workDir, signal })
+      .then(r => { doneSec[usable.length] = INTRO_SEC; onStage('intro', 1, 1); report('Title card done'); return r; });
+    const drop = (i) => { if (dropSources) fs.unlink(usable[i].file, () => {}); };
+    introP.then(() => { introDone = true; if (clipSegs[0]) drop(0); }, () => {});
+    introP.catch(() => {});
 
-    for (let i = 0; i < usable.length; i++) {
-      const c = usable[i];
-      const msg = `Editing clip ${i + 1} of ${usable.length} — titles & transitions…`;
-      const key = c.clipKey ? segmentKey(c.clipKey, c.card, p, wheelOn, wheelOn ? wheelFor(c.wheel) : null) : null;
-      let seg = key ? cached(key) : null;
-      if (!seg && key && inflight.has(key)) seg = await inflight.get(key).catch(() => null); // another video is making it right now
-      if (seg) reused++;
-      if (!seg) {
-        onProgress(Math.min(0.97, 0.04 + 0.92 * done / total), msg);
-        const make = (async () => {
-          const target = key ? path.join(segDir, `${key}.${process.pid}-${Date.now()}.part.mkv`) : path.join(workDir, `seg-${i}.mkv`);
-          try {
-            await renderClip({ src: c.file, info: c.info, card: c.card, wheel: c.wheel, wheelOn, profile: p, assets, out: target, workDir, onProgress: step(c.info.duration, msg) });
-          } catch (e) { fs.unlink(target, () => {}); throw e; }
-          if (!key) return target;
-          const final = path.join(segDir, `${key}.mkv`);
-          fs.renameSync(target, final);
-          return final;
-        })();
-        if (key) inflight.set(key, make);
-        try { seg = await make; } finally { if (key) inflight.delete(key); }
+    let next = 0, finished = 0, failed = null;
+    onStage('clips', 0, usable.length);
+    const worker = async () => {
+      while (next < usable.length && !failed) {
+        stop();
+        const i = next++;
+        const c = usable[i];
+        const msg = `Editing clip ${i + 1} of ${usable.length} — titles & transitions…`;
+        const key = c.clipKey ? segmentKey(c.clipKey, c.card, p, wheelOn, wheelOn ? wheelFor(c.wheel) : null) : null;
+        let seg = key ? cached(key) : null;
+        if (!seg && key && inflight.has(key)) seg = await inflight.get(key).catch(() => null); // another video is making it right now
+        if (seg) reused++;
+        if (!seg) {
+          report(msg);
+          const make = (async () => {
+            const target = key ? path.join(segDir, `${key}.${process.pid}-${Date.now()}-${i}.part.mkv`) : path.join(workDir, `seg-${i}.mkv`);
+            try {
+              await renderClip({ src: c.file, info: c.info, card: c.card, wheel: c.wheel, wheelOn, profile: p, assets, out: target, workDir, signal,
+                onProgress: (f) => { doneSec[i] = c.info.duration * f; report(msg); } });
+            } catch (e) { fs.unlink(target, () => {}); throw e; }
+            if (!key) return target;
+            const final = path.join(segDir, `${key}.mkv`);
+            fs.renameSync(target, final);
+            return final;
+          })();
+          if (key) inflight.set(key, make);
+          try { seg = await make; } finally { if (key) inflight.delete(key); }
+        }
+        clipSegs[i] = { file: seg, dur: clipFrames(c.info, p) / p.fps };
+        if (key) { pin(seg); mine.push(seg); }
+        if (i !== 0 || introDone) drop(i);
+        doneSec[i] = c.info.duration;
+        finished++;
+        onStage('clips', finished, usable.length);
+        report(`Edited ${finished} of ${usable.length} clips`);
       }
-      segs.push({ file: seg, dur: clipFrames(c.info, p) / p.fps });
-      done += c.info.duration;
-    }
-
-    const outro = path.join(workDir, 'outro.mkv');
-    const outroLen = await renderOutro({ kind: 'BRAND', profile: p, assets, out: outro, workDir, site });
-    segs.push({ file: outro, dur: outroLen.duration });
+    };
+    // the first failure stops the other workers taking new clips; every
+    // ffmpeg of this video has finished before the error goes back (nothing
+    // still writing into a folder the caller is about to remove)
+    await Promise.all(Array.from({ length: Math.min(parallel, usable.length) }, () => worker().catch(e => { failed = failed || e; })));
+    if (failed) { await introP.catch(() => {}); throw failed; }
+    const introLen = await introP;
+    stop();
+    onStage('outro', 0, 1);
+    const outroLen = await renderOutro({ kind: 'BRAND', profile: p, assets, out: outro, workDir, site, signal });
+    doneSec[usable.length + 1] = OUTRO_SEC;
+    onStage('outro', 1, 1);
+    const segs = [{ file: intro, dur: introLen.duration }, ...clipSegs, { file: outro, dur: outroLen.duration }];
+    stop();
     onProgress(0.97, 'Putting the video together…');
-    await concat(segs, out, workDir);
+    onStage('encode', 0, 1);
+    const part = `${out}.part`;
+    try {
+      await concat(segs, part, workDir, signal);
+      onStage('encode', 1, 1);
+      // the check: picture and sound there, as long as its parts (within half a second)
+      onStage('validate', 0, 1);
+      const want = segs.reduce((n, x) => n + x.dur, 0);
+      const got = await probe(part);
+      if (!got || !got.hasAudio || Math.abs(got.duration - want) > 0.5 || got.width !== p.w || got.height !== p.h) {
+        throw new Error(`the finished video did not check out (${got ? `${got.width}x${got.height}, ${got.duration.toFixed(2)} s of ${want.toFixed(2)} s${got.hasAudio ? '' : ', no sound'}` : 'unreadable'})`);
+      }
+      fs.renameSync(part, out);
+      onStage('validate', 1, 1);
+    } catch (e) { fs.unlink(part, () => {}); throw e; }
     trimCache();
-    log(`${usable.length} clip(s) at ${p.key}${wheelOn ? ' with wheels' : ''} in ${((Date.now() - started) / 1000).toFixed(1)} s (${reused} from the cache)`);
+    const secs = (Date.now() - started) / 1000;
+    log(`${usable.length} clip(s) at ${p.key}${wheelOn ? ' with wheels' : ''} in ${secs.toFixed(1)} s (${reused} from the cache, ${parallel} at a time)`);
     onProgress(1, 'Done');
-    return { profile: p, included: usable.length, skipped: clips.length - usable.length, format: p.portrait ? '9:16' : '16:9' };
+    return { profile: p, included: usable.length, skipped: clips.length - usable.length, unusable, reused, seconds: secs, format: p.portrait ? '9:16' : '16:9' };
   }
 
-  return { renderHighlight, renderClip, renderIntro, renderOutro, concat, probe, pickProfile, ensureAssets, cardForClip, wheelFor, queueLength: () => queued, STYLE,
+  return { renderHighlight, renderClip, renderIntro, renderOutro, concat, probe, pickProfile, ensureAssets, cardForClip, wheelFor, queueLength: () => queued, parallel, threads, STYLE,
     // the frame counts it will use (tests): a clip, and the title / end cards
     framesOf: (info, p) => clipFrames(info, p), cardFrames: (p) => ({ intro: gridLength(INTRO_SEC, p.fps), outro: gridLength(OUTRO_SEC, p.fps) }),
     // where things go (tests): the 9:16 picture, a clip's wheel, when its shot draws

@@ -4649,7 +4649,10 @@ function newCompileJobId() {
 function setCompileJob(jobId, patch) {
     const job = compileJobs.get(jobId);
     if (!job) return;
+    // a cancelled job stays cancelled (its last steps may still report in)
+    if (job.cancelRequested && patch.status !== 'cancelled') return;
     Object.assign(job, patch);
+    if (['ready', 'error', 'cancelled'].includes(job.status) && !job.finishedAt) job.finishedAt = Date.now();
 }
 // Deletes a job's temp files + record. Called after a successful download
 // and by the periodic sweep below for anyone who never comes back for it.
@@ -4657,13 +4660,20 @@ function cleanupCompileJob(jobId) {
     const job = compileJobs.get(jobId);
     if (!job) return;
     compileJobs.delete(jobId);
+    if (job.abort && !['ready', 'error', 'cancelled'].includes(job.status)) { try { job.abort.abort(); } catch (e) { /* done */ } }
     if (job.outFile) fs.unlink(job.outFile, () => {});
     if (job.workDir) fs.rm(job.workDir, { recursive: true, force: true }, () => {});
 }
+// A finished job's file is kept COMPILE_JOB_TTL_MS from when it finished (a
+// long render used to leave little time to download it); a job still running
+// is left alone — a 200-clip video can take longer than that to make — unless
+// it has been at it for six hours (stuck).
+const COMPILE_JOB_MAX_RUN_MS = 6 * 60 * 60 * 1000;
 setInterval(() => {
     const now = Date.now();
     for (const [jobId, job] of compileJobs.entries()) {
-        if (now - job.createdAt > COMPILE_JOB_TTL_MS) cleanupCompileJob(jobId);
+        const done = ['ready', 'error', 'cancelled'].includes(job.status);
+        if (done ? now - (job.finishedAt || job.createdAt) > COMPILE_JOB_TTL_MS : now - job.createdAt > COMPILE_JOB_MAX_RUN_MS) cleanupCompileJob(jobId);
     }
 }, 5 * 60 * 1000);
 
@@ -4796,6 +4806,8 @@ function getHighlightEditor() {
             ffmpegPath: ffmpegInstallerPath,
             cacheDir: path.join(HIGHLIGHTS_TMP_DIR, 'pro-cache'),
             maxHeight: Number(process.env.HIGHLIGHT_MAX_HEIGHT) || undefined,
+            // ffmpegs at once (default: one per two CPUs this server really has — one on a small one)
+            parallel: Number(process.env.HIGHLIGHT_PARALLEL) || undefined,
             log: (m) => console.log('[HIGHLIGHT-EDIT]', m)
         });
     }
@@ -4928,7 +4940,7 @@ async function proMatchContext(matchKey) {
     if (!matchRecordsCollection || !matchKey) return {};
     try {
         const m = await matchRecordsCollection.findOne({ $or: [{ roomId: matchKey }, { matchId: matchKey }] },
-            { projection: { teamA: 1, teamB: 1, matchTitle: 1, ownerUid: 1, leagueKey: 1, battingCard: 1, bowlingCard: 1, scoreA: 1, scoreB: 1, matchResultText: 1 } });
+            { projection: { teamA: 1, teamB: 1, matchTitle: 1, ownerUid: 1, leagueKey: 1, battingCard: 1, bowlingCard: 1, scoreA: 1, scoreB: 1, matchResultText: 1, venue: 1 } });
         if (!m) return {};
         let tournament = '';
         if (leaguesCollection && m.leagueKey && m.leagueKey !== SINGLE_MATCHES_LEAGUE_KEY) {
@@ -4980,10 +4992,24 @@ async function proTitleForMatchCompile(body, matchId, clips) {
 // edit it like a broadcast package (see PRO EDIT above);
 // without it (or past HIGHLIGHT_PRO_MAX_CLIPS, or if the edit fails) the clips
 // are joined plain, exactly as before.
-async function runCompileJob(jobId, clipDocs, pro) {
+// opts (the Highlight Studio): keepOrder — the clips' order is the
+// operator's, not match order; strict — a clip that cannot be loaded or
+// played fails the job, naming it (never a video quietly missing a clip),
+// and the edit never falls back to a plain join; maxPro — how many clips
+// still get the full edit. A job can be cancelled (job.abort).
+async function runCompileJob(jobId, clipDocs, pro, opts = {}) {
     const job = compileJobs.get(jobId);
     if (!job) return;
-    const ordered = dedupeClipsById(chronologicalClipOrder(clipDocs));
+    job.abort = new AbortController();
+    // each stage's own count, for the studio's dashboard (stages can overlap:
+    // the title card is made alongside the clips)
+    const stageMap = {};
+    const stage = (name, done, total, extra) => {
+        stageMap[name] = { done, total, at: (stageMap[name] && stageMap[name].at) || Date.now(), end: done >= total ? Date.now() : null };
+        setCompileJob(jobId, { stage: name, stageDone: done, stageTotal: total, stageMap, ...(extra || {}) });
+    };
+    const cancelled = () => { const j = compileJobs.get(jobId); return !j || j.cancelRequested; };
+    const ordered = opts.keepOrder ? dedupeClipsById(clipDocs) : dedupeClipsById(chronologicalClipOrder(clipDocs));
     if (!ordered.length) {
         setCompileJob(jobId, { status: 'error', error: 'No highlights available for this selection yet.' });
         return;
@@ -4994,23 +5020,35 @@ async function runCompileJob(jobId, clipDocs, pro) {
     setCompileJob(jobId, { workDir, status: 'collecting', progress: 0, message: 'Collecting clips...' });
 
     // ⚡ Three clips at a time (they used to come one after another), kept in
-    // match order.
-    const editing = !!(pro && HIGHLIGHT_PRO_ON && ordered.length <= HIGHLIGHT_PRO_MAX_CLIPS);
+    // order (match order — or the studio's own).
+    const editing = !!(pro && HIGHLIGHT_PRO_ON && ordered.length <= (opts.maxPro || HIGHLIGHT_PRO_MAX_CLIPS));
+    stage('collect', 0, ordered.length);
     const collectShare = editing ? 22 : 50; // the edit gets most of the bar
     const local = new Array(ordered.length).fill(null);
     let nextIdx = 0, fetched = 0;
     const fetchWorker = async () => {
         while (nextIdx < ordered.length) {
             const i = nextIdx++;
+            if (cancelled()) return;
             local[i] = await downloadClipToTemp(ordered[i], workDir, i);
             fetched++;
             setCompileJob(jobId, { progress: Math.round((fetched / ordered.length) * collectShare), message: `Collecting clips... (${fetched}/${ordered.length})` });
+            stage('collect', fetched, ordered.length);
         }
     };
     await Promise.all([fetchWorker(), fetchWorker(), fetchWorker()]);
+    if (cancelled()) { fs.rm(workDir, { recursive: true, force: true }, () => {}); return; }
     const kept = ordered.map((clip, i) => ({ clip, file: local[i] })).filter(x => x.file);
     const localPaths = kept.map(x => x.file);
     const skipped = ordered.length - kept.length;
+    // a selected clip that could not be loaded: named, and (studio) the job stops
+    const clipLabel = (c) => `${String(c.eventType || 'CLIP').toUpperCase()}${c.over != null ? ` ${c.over}.${c.ballInOver}` : ''}${c.strikerName ? ` · ${c.strikerName}` : ''}`;
+    const missing = ordered.map((c, i) => local[i] ? null : { clipId: String(c._id), label: clipLabel(c), reason: 'could not be downloaded' }).filter(Boolean);
+    if (opts.strict && missing.length) {
+        setCompileJob(jobId, { status: 'error', stage: 'collect', missing, error: `${missing.length} of the ${ordered.length} selected clips could not be loaded — ${missing.slice(0, 3).map(m => m.label).join(', ')}${missing.length > 3 ? '…' : ''}. Remove them or try again.` });
+        fs.rm(workDir, { recursive: true, force: true }, () => {});
+        return;
+    }
 
     if (!localPaths.length) {
         setCompileJob(jobId, { status: 'error', error: 'None of the clips for this selection could be loaded.' });
@@ -5026,17 +5064,36 @@ async function runCompileJob(jobId, clipDocs, pro) {
         try {
             const title = typeof pro.makeTitle === 'function' ? await pro.makeTitle(kept.map(x => x.clip)) : (pro.title || {});
             const wheels = pro.wheel ? await proWheelData(kept.map(x => x.clip)) : null;
-            await editor.renderHighlight({
+            const made = await editor.renderHighlight({
                 clips: kept.map(x => ({ file: x.file, clipKey: proClipKey(x.clip), card: cardForClip(x.clip), wheel: (wheels && wheels.get(String(x.clip._id))) || null })),
-                title, out: outFile, workDir, format: pro.format, wheel: !!pro.wheel,
-                onProgress: (f, msg) => setCompileJob(jobId, { progress: Math.min(99, collectShare + 1 + Math.round(f * (98 - collectShare))), message: msg })
+                title, out: outFile, workDir, format: pro.format, wheel: !!pro.wheel, strict: !!opts.strict, signal: job.abort.signal,
+                dropSources: !!opts.strict, // (strict never falls back to a plain join, so a clip's file can go once it is edited)
+                onProgress: (f, msg) => setCompileJob(jobId, { progress: Math.min(99, collectShare + 1 + Math.round(f * (98 - collectShare))), message: msg }),
+                onStage: (name, done, total) => stage(name, done, total)
             });
-            setCompileJob(jobId, { status: 'ready', progress: 100, message: 'Download Ready', outFile, included: localPaths.length, skipped, edited: true, format: pro.format === '9:16' ? '9:16' : '16:9', wheel: !!pro.wheel });
+            if (cancelled()) { fs.unlink(outFile, () => {}); fs.rm(workDir, { recursive: true, force: true }, () => {}); return; }
+            const m = made || {};
+            setCompileJob(jobId, { status: 'ready', stage: 'ready', progress: 100, message: 'Download Ready', outFile, included: m.included != null ? m.included : localPaths.length,
+                skipped: skipped + (m.skipped || 0), edited: true, format: pro.format === '9:16' ? '9:16' : '16:9', wheel: !!pro.wheel, renderSec: m.seconds || null, reused: m.reused == null ? null : m.reused,
+                profile: m.profile ? `${m.profile.w}x${m.profile.h} ${m.profile.fps} fps` : '' });
             fs.rm(workDir, { recursive: true, force: true }, () => {});
             return;
         } catch (err) {
-            console.log(`Compile job ${jobId}: pro edit failed, joining the clips plain instead:`, err.message || err);
             fs.unlink(outFile, () => {});
+            if (err && err.cancelled || cancelled()) {
+                setCompileJob(jobId, { status: 'cancelled', message: 'Cancelled', error: null });
+                fs.rm(workDir, { recursive: true, force: true }, () => {});
+                return;
+            }
+            if (opts.strict) {
+                const bad = (err && err.unusable || []).map(i => kept[i] && { clipId: String(kept[i].clip._id), label: clipLabel(kept[i].clip), reason: 'could not be played' }).filter(Boolean);
+                console.log(`Compile job ${jobId} (studio) failed:`, err.message || err);
+                setCompileJob(jobId, { status: 'error', missing: bad, error: bad.length ? `${bad.length} selected clip(s) could not be played — ${bad.slice(0, 3).map(m => m.label).join(', ')}. Remove them or try again.`
+                    : `The video could not be made (${String(err.message || err).slice(0, 160)}). Try again.` });
+                fs.rm(workDir, { recursive: true, force: true }, () => {});
+                return;
+            }
+            console.log(`Compile job ${jobId}: pro edit failed, joining the clips plain instead:`, err.message || err);
         }
     }
 
@@ -5115,6 +5172,7 @@ async function clipsForCompileRequest(body) {
 app.post('/api/highlights/compile', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     try {
+        if (String((req.body || {}).type || '').toLowerCase() === 'custom') return await startStudioCompile(req, res);
         const resolved = await clipsForCompileRequest(req.body || {});
         if (resolved.error) return res.status(400).json({ success: false, error: resolved.error });
         if (!resolved.clips.length) {
@@ -5137,6 +5195,46 @@ app.post('/api/highlights/compile', async (req, res) => {
     }
 });
 
+// Room on this server's disk for a studio video before it starts (a long one
+// is gigabytes): its clips (about 6 Mbit/s each), their edited copies, the
+// video itself, and some to spare. → null when there is room, else { need, free } bytes.
+function studioDiskShort(clips) {
+    let free;
+    try { const st = fs.statfsSync(HIGHLIGHTS_TMP_DIR); free = st.bavail * st.bsize; } catch (e) { return null; }
+    const secs = clips.reduce((n, c) => n + (Number(c.clipSeconds) || 15), 0);
+    const need = secs * 0.75 * 1048576 * 2.2 + 300 * 1048576;
+    return free < need ? { need, free } : null;
+}
+// The Highlight Studio's render: its clips in its order, strict, kept for
+// the job's lifetime. The same request while one is still running is that
+// job (a double click never starts a second render).
+async function startStudioCompile(req, res) {
+    const who = await studioAccess(req, res);
+    if (!who) return;
+    const body = req.body || {};
+    const r = await studioClips(body);
+    if (r.error) return res.status(400).json({ success: false, error: r.error, missing: r.missing || [] });
+    if (!(await studioCanOpenMatch(who, r.matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
+    const subject = studioSubject(body), o = proOptionsFrom(body);
+    const sig = require('crypto').createHash('sha1').update(JSON.stringify({ m: r.matchId, ids: body.clipIds, subject, o })).digest('hex');
+    for (const [id, j] of compileJobs.entries()) {
+        if (j.studioSig === sig && !['ready', 'error', 'cancelled'].includes(j.status)) return res.json({ success: true, jobId: id, existing: true });
+    }
+    const short = studioDiskShort(r.clips);
+    if (short) return res.status(507).json({ success: false, error: `Not enough disk space on the server for ${r.clips.length} clips (about ${(short.need / 1073741824).toFixed(1)} GB needed, ${(short.free / 1073741824).toFixed(1)} GB free). Render fewer clips at a time.` });
+    const running = [...compileJobs.values()].filter(j => j.studio && !['ready', 'error', 'cancelled'].includes(j.status)).length;
+    if (running >= HIGHLIGHT_STUDIO_MAX_JOBS) return res.status(429).json({ success: false, busy: true, error: `${running} studio videos are being made right now — start this one when one of them is done.` });
+    const jobId = newCompileJobId();
+    compileJobs.set(jobId, { status: 'queued', stage: 'prepare', progress: 0, message: 'Preparing clips…', matchId: r.matchId, createdAt: Date.now(), startedAt: Date.now(),
+        included: 0, skipped: 0, total: r.clips.length, studio: true, keep: true, studioSig: sig, stages: STUDIO_STAGES, ownerUid: who.uid });
+    runCompileJob(jobId, r.clips, { makeTitle: (clips) => proTitleForMatchCompile(subject, r.matchId, clips), ...o },
+        { keepOrder: true, strict: true, maxPro: HIGHLIGHT_STUDIO_MAX_CLIPS }).catch(err => {
+        console.log(`Studio job ${jobId} crashed:`, err.message || err);
+        setCompileJob(jobId, { status: 'error', error: 'Something went wrong making this video — try again.' });
+    });
+    res.json({ success: true, jobId });
+}
+
 // GET /api/highlights/compile/:jobId/status
 app.get('/api/highlights/compile/:jobId/status', (req, res) => {
     const job = compileJobs.get(req.params.jobId);
@@ -5145,7 +5243,12 @@ app.get('/api/highlights/compile/:jobId/status', (req, res) => {
         success: true, status: job.status, progress: job.progress, message: job.message,
         error: job.error || null, included: job.included, skipped: job.skipped,
         edited: !!job.edited, // titles & transitions were added (the pro edit)
-        format: job.edited ? job.format || '16:9' : null, wheel: !!(job.edited && job.wheel)
+        format: job.edited ? job.format || '16:9' : null, wheel: !!(job.edited && job.wheel),
+        // the studio's dashboard: the stage really running and how far it is, the clock, what was missing
+        stage: job.stage || null, stageDone: job.stageDone == null ? null : job.stageDone, stageTotal: job.stageTotal == null ? null : job.stageTotal,
+        total: job.total || null, studio: !!job.studio, elapsedMs: Date.now() - (job.startedAt || job.createdAt),
+        renderSec: job.renderSec || null, reused: job.reused == null ? null : job.reused, profile: job.profile || null, missing: job.missing || [],
+        stageMap: job.stageMap || null
     });
 });
 
@@ -5168,8 +5271,269 @@ app.get('/api/highlights/compile/:jobId/download', (req, res) => {
     res.setHeader('Content-Type', isZip ? 'application/zip' : 'video/mp4');
     const stream = fs.createReadStream(job.outFile);
     stream.pipe(res);
-    stream.on('close', () => cleanupCompileJob(req.params.jobId));
+    // (a studio video stays until its job expires: it may be downloaded again)
+    stream.on('close', () => { if (!job.keep) cleanupCompileJob(req.params.jobId); });
     stream.on('error', () => { try { res.end(); } catch (e) {} });
+});
+
+
+// ================================================================
+// 🎛️ HIGHLIGHT STUDIO (highlight-studio.html) — the operator builds ONE
+// highlights package from a match's clips: picks them (filters, search),
+// orders them by hand, picks the shape and the wheel, and watches the real
+// render. Built on the same pieces as every download above — the same
+// visible-clip query (HIGHLIGHT_VISIBLE), the same R2-then-Drive fetch, the
+// same pro edit (highlight-edit.js) and its segment cache — so nothing here
+// is a second notion of which clips a match has.
+//   GET  /api/highlights/studio/:matchId           the match (teams, logos,
+//        colours, tournament) and every visible clip, in ball order
+//   POST /api/highlights/compile { type:'custom', clipIds:[…in play order],
+//        subject:{ type, playerKey, category, team }, format, wheel }
+//   POST /api/highlights/compile/:jobId/cancel      stops it, frees the CPU
+//   POST /api/highlights/title  { matchId, subject, clipIds }  the verified
+//        words and figures for the title card and the thumbnails
+//   GET  /api/highlights/frames/:clipId            stills from the clip,
+//        sharpest first, for a thumbnail's photo
+// A studio job is strict: a selected clip that cannot be loaded or played
+// fails the job, naming it — never a video quietly missing a clip. Its
+// video is kept for the job's lifetime (download it more than once).
+// ================================================================
+const HIGHLIGHT_STUDIO_MAX_CLIPS = Number(process.env.HIGHLIGHT_STUDIO_MAX_CLIPS) || 400;
+// the stages a job goes through, as the studio's dashboard lists them
+const STUDIO_STAGES = ['prepare', 'collect', 'probe', 'assets', 'intro', 'clips', 'outro', 'encode', 'validate', 'ready'];
+// studio videos being made at once (each is a long, CPU-heavy job)
+const HIGHLIGHT_STUDIO_MAX_JOBS = Number(process.env.HIGHLIGHT_STUDIO_MAX_JOBS) || 2;
+
+// The studio is an operator's tool: a verified sign-in (Firebase ID token)
+// of one of the accounts that may manage tournaments (the same ones as
+// everywhere else — never a uid or email the page just states). → the
+// decoded token, or null (the response has been sent).
+async function studioAccess(req, res) {
+    const decoded = await verifyIdTokenFull(extractIdToken(req));
+    if (!decoded) { res.status(401).json({ success: false, signIn: true, error: 'Sign in to use the Highlight Studio' }); return null; }
+    if (!isAuthorizedCreatorEmail(decoded.email)) { res.status(403).json({ success: false, error: 'This account cannot use the Highlight Studio' }); return null; }
+    return decoded;
+}
+// A private tournament's match (or a private creator's own match) only for
+// its creator — the same rule as the public portal.
+async function studioCanOpenMatch(decoded, matchId) {
+    if (!matchRecordsCollection || !matchId) return true;
+    const rec = await matchRecordsCollection.findOne({ $or: [{ roomId: matchId }, { matchId }] }, { projection: { ownerUid: 1, leagueKey: 1 } });
+    if (!rec || !rec.ownerUid || rec.ownerUid === decoded.uid) return true;
+    if (leaguesCollection && rec.leagueKey && rec.leagueKey !== SINGLE_MATCHES_LEAGUE_KEY) {
+        const lg = await leaguesCollection.findOne({ ownerUid: rec.ownerUid, leagueKey: rec.leagueKey });
+        if (lg) return !(await isPrivateLeagueDoc(lg));
+    }
+    return !isPrivateCreatorEmail(await getVerifiedEmailForUid(rec.ownerUid));
+}
+
+app.get('/api/highlights/studio/:matchId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    const matchId = safeMatchId(req.params.matchId);
+    if (!matchId) return res.status(400).json({ success: false, error: 'matchId required' });
+    try {
+        const who = await studioAccess(req, res);
+        if (!who) return;
+        if (!(await studioCanOpenMatch(who, matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
+        const clips = await clipsCollection.find({ matchId, ...HIGHLIGHT_VISIBLE }).sort({ innings: 1, over: 1, ballInOver: 1, _id: 1 }).limit(2000).toArray();
+        await backfillClipInnings(matchId, clips);
+        const ctx = await proMatchContext(matchId);
+        const rec = ctx.rec || null;
+        // how each team shows its logo (Teams in the panel: Sticker / Circle and
+        // its backing colour) lives in the panel's saved state, not the record
+        let live = {};
+        try {
+            const snap = matchPanelStatesCollection ? await matchPanelStatesCollection.findOne({ matchId }) : null;
+            live = (snap && snap.state) || {};
+        } catch (e) { /* the default look */ }
+        const team = (t, k) => {
+            if (!t) return null;
+            const lt = live['team' + k] || {};
+            const same = lt.logoUrl && lt.logoUrl === t.logoUrl;
+            return { name: t.name || t.short || '', short: t.short || '', color: t.color || '', logo: (proTeam(t) || {}).logo || '',
+                logoStyle: same && lt.logoStyle === 'circle' ? 'circle' : 'sticker', logoBg: same && /^#[0-9a-f]{6}$/i.test(lt.logoBg || '') ? lt.logoBg : '#ffffff' };
+        };
+        res.json({
+            success: true,
+            match: { matchId, title: ctx.title || '', tournament: ctx.tournament || '', result: ctx.result || '', venue: (rec && rec.venue) || '',
+                teams: { A: team(rec && rec.teamA, 'A'), B: team(rec && rec.teamB, 'B') } },
+            clips: clips.map(c => ({ ...serializeClip(c), keys: { striker: c.strikerKey || null, bowler: c.bowlerKey || null, fielder: c.fielderKey || null, dismissed: c.dismissedPlayerKey || null } }))
+        });
+    } catch (err) {
+        console.log('Highlight studio load error:', err);
+        res.status(500).json({ success: false, error: 'Could not load this match\'s clips' });
+    }
+});
+
+// The clips a studio request names, in the order it names them: every one
+// this match's, visible, and named once. → { clips } | { error }
+async function studioClips(body) {
+    const matchId = safeMatchId(body.matchId);
+    if (!matchId) return { error: 'matchId required' };
+    const ids = Array.isArray(body.clipIds) ? body.clipIds.map(String) : [];
+    if (!ids.length) return { error: 'Pick at least one clip' };
+    if (ids.length > HIGHLIGHT_STUDIO_MAX_CLIPS) return { error: `At most ${HIGHLIGHT_STUDIO_MAX_CLIPS} clips in one video` };
+    if (new Set(ids).size !== ids.length) return { error: 'A clip is in the list twice' };
+    const { ObjectId } = require('mongodb');
+    const oids = [];
+    for (const id of ids) { if (!ObjectId.isValid(id)) return { error: `Unknown clip ${id}` }; oids.push(new ObjectId(id)); }
+    const found = await clipsCollection.find({ _id: { $in: oids }, matchId, ...HIGHLIGHT_VISIBLE }).toArray();
+    const byId = new Map(found.map(c => [String(c._id), c]));
+    const missing = ids.filter(id => !byId.has(id));
+    if (missing.length) return { error: `${missing.length} of the selected clips are not this match's highlights any more`, missing };
+    return { matchId, clips: ids.map(id => byId.get(id)) };
+}
+// What the title card / thumbnails are about: a player (and which of their
+// clips), a team, or the whole match — the same subject shapes as the
+// scorecard downloads.
+function studioSubject(body) {
+    const s = (body && body.subject) || {};
+    const type = ['player', 'team', 'sixes', 'fours', 'wickets', 'full'].includes(String(s.type)) ? String(s.type) : 'full';
+    return { type, playerKey: s.playerKey || '', category: PLAYER_HIGHLIGHT_CATEGORIES.includes(String(s.category || '')) ? String(s.category) : '', team: String(s.team || '').toUpperCase() };
+}
+// A headline for the thumbnails from what the clips really are (never a
+// claim the clips do not show) — the operator can change it.
+function studioHeadline(subject, clips) {
+    const n = { SIX: 0, FOUR: 0, WICKET: 0 };
+    clips.forEach(c => { const e = String(c.eventType || '').toUpperCase(); if (e in n) n[e]++; });
+    const only = (k) => Object.keys(n).every(x => x === k ? n[x] > 0 : n[x] === 0);
+    const pl = (v, one, many) => `${v} ${v === 1 ? one : many}`;
+    if (only('SIX')) return n.SIX >= 2 ? pl(n.SIX, 'SIX', 'SIXES') : 'MAXIMUM';
+    if (only('FOUR')) return n.FOUR >= 2 ? pl(n.FOUR, 'FOUR', 'FOURS') : 'BOUNDARY';
+    if (only('WICKET')) return subject.type === 'player' && subject.category === 'wickets' ? (n.WICKET >= 2 ? `${pl(n.WICKET, 'WICKET', 'WICKETS')}` : 'WICKET') : (n.WICKET >= 2 ? pl(n.WICKET, 'WICKET', 'WICKETS') : 'WICKET');
+    if (n.SIX && n.FOUR && !n.WICKET) return 'SIXES & FOURS';
+    if (subject.type === 'player') return subject.category === 'wickets' ? 'BOWLING HIGHLIGHTS' : 'BATTING HIGHLIGHTS';
+    if (subject.type === 'team') return 'TEAM HIGHLIGHTS';
+    return 'MATCH HIGHLIGHTS';
+}
+app.post('/api/highlights/title', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const who = await studioAccess(req, res);
+        if (!who) return;
+        const body = req.body || {};
+        const r = await studioClips(body);
+        if (r.error) return res.status(400).json({ success: false, error: r.error, missing: r.missing || [] });
+        if (!(await studioCanOpenMatch(who, r.matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
+        const subject = studioSubject(body);
+        const title = await proTitleForMatchCompile(subject, r.matchId, r.clips);
+        const n = { SIX: 0, FOUR: 0, WICKET: 0, CLIP: 0 };
+        r.clips.forEach(c => { const e = String(c.eventType || '').toUpperCase(); n[e in n ? e : 'CLIP']++; });
+        res.json({ success: true, title, counts: { sixes: n.SIX, fours: n.FOUR, wickets: n.WICKET, other: n.CLIP, total: r.clips.length }, headline: studioHeadline(subject, r.clips) });
+    } catch (err) {
+        console.log('Highlight title error:', err);
+        res.status(500).json({ success: false, error: 'Could not read the match for the title' });
+    }
+});
+
+// 📸 Stills from one clip for a thumbnail's photo: a handful of frames from
+// the part of the clip the shot is in (the clip ends a few seconds after
+// the scorer's press, made once the ball is dead), each scored for
+// sharpness (the variance of its edges, on a small grey copy — a blurred
+// frame of a fast shot scores low), sharpest first. Cached per clip
+// version; one clip at a time on this server.
+const STUDIO_FRAMES_DIR = path.join(HIGHLIGHTS_TMP_DIR, 'frames');
+fs.mkdirSync(STUDIO_FRAMES_DIR, { recursive: true });
+let studioFrameChain = Promise.resolve();
+function studioFfmpeg(args, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const { spawn } = require('child_process');
+        const p = spawn(ffmpegInstallerPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const out = [];
+        let err = '';
+        p.stdout.on('data', (d) => out.push(d));
+        p.stderr.on('data', (d) => { err += d; if (err.length > 4000) err = err.slice(-4000); });
+        const t = setTimeout(() => p.kill('SIGKILL'), opts.timeoutMs || 60000);
+        p.on('error', (e) => { clearTimeout(t); reject(e); });
+        p.on('close', (code) => { clearTimeout(t); code === 0 ? resolve(Buffer.concat(out)) : reject(new Error(err.trim().slice(-400) || `ffmpeg exit ${code}`)); });
+    });
+}
+async function studioSharpness(file) {
+    // 160 x 90 grey: the mean squared Laplacian
+    const raw = await studioFfmpeg(['-i', file, '-vf', 'scale=160:90,format=gray', '-f', 'rawvideo', 'pipe:1']);
+    const W = 160, H = 90;
+    if (raw.length < W * H) return 0;
+    let sum = 0, n = 0;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x, l = 4 * raw[i] - raw[i - 1] - raw[i + 1] - raw[i - W] - raw[i + W];
+        sum += l * l; n++;
+    }
+    return Math.round(sum / n);
+}
+app.get('/api/highlights/frames/:clipId', async (req, res) => {
+    if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
+    try {
+        const { ObjectId } = require('mongodb');
+        if (!ObjectId.isValid(req.params.clipId)) return res.status(400).json({ success: false, error: 'Unknown clip' });
+        const who = await studioAccess(req, res);
+        if (!who) return;
+        const clip = await clipsCollection.findOne({ _id: new ObjectId(req.params.clipId), ...HIGHLIGHT_VISIBLE });
+        if (!clip || !(await studioCanOpenMatch(who, clip.matchId))) return res.status(404).json({ success: false, error: 'Unknown clip' });
+        const n = Math.max(2, Math.min(8, parseInt(req.query.n, 10) || 6));
+        const key = require('crypto').createHash('sha1').update(proClipKey(clip) + '|' + n).digest('hex');
+        const dir = path.join(STUDIO_FRAMES_DIR, key), index = path.join(dir, 'index.json');
+        if (!fs.existsSync(index)) {
+            const job = studioFrameChain.then(async () => {
+                if (fs.existsSync(index)) return;
+                const work = fs.mkdtempSync(path.join(HIGHLIGHTS_TMP_DIR, 'fr-'));
+                try {
+                    const file = await downloadClipToTemp(clip, work, 0);
+                    if (!file) throw new Error('This clip could not be loaded');
+                    const info = await getHighlightEditor().probe(file);
+                    if (!info) throw new Error('This clip could not be read');
+                    // the shot: from a third of the way in to a little before the end
+                    const a = Math.max(0, info.duration * 0.3), b = Math.max(a + 0.5, info.duration - 1.6);
+                    const tmp = fs.mkdtempSync(path.join(STUDIO_FRAMES_DIR, 'tmp-'));
+                    const frames = [];
+                    for (let i = 0; i < n; i++) {
+                        const t = a + (b - a) * (n === 1 ? 0.5 : i / (n - 1));
+                        const f = path.join(tmp, `f${i}.jpg`);
+                        await studioFfmpeg(['-ss', t.toFixed(2), '-i', file, '-frames:v', '1', '-vf', "scale='min(1920,iw)':-2", '-q:v', '2', f]);
+                        frames.push({ t: Math.round(t * 100) / 100, file: `f${i}.jpg`, score: await studioSharpness(f), w: info.width, h: info.height });
+                    }
+                    frames.sort((x, y) => y.score - x.score);
+                    fs.writeFileSync(path.join(tmp, 'index.json'), JSON.stringify({ frames, duration: info.duration }));
+                    fs.rmSync(dir, { recursive: true, force: true });
+                    fs.renameSync(tmp, dir);
+                } finally {
+                    fs.rm(work, { recursive: true, force: true }, () => {});
+                }
+            });
+            studioFrameChain = job.catch(() => {});
+            await job;
+        }
+        const meta = JSON.parse(fs.readFileSync(index, 'utf8'));
+        const now = new Date();
+        try { fs.utimesSync(dir, now, now); } catch (e) { /* best effort */ }
+        res.json({ success: true, duration: meta.duration, frames: meta.frames.map(f => ({ t: f.t, score: f.score, w: f.w, h: f.h,
+            dataUrl: 'data:image/jpeg;base64,' + fs.readFileSync(path.join(dir, f.file)).toString('base64') })) });
+    } catch (err) {
+        console.log('Highlight frames error:', err.message || err);
+        res.status(500).json({ success: false, error: err.message || 'Could not take stills from this clip' });
+    }
+});
+// old stills go after a day
+setInterval(() => {
+    try {
+        const now = Date.now();
+        fs.readdirSync(STUDIO_FRAMES_DIR).forEach(n => {
+            const f = path.join(STUDIO_FRAMES_DIR, n);
+            try { if (now - fs.statSync(f).mtimeMs > 24 * 3600 * 1000) fs.rm(f, { recursive: true, force: true }, () => {}); } catch (e) { /* gone */ }
+        });
+    } catch (e) { /* best effort */ }
+}, 60 * 60 * 1000);
+
+app.post('/api/highlights/compile/:jobId/cancel', async (req, res) => {
+    const who = await studioAccess(req, res);
+    if (!who) return;
+    const job = compileJobs.get(req.params.jobId);
+    if (!job || !job.studio) return res.status(404).json({ success: false, error: 'Job not found or expired' });
+    if (job.ownerUid && job.ownerUid !== who.uid && who.email !== OWNER_EMAIL) return res.status(403).json({ success: false, error: 'Only whoever started this video can cancel it' });
+    if (['ready', 'error', 'cancelled'].includes(job.status)) return res.json({ success: true, status: job.status });
+    job.cancelRequested = true;
+    if (job.abort) job.abort.abort();
+    setCompileJob(req.params.jobId, { status: 'cancelled', message: 'Cancelled', error: null });
+    res.json({ success: true, status: 'cancelled' });
 });
 
 // ================================================================
@@ -11398,6 +11762,7 @@ app.get('/cricket-panel', (req, res) => sendHtmlNoCache(res, __dirname + '/crick
 app.get('/cricket-overlay2', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay2.html'));
 app.get('/cricket-panel2', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel2.html'));
 app.get('/cricket-scorecard', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-scorecard.html'));
+app.get('/highlight-studio', (req, res) => sendHtmlNoCache(res, __dirname + '/highlight-studio.html'));
 app.get('/cricket-overlay3', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-overlay3.html'));
 app.get('/cricket-panel3', (req, res) => sendHtmlNoCache(res, __dirname + '/cricket-panel3.html'));
 // 🖥️ LED Screen Output — ground display page. Static shell only; it joins
