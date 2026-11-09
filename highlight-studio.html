@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Highlight Studio · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<style>
+@font-face { font-family: 'ASL Display'; src: url('/assets/highlights/fonts/BigShoulders-Bold.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'ASL Body'; src: url('/assets/highlights/fonts/Inter-SemiBold.otf') format('opentype'); font-display: swap; }
+:root {
+  --bg: #070b14; --panel: #0d1424; --panel2: #111a2e; --line: rgba(255,255,255,0.08); --line2: rgba(255,255,255,0.14);
+  --text: #e8edf6; --muted: #8b97ad; --dim: #5d6a82; --amber: #f59e0b; --teal: #38b2c1; --red: #ef4444; --green: #22c55e;
+  --six: #a855f7; --four: #3b82f6; --wkt: #ef4444; --other: #22c55e; --radius: 14px;
+  --display: 'ASL Display', Impact, sans-serif; --body: 'ASL Body', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--body); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.hidden { display: none !important; }
+a { color: var(--teal); }
+
+/* ---- top bar */
+.top { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: rgba(7,11,20,0.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.brand { font: 26px/1 var(--display); letter-spacing: 0.04em; white-space: nowrap; }
+.brand .a { color: #f4a23c; } .brand .s { color: var(--teal); } .brand .l { color: #ff4d4f; }
+.brand small { font: 12px var(--body); color: var(--muted); letter-spacing: 0.18em; margin-left: 10px; vertical-align: middle; }
+.match-title { flex: 1; min-width: 0; }
+.match-title b { display: block; font: 20px/1.1 var(--display); letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.match-title span { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.who { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.tabs { display: none; gap: 6px; padding: 10px 16px 0; }
+.tab { flex: 1; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel); color: var(--muted); font-weight: 600; }
+.tab.on { background: var(--amber); color: #111; border-color: var(--amber); }
+
+/* ---- layout */
+.wrap { display: grid; grid-template-columns: minmax(360px, 420px) 1fr; gap: 18px; padding: 18px 20px 120px; max-width: 1720px; margin: 0 auto; }
+.col { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.card { background: linear-gradient(180deg, var(--panel), #0b1220); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: 0 20px 50px rgba(0,0,0,0.25); }
+.card h2 { margin: 0 0 12px; font: 22px/1 var(--display); letter-spacing: 0.06em; display: flex; align-items: center; gap: 10px; }
+.card h2 .n { font: 12px var(--body); color: var(--muted); letter-spacing: 0; }
+.card h2::before { content: ''; width: 4px; height: 20px; border-radius: 2px; background: var(--amber); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.btn { border: 1px solid var(--line2); background: var(--panel2); padding: 8px 14px; border-radius: 10px; font-weight: 600; transition: background .15s, border-color .15s, transform .1s; }
+.btn:hover { border-color: rgba(255,255,255,0.3); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.primary { background: linear-gradient(180deg, #fbbf24, #f59e0b); color: #111; border-color: #f59e0b; }
+.btn.danger { border-color: rgba(239,68,68,0.5); color: #fecaca; }
+.btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
+.btn.ghost { background: transparent; }
+.input, select.input { background: #0a1120; border: 1px solid var(--line2); border-radius: 10px; padding: 8px 12px; min-width: 0; }
+.input:focus { outline: 2px solid rgba(245,158,11,0.5); outline-offset: 1px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line2); background: transparent; border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.chip.on { color: #111; background: var(--text); border-color: var(--text); }
+.chip .c { opacity: 0.7; margin-left: 4px; }
+.muted { color: var(--muted); }
+.tiny { font-size: 11px; color: var(--dim); }
+.ev { display: inline-flex; align-items: center; justify-content: center; min-width: 46px; padding: 3px 8px; border-radius: 6px; font: 15px/1 var(--display); letter-spacing: 0.05em; color: #fff; }
+.ev.SIX { background: var(--six); } .ev.FOUR { background: var(--four); } .ev.WICKET { background: var(--wkt); } .ev.CLIP { background: #15803d; }
+
+/* ---- library */
+.lib-tools { display: grid; gap: 10px; margin-bottom: 10px; }
+.lib-tools .two { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.lib { position: relative; height: calc(100vh - 330px); min-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #080d18; contain: strict; }
+.lib-spacer { position: relative; width: 100%; }
+.clip { position: absolute; left: 0; right: 0; height: 84px; display: grid; grid-template-columns: 22px 104px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); user-select: none; cursor: pointer; }
+.clip:hover { background: rgba(255,255,255,0.03); }
+.clip.sel { background: linear-gradient(90deg, rgba(245,158,11,0.16), rgba(245,158,11,0.03)); }
+.clip.na { opacity: 0.5; cursor: not-allowed; }
+.clip .box { width: 18px; height: 18px; border-radius: 5px; border: 2px solid var(--line2); display: grid; place-items: center; }
+.clip.sel .box { background: var(--amber); border-color: var(--amber); }
+.clip.sel .box::after { content: ''; width: 9px; height: 5px; border-left: 2px solid #111; border-bottom: 2px solid #111; transform: rotate(-45deg) translate(1px, -1px); }
+.poster { position: relative; width: 104px; height: 60px; border-radius: 8px; overflow: hidden; background: #111a2e center/cover no-repeat; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poster .play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,0.25); opacity: 0; transition: opacity .15s; border: 0; padding: 0; }
+.clip:hover .poster .play { opacity: 1; }
+.poster .play::before { content: ''; border-left: 14px solid #fff; border-top: 9px solid transparent; border-bottom: 9px solid transparent; margin-left: 3px; }
+.poster .dur { position: absolute; right: 4px; bottom: 4px; background: rgba(0,0,0,0.75); font-size: 10px; padding: 1px 5px; border-radius: 4px; }
+.meta { min-width: 0; }
+.meta .l1 { display: flex; gap: 8px; align-items: center; }
+.meta .l1 .num { color: var(--dim); font-size: 11px; }
+.meta .l1 .ob { font-weight: 700; }
+.meta .l2, .meta .l3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.meta .l2 { color: var(--text); margin-top: 3px; } .meta .l3 { color: var(--muted); }
+.order { font: 18px var(--display); color: var(--amber); min-width: 26px; text-align: right; }
+.empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+
+/* ---- timeline */
+.strip { display: flex; height: 34px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); margin: 6px 0 4px; background: #080d18; }
+.strip > div { height: 100%; min-width: 2px; border-right: 1px solid rgba(0,0,0,0.6); position: relative; }
+.strip .in, .strip .out { background: repeating-linear-gradient(45deg, #1e293b, #1e293b 6px, #273449 6px, #273449 12px); }
+.strip .SIX { background: var(--six); } .strip .FOUR { background: var(--four); } .strip .WICKET { background: var(--wkt); } .strip .CLIP { background: #15803d; }
+.strip-legend { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
+.tl { list-style: none; margin: 10px 0 0; padding: 0; max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.tl li { display: grid; grid-template-columns: 28px 30px 56px 1fr auto; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); background: #0a1120; touch-action: none; }
+.tl li.drag { opacity: 0.35; }
+.tl li.ghost { position: fixed; z-index: 60; pointer-events: none; box-shadow: 0 16px 40px rgba(0,0,0,0.6); border: 1px solid var(--amber); border-radius: 10px; opacity: 0.95; }
+.tl li.drop-before { box-shadow: inset 0 3px 0 var(--amber); }
+.tl .grip { cursor: grab; color: var(--dim); font-size: 18px; text-align: center; letter-spacing: -2px; }
+.tl .pos { color: var(--amber); font: 17px var(--display); text-align: right; }
+.tl .who { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.tl .who small { color: var(--muted); }
+.tl .acts { display: flex; gap: 4px; }
+.tl .acts button { border: 1px solid var(--line2); background: transparent; border-radius: 6px; width: 26px; height: 26px; padding: 0; color: var(--muted); }
+.tl .acts button:hover { color: var(--text); }
+.tl .intro-row, .tl .outro-row { grid-template-columns: 28px 30px 1fr auto; color: var(--muted); background: repeating-linear-gradient(45deg, #0b1323, #0b1323 8px, #0d1628 8px, #0d1628 16px); }
+.cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stat { background: #0a1120; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.stat b { display: block; font: 30px/1 var(--display); }
+.stat span { font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin-top: 12px; font-size: 13px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; }
+.seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 10px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 8px 14px; color: var(--muted); font-weight: 600; }
+.seg button.on { background: var(--text); color: #111; }
+.field { display: grid; gap: 6px; margin-top: 12px; }
+.field > label { font-size: 11px; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; }
+.note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch input { width: 38px; height: 22px; appearance: none; background: #1e293b; border-radius: 11px; position: relative; transition: background .15s; }
+.switch input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch input:checked { background: var(--amber); }
+.switch input:checked::after { transform: translateX(16px); }
+
+/* ---- dashboard */
+.dash { border-color: rgba(245,158,11,0.35); }
+.bar { height: 10px; border-radius: 6px; background: #1a2336; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #f59e0b, #fbbf24); transition: width .4s ease; }
+.dash-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.dash-head b { font: 40px/1 var(--display); }
+.stages { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 4px; }
+.stages li { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 8px; color: var(--dim); }
+.stages li .ic { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #263248; }
+.stages li.done { color: var(--text); } .stages li.done .ic { background: var(--green); border-color: var(--green); }
+.stages li.active { color: var(--text); background: rgba(245,158,11,0.08); } .stages li.active .ic { border-color: var(--amber); border-top-color: transparent; animation: spin .8s linear infinite; }
+.stages li.fail { color: #fecaca; } .stages li.fail .ic { background: var(--red); border-color: var(--red); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.alert { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid rgba(239,68,68,0.45); background: rgba(239,68,68,0.08); color: #fecaca; }
+.alert ul { margin: 6px 0 0; padding-left: 18px; }
+.okbox { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid rgba(34,197,94,0.4); background: rgba(34,197,94,0.07); }
+.recent { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12px; }
+.recent li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+
+/* ---- thumbnails */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mode { text-align: left; border: 1px solid var(--line2); background: #0a1120; border-radius: 12px; padding: 12px 14px; }
+.mode b { display: block; font: 20px var(--display); letter-spacing: 0.05em; }
+.mode span { font-size: 12px; color: var(--muted); }
+.mode.on { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber) inset, 0 10px 30px rgba(245,158,11,0.12); }
+.mode:disabled { opacity: 0.45; }
+.vars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+.var { position: relative; text-align: left; border: 1px solid var(--line2); background: #0a1120; border-radius: 12px; padding: 8px; transition: border-color .15s, transform .15s; }
+.var:hover { transform: translateY(-2px); }
+.var canvas { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 8px; background: #111a2e; }
+.var b { display: block; margin-top: 8px; font: 17px var(--display); letter-spacing: 0.05em; }
+.var span { font-size: 11px; color: var(--muted); display: block; }
+.var.on { border-color: var(--amber); box-shadow: 0 0 0 2px var(--amber); }
+.var.on::after { content: 'SELECTED'; position: absolute; top: 14px; right: 14px; background: var(--amber); color: #111; font: 12px var(--display); letter-spacing: 0.1em; padding: 3px 8px; border-radius: 6px; }
+.var .auto { position: absolute; top: 14px; left: 14px; background: var(--teal); color: #052; font: 12px var(--display); padding: 3px 8px; border-radius: 6px; color: #04262b; }
+.previews { display: grid; grid-template-columns: 1fr 0.36fr; gap: 14px; margin-top: 14px; align-items: start; }
+.pv { background: #0a1120; border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.pv canvas { width: 100%; display: block; border-radius: 6px; background: #111a2e; }
+.pv .cap { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); margin: 8px 0; flex-wrap: wrap; }
+.pv .cap b { color: var(--text); }
+.qa { list-style: none; padding: 0; margin: 6px 0 0; font-size: 12px; display: grid; gap: 3px; }
+.qa li::before { margin-right: 6px; }
+.qa .pass { color: #86efac; } .qa .pass::before { content: '\2713'; }
+.qa .warn { color: #fcd34d; } .qa .warn::before { content: '\26A0'; }
+.qa .error { color: #fca5a5; } .qa .error::before { content: '\2716'; }
+.qa .info { color: var(--muted); } .qa .info::before { content: '\2139'; }
+.frames { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 8px; }
+.frame { position: relative; border: 2px solid transparent; border-radius: 8px; overflow: hidden; padding: 0; background: #111a2e; aspect-ratio: 16/9; }
+.frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.frame.on { border-color: var(--amber); }
+.frame i { position: absolute; left: 4px; bottom: 4px; font-style: normal; font-size: 10px; background: rgba(0,0,0,0.75); padding: 1px 5px; border-radius: 4px; }
+.sliders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 10px; }
+.sliders label { font-size: 11px; color: var(--muted); display: grid; gap: 4px; }
+.sliders input { width: 100%; accent-color: var(--amber); }
+.saved { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.saved .it { background: #0a1120; border: 1px solid var(--line); border-radius: 10px; padding: 6px; font-size: 11px; }
+.saved .it img { width: 100%; border-radius: 6px; display: block; max-height: 150px; object-fit: contain; background: #000; }
+.saved .it .row { margin-top: 6px; justify-content: space-between; }
+
+/* ---- gate / modal / toast */
+.gate { max-width: 520px; margin: 12vh auto; text-align: center; padding: 30px; }
+.gate h1 { font: 44px/1 var(--display); letter-spacing: 0.04em; margin: 0 0 10px; }
+.modal { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,0.75); display: grid; place-items: center; padding: 20px; }
+.modal .box { width: min(960px, 100%); background: var(--panel); border: 1px solid var(--line2); border-radius: 16px; padding: 14px; }
+.modal video { width: 100%; max-height: 70vh; background: #000; border-radius: 10px; display: block; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 90; background: #111a2e; border: 1px solid var(--line2); padding: 10px 16px; border-radius: 12px; box-shadow: 0 14px 40px rgba(0,0,0,0.5); font-weight: 600; }
+
+.panes { display: none; }
+@media (min-width: 1101px) {
+  .panes { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .wrap[data-pane="thumbs"] .pane-work { display: none; }
+  .wrap[data-pane="work"] .pane-thumbs { display: none; }
+}
+.panes .seg button { padding: 10px 18px; font-size: 14px; }
+.panes .live { font-size: 12px; color: var(--amber); font-weight: 700; }
+@media (max-width: 1100px) {
+  .wrap { grid-template-columns: 1fr; padding: 12px 12px 120px; }
+  .tabs { display: flex; position: sticky; top: 61px; z-index: 25; background: var(--bg); padding-bottom: 10px; }
+  .wrap[data-tab="library"] .pane-work, .wrap[data-tab="library"] .pane-thumbs { display: none; }
+  .wrap[data-tab="timeline"] .pane-lib, .wrap[data-tab="timeline"] .pane-thumbs { display: none; }
+  .wrap[data-tab="thumbs"] .pane-lib, .wrap[data-tab="thumbs"] .pane-work { display: none; }
+  .lib { height: calc(100vh - 360px); }
+  .cols2 { grid-template-columns: 1fr; }
+  .previews { grid-template-columns: 1fr; }
+  .previews .pv.portrait { max-width: 340px; }
+}
+@media (max-width: 640px) {
+  .brand small, .who { display: none; }
+  .vars { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .frames { grid-template-columns: repeat(3, 1fr); }
+  .lib-tools .two { grid-template-columns: 1fr 1fr; }
+  .clip { grid-template-columns: 22px 88px 1fr auto; }
+  .poster { width: 88px; height: 50px; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="a">ALL</span> <span class="s">SPORTS</span> <span class="l">LIVE</span><small>HIGHLIGHT STUDIO</small></div>
+  <div class="match-title"><b id="m-title">Loading…</b><span id="m-sub"></span></div>
+  <div class="who" id="who"></div>
+</header>
+
+<div id="gate" class="gate card hidden">
+  <h1 id="gate-title">Highlight Studio</h1>
+  <p class="muted" id="gate-msg">Sign in with the account you manage tournaments with.</p>
+  <button class="btn primary" id="gate-signin">Sign in with Google</button>
+  <p class="tiny" style="margin-top:16px">The studio is for match organisers. Viewers can download highlights from the match scorecard.</p>
+</div>
+
+<nav class="tabs" id="tabs">
+  <button class="tab on" data-tab="library">Clips</button>
+  <button class="tab" data-tab="timeline">Timeline</button>
+  <button class="tab" data-tab="thumbs">Thumbnails</button>
+</nav>
+
+<main class="wrap hidden" id="wrap" data-tab="library" data-pane="work">
+  <!-- ============ CLIP LIBRARY ============ -->
+  <section class="col pane-lib">
+    <div class="card">
+      <h2>Clip Library <span class="n" id="lib-count"></span></h2>
+      <div class="lib-tools">
+        <input class="input" id="f-q" type="search" placeholder="Search a player, an over (12.3), a dismissal…" autocomplete="off">
+        <div class="chips" id="f-ev"></div>
+        <div class="two">
+          <select class="input" id="f-team" title="Batting team"><option value="">All teams</option></select>
+          <select class="input" id="f-player" title="Player"><option value="">All players</option></select>
+          <select class="input" id="f-inn" title="Innings"><option value="">All innings</option></select>
+        </div>
+        <div class="row">
+          <button class="btn small" id="sel-all">Select all shown</button>
+          <button class="btn small ghost" id="sel-none">Clear selection</button>
+          <span class="grow"></span>
+          <span class="tiny" id="sel-hint">Click to select · Shift-click for a range</span>
+        </div>
+      </div>
+      <div class="lib" id="lib"><div class="lib-spacer" id="lib-spacer"></div></div>
+    </div>
+  </section>
+
+  <section class="col">
+    <div class="panes"><div class="seg" id="panes"><button data-p="work" class="on">Timeline &amp; Export</button><button data-p="thumbs">Thumbnails</button></div><span class="live" id="pane-live"></span></div>
+    <!-- ============ TIMELINE + SUMMARY + EXPORT ============ -->
+    <div class="pane-work col">
+      <div class="card">
+        <h2>Timeline <span class="n" id="tl-count"></span></h2>
+        <div class="strip" id="strip"></div>
+        <div class="strip-legend"><span>Title card</span><span id="strip-dur"></span><span>End card</span></div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn small" id="tl-sort">Match order</button>
+          <button class="btn small" id="tl-rev">Reverse</button>
+          <span class="grow"></span>
+          <button class="btn small danger" id="tl-clear">Remove all</button>
+        </div>
+        <ul class="tl" id="tl"></ul>
+        <p class="note">Drag the ⋮⋮ handle (or use the arrows) to reorder. The video plays in this order — exactly.</p>
+      </div>
+
+      <div class="cols2">
+        <div class="card">
+          <h2>Project</h2>
+          <div class="stats">
+            <div class="stat"><b id="s-n">0</b><span>Clips</span></div>
+            <div class="stat"><b id="s-six">0</b><span>Sixes</span></div>
+            <div class="stat"><b id="s-four">0</b><span>Fours</span></div>
+            <div class="stat"><b id="s-wkt">0</b><span>Wickets</span></div>
+          </div>
+          <dl class="kv">
+            <dt>Other highlights</dt><dd id="s-other">0</dd>
+            <dt>Source footage</dt><dd id="s-src">—</dd>
+            <dt>Estimated video</dt><dd id="s-est">—</dd>
+            <dt>Shape</dt><dd id="s-fmt">—</dd>
+            <dt>Thumbnail</dt><dd id="s-thumb">—</dd>
+            <dt>Export</dt><dd id="s-status">Not rendered</dd>
+          </dl>
+        </div>
+        <div class="card">
+          <h2>Export</h2>
+          <div class="field">
+            <label>What it is about</label>
+            <select class="input" id="subject"></select>
+            <select class="input hidden" id="subject-figs">
+              <option value="all">Show batting &amp; bowling figures</option>
+              <option value="boundaries">Show batting figures</option>
+              <option value="wickets">Show bowling figures</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Video shape</label>
+            <div class="seg" id="fmt"><button data-v="16:9" class="on">Landscape 16:9</button><button data-v="9:16">Portrait 9:16</button></div>
+          </div>
+          <div class="field">
+            <label class="switch"><input type="checkbox" id="wheel"> Wagon wheel on each clip</label>
+          </div>
+          <p class="note" id="quality-note">Quality: the clips' own resolution — 1080p footage stays 1080p where this server has the power for it, otherwise 720p. H.264 (software, x264), sized to the server's CPUs. Edited clips are kept, so a re-render only makes what changed.</p>
+          <div class="row" style="margin-top:14px">
+            <button class="btn primary grow" id="render">Render highlight video</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card dash hidden" id="dash">
+        <h2>Rendering</h2>
+        <div class="dash-head"><b id="d-pct">0%</b><span class="muted" id="d-msg"></span><span class="muted" id="d-time"></span></div>
+        <div class="bar"><i id="d-bar"></i></div>
+        <ol class="stages" id="d-stages"></ol>
+        <div id="d-result"></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn danger" id="d-cancel">Cancel render</button>
+          <button class="btn hidden" id="d-retry">Render again</button>
+          <span class="grow"></span>
+        </div>
+      </div>
+
+      <div class="card hidden" id="recent-card">
+        <h2>Recent renders</h2>
+        <ul class="recent" id="recent"></ul>
+      </div>
+    </div>
+
+    <!-- ============ THUMBNAILS ============ -->
+    <div class="pane-thumbs col">
+      <div class="card">
+        <h2>Thumbnails</h2>
+        <div class="modes">
+          <button class="mode on" data-mode="photo"><b>WITH PLAYER PHOTO</b><span>A real frame of the footage, or a photo you upload</span></button>
+          <button class="mode" data-mode="graphic"><b>WITHOUT PLAYER PHOTO</b><span>Stadium, pitch and type — no person in it</span></button>
+        </div>
+        <div id="photo-tools">
+          <div class="field">
+            <label>Photo</label>
+            <div class="row">
+              <select class="input grow" id="frame-clip"></select>
+              <button class="btn small" id="frame-get">Find frames</button>
+              <label class="btn small" style="margin:0">Upload photo<input type="file" id="upload" accept="image/*" hidden></label>
+            </div>
+            <div class="frames" id="frames"></div>
+            <div class="tiny" id="frames-note">Frames come from the clip's shot, the sharpest first.</div>
+            <div class="sliders">
+              <label>Left / right<input type="range" id="fx" min="0" max="1" step="0.01" value="0.5"></label>
+              <label>Up / down<input type="range" id="fy" min="0" max="1" step="0.01" value="0.45"></label>
+              <label>Zoom<input type="range" id="fz" min="1" max="2.5" step="0.01" value="1"></label>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Headline</label>
+          <div class="row">
+            <select class="input grow" id="hl-pick"></select>
+            <input class="input grow" id="hl-text" maxlength="40" placeholder="Or type your own">
+          </div>
+          <div class="tiny">Suggestions come from what the clips are and the scorecard's figures.</div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn" id="auto">Auto select</button>
+          <button class="btn" id="regen">Regenerate</button>
+          <span class="tiny grow" id="auto-why"></span>
+        </div>
+        <div class="vars" id="vars"></div>
+        <div class="previews">
+          <div class="pv"><div class="cap"><span><b id="pv-l-name">—</b></span><span>1920 × 1080 · 16:9</span></div><canvas id="pv-l"></canvas>
+            <div class="row" style="margin-top:10px"><button class="btn primary small" id="dl-l">Download 16:9</button><span class="tiny" id="st-l"></span></div><ul class="qa" id="qa-l"></ul></div>
+          <div class="pv portrait"><div class="cap"><span><b>9:16</b></span><span>1080 × 1920</span></div><canvas id="pv-p"></canvas>
+            <div class="row" style="margin-top:10px"><button class="btn primary small" id="dl-p">Download 9:16</button><span class="tiny" id="st-p"></span></div><ul class="qa" id="qa-p"></ul></div>
+        </div>
+        <div class="row" style="margin-top:12px"><button class="btn" id="dl-both">Download both</button></div>
+      </div>
+      <div class="card">
+        <h2>Saved thumbnails <span class="n">on this device</span></h2>
+        <div class="saved" id="saved"><div class="tiny">None yet — the ones you download are kept here.</div></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal hidden" id="modal"><div class="box"><div class="row" style="justify-content:space-between;margin-bottom:10px"><b id="modal-title"></b><button class="btn small" id="modal-close">Close</button></div><div id="modal-body"></div></div></div>
+<div class="toast hidden" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="/highlight-thumbs.js?v=20261109"></script>
+<script>
+'use strict';
+/* =====================================================================
+   HIGHLIGHT STUDIO — one highlights package from a match's clips.
+   Every number here is read from the server (the clips, the match, the
+   render's own stages); nothing is simulated. Works with the server's
+   /api/highlights/studio/*, /api/highlights/compile (type 'custom'),
+   /api/highlights/title and /api/highlights/frames routes (server.js).
+   What is kept across a refresh: the project (clips, order, choices, the
+   render's job) in this browser's storage; the thumbnails (and an
+   uploaded photo) in its IndexedDB.
+   ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const qs = new URLSearchParams(location.search);
+const MATCH_ID = qs.get('matchId') || qs.get('match') || '';
+const EV_NAME = { SIX: 'SIX', FOUR: 'FOUR', WICKET: 'WICKET', CLIP: 'CLIP' };
+const fmtDur = (s) => { if (!(s > 0)) return '—'; s = Math.round(s); const m = Math.floor(s / 60), r = s % 60; return m ? `${m}m ${String(r).padStart(2, '0')}s` : `${r}s`; };
+function toast(msg, ms) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), ms || 2600); }
+
+/* ---------------------------------------------------------------- auth */
+const firebaseConfig = { apiKey: "AIzaSyAYc_bEB9C4RhhLhPBEJsJRFRUppcR45yo", authDomain: "auth.allsportslivestreams.com", projectId: "scorvix-faf0e", storageBucket: "scorvix-faf0e.firebasestorage.app" };
+let auth = null, authReady;
+try {
+  firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  authReady = new Promise(res => auth.onAuthStateChanged(() => res()));
+} catch (e) { authReady = Promise.resolve(); }
+async function authHeaders() {
+  await authReady;
+  try { if (auth && auth.currentUser) return { Authorization: 'Bearer ' + await auth.currentUser.getIdToken() }; } catch (e) { /* signed out */ }
+  if (window.__studioToken) return { Authorization: 'Bearer ' + window.__studioToken };   // (tests)
+  return {};
+}
+async function api(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({}, opts.body ? { 'Content-Type': 'application/json' } : {}, await authHeaders());
+  const res = await fetch(path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  let json = null;
+  try { json = await res.json(); } catch (e) { json = null; }
+  return { status: res.status, json: json || {} };
+}
+function showGate(title, msg, canSignIn) {
+  $('wrap').classList.add('hidden'); $('tabs').style.display = 'none';
+  $('gate').classList.remove('hidden');
+  $('gate-title').textContent = title; $('gate-msg').textContent = msg;
+  $('gate-signin').classList.toggle('hidden', !canSignIn);
+}
+$('gate-signin').onclick = () => {
+  if (!auth) return;
+  const p = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(p).then(() => boot()).catch(err => {
+    if (err && (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment')) auth.signInWithRedirect(p);
+    else if (err && err.code !== 'auth/popup-closed-by-user') toast(err.message || 'Could not sign in');
+  });
+};
+
+/* --------------------------------------------------------------- state */
+const S = {
+  match: null, clips: [], byId: new Map(), filtered: [], sel: [], selSet: new Set(), lastClick: null,
+  f: { q: '', ev: '', team: '', player: '', inn: '' },
+  subject: 'full', figs: 'all', format: '16:9', wheel: false,
+  job: null, poll: null, seen: null, recent: [],
+  title: null, titleSig: '',
+  th: { mode: 'photo', variation: 1, seed: 1, headline: '', custom: '', frameClip: '', frames: [], frameIdx: 0, photo: null, upload: false, fx: 0.5, fy: 0.45, fz: 1, auto: null }
+};
+const KEY = `asl-studio:${MATCH_ID}`;
+function save() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ sel: S.sel, subject: S.subject, figs: S.figs, format: S.format, wheel: S.wheel, job: S.job, recent: S.recent.slice(0, 8),
+      th: { mode: S.th.mode, variation: S.th.variation, seed: S.th.seed, custom: S.th.custom, headline: S.th.headline, frameClip: S.th.frameClip, frameIdx: S.th.frameIdx, upload: S.th.upload, fx: S.th.fx, fy: S.th.fy, fz: S.th.fz } }));
+  } catch (e) { /* private mode: nothing kept */ }
+}
+function restore() {
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { o = null; }
+  if (!o) return;
+  S.sel = (o.sel || []).filter(id => S.byId.has(id));
+  S.selSet = new Set(S.sel);
+  ['subject', 'figs', 'format', 'wheel', 'job'].forEach(k => { if (o[k] != null) S[k] = o[k]; });
+  S.recent = o.recent || [];
+  if (o.th) Object.assign(S.th, o.th);
+}
+
+/* --------------------------------------------------------- IndexedDB */
+const DB = (() => {
+  let p = null;
+  const open = () => p || (p = new Promise((res) => {
+    try {
+      const r = indexedDB.open('asl-highlight-studio', 1);
+      r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains('thumbs')) db.createObjectStore('thumbs', { keyPath: 'key' }); if (!db.objectStoreNames.contains('uploads')) db.createObjectStore('uploads', { keyPath: 'key' }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => res(null);
+    } catch (e) { res(null); }
+  }));
+  const tx = async (store, mode, fn) => { const db = await open(); if (!db) return null; return new Promise((res) => { try { const t = db.transaction(store, mode), st = t.objectStore(store); const r = fn(st); t.oncomplete = () => res(r && r.result !== undefined ? r.result : true); t.onerror = () => res(null); } catch (e) { res(null); } }); };
+  return {
+    put: (store, v) => tx(store, 'readwrite', st => st.put(v)),
+    get: (store, k) => tx(store, 'readonly', st => st.get(k)),
+    del: (store, k) => tx(store, 'readwrite', st => st.delete(k)),
+    all: (store) => tx(store, 'readonly', st => st.getAll())
+  };
+})();
+
+/* ---------------------------------------------------------------- boot */
+async function boot() {
+  if (!MATCH_ID) { showGate('No match chosen', 'Open the studio from a match scorecard (Download Highlights → Highlight Studio).', false); return; }
+  const r = await api(`/api/highlights/studio/${encodeURIComponent(MATCH_ID)}`);
+  if (r.status === 401) { showGate('Sign in', r.json.error || 'Sign in to use the Highlight Studio.', !!auth); return; }
+  if (r.status === 403) { showGate('Not for this account', r.json.error || 'This account cannot use the Highlight Studio.', !!auth); return; }
+  if (r.status !== 200 || !r.json.success) { showGate('Could not open this match', r.json.error || 'Try again in a moment.', false); return; }
+  $('gate').classList.add('hidden'); $('wrap').classList.remove('hidden'); $('tabs').style.display = '';
+  try { if (auth && auth.currentUser) $('who').textContent = auth.currentUser.email; } catch (e) { /* none */ }
+  S.match = r.json.match;
+  S.clips = r.json.clips.map((c, i) => Object.assign(c, { n: i + 1 }));
+  S.byId = new Map(S.clips.map(c => [c.clipId, c]));
+  const t = S.match.teams || {};
+  const A = t.A ? (t.A.short || t.A.name) : 'Team A', B = t.B ? (t.B.short || t.B.name) : 'Team B';
+  $('m-title').textContent = `${A} vs ${B}${S.match.title ? ' · ' + S.match.title : ''}`;
+  $('m-sub').textContent = [S.match.tournament, S.match.venue, S.match.result].filter(Boolean).join(' · ');
+  document.title = `${A} vs ${B} · Highlight Studio`;
+  restore();
+  buildFilters(); buildSubject(); bindAll();
+  applyFilters(); renderTimeline(); renderSummary(); renderRecent();
+  syncExportControls();
+  if (S.job && S.job.jobId) { $('dash').classList.remove('hidden'); pollJob(); }
+  await HighlightThumbs.ready();
+  refreshTitle();
+  loadSaved();
+}
+
+/* ------------------------------------------------------------ library */
+const nameOfClip = (c) => c.eventType === 'WICKET' ? (c.dismissedPlayer || c.striker || '') : (c.striker || '');
+function clipLine(c) {
+  if (c.eventType === 'WICKET') return `${c.dismissedPlayer || c.striker || 'Wicket'}${c.dismissalType ? ' · ' + c.dismissalType : ''}${c.fielder ? ' (' + c.fielder + ')' : ''}`;
+  if (c.eventType === 'CLIP') return `${c.striker || ''}${c.outcome ? ' · ' + c.outcome : ''}`;
+  return `${c.striker || ''}${c.runs != null ? ' · ' + c.runs + ' run' + (c.runs === 1 ? '' : 's') : ''}`;
+}
+function buildFilters() {
+  const n = { '': S.clips.length, SIX: 0, FOUR: 0, WICKET: 0, CLIP: 0 };
+  S.clips.forEach(c => { n[c.eventType in n ? c.eventType : 'CLIP']++; });
+  $('f-ev').innerHTML = [['', 'All'], ['SIX', 'Sixes'], ['FOUR', 'Fours'], ['WICKET', 'Wickets'], ['CLIP', 'Other']].map(([v, l]) => `<button class="chip${S.f.ev === v ? ' on' : ''}" data-v="${v}">${l}<span class="c">${n[v] || 0}</span></button>`).join('');
+  const t = S.match.teams || {};
+  const teams = [...new Set(S.clips.map(c => c.battingTeam).filter(Boolean))];
+  $('f-team').innerHTML = '<option value="">All teams</option>' + teams.map(k => `<option value="${esc(k)}">${esc(((t[k] && (t[k].short || t[k].name)) || 'Team ' + k))} batting</option>`).join('');
+  const players = new Map();
+  S.clips.forEach(c => {
+    const add = (name, key) => { if (name && key) { const p = players.get(key) || { name, n: 0 }; p.n++; players.set(key, p); } };
+    add(c.striker, c.keys && c.keys.striker); add(c.bowler, c.keys && c.keys.bowler); add(c.fielder, c.keys && c.keys.fielder);
+  });
+  $('f-player').innerHTML = '<option value="">All players</option>' + [...players.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([k, p]) => `<option value="${esc(k)}">${esc(p.name)} (${p.n})</option>`).join('');
+  const inns = [...new Set(S.clips.map(c => c.innings || 1))].sort();
+  $('f-inn').innerHTML = '<option value="">All innings</option>' + inns.map(i => `<option value="${i}">Innings ${i}</option>`).join('');
+  $('f-inn').classList.toggle('hidden', inns.length < 2);
+}
+function applyFilters() {
+  const q = S.f.q.trim().toLowerCase();
+  S.filtered = S.clips.filter(c => {
+    if (S.f.ev && (c.eventType in EV_NAME ? c.eventType : 'CLIP') !== S.f.ev) return false;
+    if (S.f.team && c.battingTeam !== S.f.team) return false;
+    if (S.f.inn && String(c.innings || 1) !== S.f.inn) return false;
+    if (S.f.player) { const k = c.keys || {}; if (![k.striker, k.bowler, k.fielder, k.dismissed].includes(S.f.player)) return false; }
+    if (q) {
+      const hay = [c.striker, c.bowler, c.fielder, c.nonStriker, c.dismissedPlayer, c.dismissalType, c.outcome, c.eventType, `${c.over}.${c.ballInOver}`].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  $('lib-count').textContent = `${S.filtered.length} of ${S.clips.length} clips`;
+  libRows.clear(); $('lib-spacer').innerHTML = '';
+  $('lib-spacer').style.height = (S.filtered.length * ROW) + 'px';
+  paintLib(true);
+}
+// The list is virtual: only the rows in view (and a few either side) exist.
+const ROW = 84, libRows = new Map();
+function paintLib(force) {
+  const lib = $('lib'), sp = $('lib-spacer');
+  if (!S.filtered.length) { sp.innerHTML = `<div class="empty">${S.clips.length ? 'No clip matches these filters.' : 'This match has no highlight clips yet.'}</div>`; return; }
+  const first = Math.max(0, Math.floor(lib.scrollTop / ROW) - 5), last = Math.min(S.filtered.length - 1, Math.ceil((lib.scrollTop + lib.clientHeight) / ROW) + 5);
+  for (const [i, el] of libRows) if (i < first || i > last || force) { el.remove(); libRows.delete(i); }
+  for (let i = first; i <= last; i++) {
+    if (libRows.has(i)) continue;
+    const c = S.filtered[i], el = document.createElement('div');
+    const pos = S.sel.indexOf(c.clipId);
+    el.className = 'clip' + (pos >= 0 ? ' sel' : '') + (c.ready ? '' : ' na');
+    el.style.top = (i * ROW) + 'px';
+    el.dataset.i = i;
+    el.title = c.ready ? '' : 'This clip is still uploading — it can be added once it is ready';
+    el.innerHTML = `<div class="box"></div>
+      <div class="poster">${c.posterUrl ? `<img loading="lazy" decoding="async" alt="" src="${esc(c.posterUrl)}">` : ''}<button class="play" data-play="${esc(c.clipId)}" title="Preview"></button>${c.duration ? `<span class="dur">${Math.round(c.duration)}s</span>` : ''}</div>
+      <div class="meta"><div class="l1"><span class="ev ${esc(c.eventType in EV_NAME ? c.eventType : 'CLIP')}">${esc(c.eventType === 'CLIP' ? (c.outcome || 'CLIP') : c.eventType)}</span><span class="ob">${c.over != null ? `${c.over}.${c.ballInOver}` : ''}</span><span class="num">#${c.n}${c.innings ? ` · inn ${c.innings}` : ''}</span></div>
+      <div class="l2">${esc(clipLine(c))}</div><div class="l3">${c.bowler ? 'b ' + esc(c.bowler) : ''}${c.ready ? '' : ' · uploading…'}</div></div>
+      <div class="order">${pos >= 0 ? pos + 1 : ''}</div>`;
+    sp.appendChild(el);
+    libRows.set(i, el);
+  }
+}
+function refreshLibSelection() {
+  for (const [i, el] of libRows) {
+    const c = S.filtered[i]; if (!c) continue;
+    const pos = S.sel.indexOf(c.clipId);
+    el.classList.toggle('sel', pos >= 0);
+    el.querySelector('.order').textContent = pos >= 0 ? pos + 1 : '';
+  }
+}
+function toggleClip(c, on) {
+  if (!c.ready) return;
+  const has = S.selSet.has(c.clipId);
+  if (on === undefined) on = !has;
+  if (on && !has) { S.sel.push(c.clipId); S.selSet.add(c.clipId); }
+  if (!on && has) { S.sel = S.sel.filter(x => x !== c.clipId); S.selSet.delete(c.clipId); }
+}
+function selectionChanged() { refreshLibSelection(); renderTimeline(); renderSummary(); save(); refreshTitle(); }
+
+/* ----------------------------------------------------------- timeline */
+// the engine's own lengths (highlight-edit.js): 30 fps, a clip cut down to
+// whole 16-frame spans (at least 48 frames), the title card 80 frames, the end card 48
+const gridSec = (d) => Math.max(48, Math.floor(((d || 0) - 0.05) * 30 / 16 + 1e-6) * 16) / 30;
+const INTRO = 80 / 30, OUTRO = 48 / 30;
+function renderTimeline() {
+  const list = S.sel.map(id => S.byId.get(id)).filter(Boolean);
+  $('tl-count').textContent = list.length ? `${list.length} clip${list.length === 1 ? '' : 's'}` : '';
+  const known = list.filter(c => c.duration > 0);
+  const total = INTRO + OUTRO + known.reduce((a, c) => a + gridSec(c.duration), 0);
+  $('strip').innerHTML = `<div class="in" style="flex:${INTRO}" title="Title card ${INTRO.toFixed(1)} s"></div>` +
+    list.map(c => `<div class="${esc(c.eventType in EV_NAME ? c.eventType : 'CLIP')}" style="flex:${c.duration > 0 ? gridSec(c.duration) : 3}" title="${esc(c.eventType)} ${c.over}.${c.ballInOver}"></div>`).join('') +
+    `<div class="out" style="flex:${OUTRO}" title="End card ${OUTRO.toFixed(1)} s"></div>`;
+  $('strip-dur').textContent = list.length ? `≈ ${fmtDur(total)}${known.length < list.length ? ` (+ ${list.length - known.length} clip${list.length - known.length === 1 ? '' : 's'} of unknown length)` : ''}` : 'No clips yet';
+  const tl = $('tl');
+  if (!list.length) { tl.innerHTML = '<li class="intro-row" style="grid-template-columns:1fr"><span class="muted">Pick clips from the library — they are added here in the order you pick them.</span></li>'; return; }
+  tl.innerHTML = `<li class="intro-row"><span></span><span class="pos">▶</span><span>Title card · ${INTRO.toFixed(1)} s</span><span></span></li>` + list.map((c, i) => `<li data-id="${esc(c.clipId)}">
+      <span class="grip" data-grip>⋮⋮</span><span class="pos">${i + 1}</span><span class="ev ${esc(c.eventType in EV_NAME ? c.eventType : 'CLIP')}">${esc(c.eventType === 'CLIP' ? 'CLIP' : c.eventType)}</span>
+      <span class="who">${esc(clipLine(c))} <small>· ${c.over != null ? `${c.over}.${c.ballInOver}` : ''}${c.duration ? ` · ${Math.round(c.duration)}s` : ''}</small></span>
+      <span class="acts"><button data-up title="Earlier">↑</button><button data-down title="Later">↓</button><button data-rm title="Remove">✕</button></span></li>`).join('') +
+    `<li class="outro-row"><span></span><span class="pos">■</span><span>End card · ${OUTRO.toFixed(1)} s</span><span></span></li>`;
+}
+function moveSel(from, to) {
+  if (to < 0 || to >= S.sel.length || from === to) return;
+  const [x] = S.sel.splice(from, 1); S.sel.splice(to, 0, x);
+}
+// drag with the grip: mouse, pen or finger
+function bindTimelineDrag() {
+  const tl = $('tl');
+  tl.addEventListener('pointerdown', (e) => {
+    const grip = e.target.closest('[data-grip]'); if (!grip) return;
+    const li = grip.closest('li'); const from = S.sel.indexOf(li.dataset.id); if (from < 0) return;
+    e.preventDefault();
+    const rect = li.getBoundingClientRect();
+    const ghost = li.cloneNode(true); ghost.classList.add('ghost'); ghost.style.width = rect.width + 'px'; ghost.style.left = rect.left + 'px'; ghost.style.top = rect.top + 'px';
+    document.body.appendChild(ghost); li.classList.add('drag');
+    const dy0 = e.clientY - rect.top; let target = from;
+    const rows = () => [...tl.querySelectorAll('li[data-id]')];
+    const move = (ev) => {
+      ghost.style.top = (ev.clientY - dy0) + 'px';
+      const rs = rows(); rs.forEach(r => r.classList.remove('drop-before'));
+      target = rs.length;
+      for (let i = 0; i < rs.length; i++) { const b = rs[i].getBoundingClientRect(); if (ev.clientY < b.top + b.height / 2) { target = i; break; } }
+      if (rs[target]) rs[target].classList.add('drop-before');
+      const tb = tl.getBoundingClientRect();
+      if (ev.clientY < tb.top + 30) tl.scrollTop -= 12; else if (ev.clientY > tb.bottom - 30) tl.scrollTop += 12;
+    };
+    const upH = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', upH); window.removeEventListener('pointercancel', upH);
+      ghost.remove(); li.classList.remove('drag');
+      const to = target > from ? target - 1 : target;
+      moveSel(from, Math.min(to, S.sel.length - 1));
+      selectionChanged();
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', upH); window.addEventListener('pointercancel', upH);
+  });
+  tl.addEventListener('click', (e) => {
+    const li = e.target.closest('li[data-id]'); if (!li) return;
+    const i = S.sel.indexOf(li.dataset.id);
+    if (e.target.closest('[data-up]')) moveSel(i, i - 1);
+    else if (e.target.closest('[data-down]')) moveSel(i, i + 1);
+    else if (e.target.closest('[data-rm]')) { S.sel.splice(i, 1); S.selSet.delete(li.dataset.id); }
+    else return;
+    selectionChanged();
+  });
+}
+
+/* ------------------------------------------------------------ summary */
+function counts(list) { const n = { SIX: 0, FOUR: 0, WICKET: 0, CLIP: 0 }; list.forEach(c => { n[c.eventType in n ? c.eventType : 'CLIP']++; }); return n; }
+function renderSummary() {
+  const list = S.sel.map(id => S.byId.get(id)).filter(Boolean), n = counts(list);
+  $('s-n').textContent = list.length; $('s-six').textContent = n.SIX; $('s-four').textContent = n.FOUR; $('s-wkt').textContent = n.WICKET; $('s-other').textContent = n.CLIP;
+  const known = list.filter(c => c.duration > 0);
+  const src = known.reduce((a, c) => a + c.duration, 0);
+  $('s-src').textContent = list.length ? `${fmtDur(src)}${known.length < list.length ? ' (some unknown)' : ''}` : '—';
+  $('s-est').textContent = list.length ? `≈ ${fmtDur(INTRO + OUTRO + known.reduce((a, c) => a + gridSec(c.duration), 0))}` : '—';
+  $('s-fmt').textContent = S.format === '9:16' ? 'Portrait 9:16 (Reels / Shorts)' : 'Landscape 16:9 (YouTube)';
+  const V = HighlightThumbs.VARIATIONS[S.th.mode].find(v => v.n === S.th.variation);
+  $('s-thumb').textContent = `${HighlightThumbs.MODE_NAME[S.th.mode]} · ${V ? 'Variation ' + V.n + ' – ' + V.name : ''}`;
+  $('s-status').textContent = !S.job ? 'Not rendered' : S.job.status === 'ready' ? 'Ready to download' : S.job.status === 'error' ? 'Failed' : S.job.status === 'cancelled' ? 'Cancelled' : 'Rendering…';
+  $('render').disabled = !list.length || !!(S.job && !['ready', 'error', 'cancelled', 'gone'].includes(S.job.status));
+}
+
+/* ------------------------------------------------- subject + export */
+function buildSubject() {
+  const t = S.match.teams || {}, players = new Map();
+  S.clips.forEach(c => { if (c.striker && c.keys && c.keys.striker) players.set(c.keys.striker, c.striker); if (c.bowler && c.keys && c.keys.bowler && !players.has(c.keys.bowler)) players.set(c.keys.bowler, c.bowler); });
+  $('subject').innerHTML = `<option value="full">The whole match</option>` +
+    ['A', 'B'].filter(k => t[k]).map(k => `<option value="team:${k}">${esc(t[k].name || t[k].short)}</option>`).join('') +
+    [...players.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([k, n]) => `<option value="player:${esc(k)}">${esc(n)}</option>`).join('');
+  if (![...$('subject').options].some(o => o.value === S.subject)) S.subject = 'full';
+  $('subject').value = S.subject;
+  $('subject-figs').value = S.figs;
+  $('subject-figs').classList.toggle('hidden', !S.subject.startsWith('player:'));
+}
+function subjectBody() {
+  if (S.subject.startsWith('player:')) return { type: 'player', playerKey: S.subject.slice(7), category: S.figs };
+  if (S.subject.startsWith('team:')) return { type: 'team', team: S.subject.slice(5) };
+  return { type: 'full' };
+}
+function syncExportControls() {
+  [...$('fmt').children].forEach(b => b.classList.toggle('on', b.dataset.v === S.format));
+  $('wheel').checked = !!S.wheel;
+}
+
+/* ------------------------------------------------------------- render */
+const STAGES = [
+  ['prepare', 'Preparing clips'], ['collect', 'Collecting the source videos'], ['probe', 'Validating source videos'], ['assets', 'Preparing logos & graphics'],
+  ['intro', 'Rendering the title card'], ['clips', 'Rendering clips, graphics & transitions'], ['outro', 'Rendering the end card'],
+  ['encode', 'Encoding the final video'], ['validate', 'Final validation'], ['ready', 'Export ready']
+];
+async function startRender() {
+  const ids = S.sel.slice();
+  if (!ids.length) return;
+  $('render').disabled = true;
+  const r = await api('/api/highlights/compile', { body: { type: 'custom', matchId: MATCH_ID, clipIds: ids, subject: subjectBody(), format: S.format, wheel: !!S.wheel } });
+  if (r.status !== 200 || !r.json.success) {
+    $('render').disabled = false;
+    if (r.json.missing && r.json.missing.length) offerRemove(r.json.missing.map(id => ({ clipId: id, label: labelOf(id), reason: 'no longer a highlight of this match' })), r.json.error);
+    toast(r.json.error || 'Could not start the render', 4000);
+    return;
+  }
+  S.job = { jobId: r.json.jobId, status: 'queued', startedAt: Date.now(), n: ids.length, format: S.format, sig: ids.join(',') };
+  S.seen = null;
+  S.recent = [{ jobId: r.json.jobId, at: Date.now(), n: ids.length, format: S.format, status: 'queued' }, ...S.recent.filter(x => x.jobId !== r.json.jobId)].slice(0, 8);
+  save(); renderSummary(); renderRecent();
+  $('dash').classList.remove('hidden'); $('d-result').innerHTML = '';
+  if ($('wrap').dataset.pane === 'work') $('dash').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  pollJob();
+}
+const labelOf = (id) => { const c = S.byId.get(id); return c ? `${c.eventType} ${c.over}.${c.ballInOver} · ${nameOfClip(c)}` : id; };
+async function pollJob() {
+  clearTimeout(S.poll);
+  const job = S.job; if (!job) return;
+  const r = await api(`/api/highlights/compile/${encodeURIComponent(job.jobId)}/status`);
+  if (S.job !== job) return;
+  if (r.status === 404) { job.status = 'gone'; paintDash(null); save(); renderSummary(); markRecent(job.jobId, 'expired'); return; }
+  const st = r.json;
+  if (!st.success) { S.poll = setTimeout(pollJob, 3000); return; }
+  job.status = st.status;
+  paintDash(st);
+  markRecent(job.jobId, st.status);
+  save(); renderSummary();
+  if (!['ready', 'error', 'cancelled'].includes(st.status)) S.poll = setTimeout(pollJob, document.hidden ? 4000 : 1000);
+}
+function paintDash(st) {
+  const job = S.job, live = st && !['ready', 'error', 'cancelled'].includes(st.status);
+  $('d-cancel').classList.toggle('hidden', !live);
+  $('d-retry').classList.toggle('hidden', live);
+  if (!st) {
+    $('d-pct').textContent = '—'; $('d-msg').textContent = ''; $('d-time').textContent = '';
+    $('d-stages').innerHTML = '';
+    $('d-result').innerHTML = `<div class="alert">This render is no longer on the server (it finished more than 30 minutes ago, or the server restarted). Render again — the clips it had already edited are reused, so it picks up where it left off.</div>`;
+    return;
+  }
+  // the bar: never 100% before the video has been checked and is ready
+  const pct = st.status === 'ready' ? 100 : Math.min(99, st.progress || 0);
+  $('d-pct').textContent = `${pct}%`;
+  $('pane-live').textContent = live ? `Rendering ${pct}%` : st.status === 'ready' ? 'Video ready' : '';
+  $('d-bar').style.width = pct + '%';
+  $('d-msg').textContent = st.status === 'ready' ? 'Your highlight video is ready' : st.status === 'error' ? 'The render failed' : st.status === 'cancelled' ? 'Cancelled' : (st.message || 'Working…');
+  // the clock, and what is left once it can be told from the clips' own pace
+  const el = st.elapsedMs || 0;
+  let eta = '';
+  const sm = st.stageMap || {};
+  if (live && sm.clips && sm.clips.total) {
+    const now = Date.now();
+    if (!S.seen || S.seen.jobId !== job.jobId) S.seen = { jobId: job.jobId, t0: null, d0: 0 };
+    if (S.seen.t0 == null && sm.clips.done > 0) { S.seen.t0 = now; S.seen.d0 = sm.clips.done; }
+    const did = sm.clips.done - S.seen.d0;
+    if (S.seen.t0 != null && did >= 2) {
+      const per = (now - S.seen.t0) / did, left = (sm.clips.total - sm.clips.done) * per * 1.06 + 4000;
+      eta = ` · about ${fmtDur(left / 1000)} left`;
+    }
+  }
+  $('d-time').textContent = `${fmtDur(el / 1000)} elapsed${eta}`;
+  const cur = st.stage;
+  const curIdx = STAGES.findIndex(s => s[0] === cur);
+  $('d-stages').innerHTML = STAGES.map(([k, label], i) => {
+    const m = sm[k];
+    let cls = '';
+    if (st.status === 'ready') cls = 'done';
+    else if (m && m.end) cls = 'done';
+    else if (k === cur && st.status === 'error') cls = 'fail';
+    else if (k === cur || (m && !m.end && live)) cls = 'active';
+    else if (i < curIdx && k !== 'intro') cls = 'done';
+    const cnt = m && m.total > 1 ? `${m.done} / ${m.total}` : (k === 'clips' && st.total ? `0 / ${st.total}` : '');
+    return `<li class="${cls}"><span class="ic"></span><span>${esc(label)}</span><span class="tiny">${cls === 'active' || cls === 'done' ? esc(cnt) : ''}</span></li>`;
+  }).join('');
+  if (st.status === 'ready') {
+    const name = downloadName();
+    $('d-result').innerHTML = `<div class="okbox"><b>${st.included} clip${st.included === 1 ? '' : 's'}, every one included.</b> <span class="muted">${esc(st.profile || '')}${st.format ? ' · ' + esc(st.format) : ''}${st.wheel ? ' · wagon wheel' : ''} · made in ${fmtDur(st.renderSec || el / 1000)}${st.reused ? ` · ${st.reused} edited clip${st.reused === 1 ? '' : 's'} reused` : ''}</span>
+      <div class="row" style="margin-top:10px"><a class="btn primary" href="/api/highlights/compile/${encodeURIComponent(job.jobId)}/download?name=${encodeURIComponent(name)}" download>Download highlight video</a><span class="tiny">Kept on the server for 30 minutes — download it as often as you need.</span></div></div>`;
+  } else if (st.status === 'error') {
+    if (st.missing && st.missing.length) offerRemove(st.missing, st.error);
+    else $('d-result').innerHTML = `<div class="alert"><b>${esc(st.error || 'Something went wrong.')}</b><div class="tiny" style="margin-top:6px">Stage: ${esc((STAGES.find(s => s[0] === st.stage) || [0, st.stage || '—'])[1])}</div></div>`;
+  } else if (st.status === 'cancelled') {
+    $('d-result').innerHTML = `<div class="alert" style="border-color:var(--line2);background:transparent;color:var(--muted)">Cancelled — nothing was kept but the clips it had finished editing (a new render reuses them).</div>`;
+  } else $('d-result').innerHTML = '';
+}
+function offerRemove(missing, msg) {
+  $('dash').classList.remove('hidden');
+  $('d-result').innerHTML = `<div class="alert"><b>${esc(msg || 'Some clips could not be used.')}</b><ul>${missing.map(m => `<li>${esc(m.label || labelOf(m.clipId))} — ${esc(m.reason || '')}</li>`).join('')}</ul>
+    <div class="row" style="margin-top:10px"><button class="btn small" id="rm-missing">Remove ${missing.length === 1 ? 'it' : 'them'} from the timeline</button></div></div>`;
+  $('rm-missing').onclick = () => { const bad = new Set(missing.map(m => m.clipId)); S.sel = S.sel.filter(id => !bad.has(id)); S.selSet = new Set(S.sel); selectionChanged(); toast('Removed — render again when ready'); };
+}
+function downloadName() {
+  const t = S.title && S.title.title;
+  const who = t ? [t.first, t.title].filter(Boolean).join(' ') : 'Highlights';
+  return `AllSportsLive_${who.replace(/[^A-Za-z0-9]+/g, '')}_Highlights${S.format === '9:16' ? '_9x16' : ''}`;
+}
+async function cancelRender() {
+  if (!S.job) return;
+  $('d-cancel').disabled = true;
+  const r = await api(`/api/highlights/compile/${encodeURIComponent(S.job.jobId)}/cancel`, { method: 'POST', body: {} });
+  $('d-cancel').disabled = false;
+  if (r.status !== 200) toast(r.json.error || 'Could not cancel');
+  pollJob();
+}
+function markRecent(jobId, status) { const it = S.recent.find(x => x.jobId === jobId); if (it && it.status !== status) { it.status = status; renderRecent(); } }
+function renderRecent() {
+  $('recent-card').classList.toggle('hidden', !S.recent.length);
+  $('recent').innerHTML = S.recent.map(x => `<li><span>${new Date(x.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${x.n} clips · ${esc(x.format)}</span><span>${x.status === 'ready' ? `<a href="/api/highlights/compile/${encodeURIComponent(x.jobId)}/download?name=${encodeURIComponent(downloadName())}">Download</a>` : esc(x.status === 'expired' ? 'expired' : x.status)}</span></li>`).join('');
+}
+
+/* ------------------------------------------------------- title data */
+let titleTimer = null;
+function refreshTitle() {
+  clearTimeout(titleTimer);
+  titleTimer = setTimeout(async () => {
+    const ids = S.sel.length ? S.sel.slice() : S.clips.filter(c => c.ready).slice(0, 400).map(c => c.clipId);
+    if (!ids.length) { S.title = null; paintThumbs(); return; }
+    const body = { matchId: MATCH_ID, clipIds: ids, subject: subjectBody() };
+    const sig = JSON.stringify(body);
+    if (sig === S.titleSig && S.title) return;
+    const r = await api('/api/highlights/title', { body });
+    if (r.status !== 200 || !r.json.success) { $('auto-why').textContent = r.json.error || 'Could not read the match for the thumbnails'; return; }
+    S.titleSig = sig; S.title = r.json;
+    await thumbTeams();
+    buildHeadlines(); buildFrameClips();
+    if (S.th.mode === 'photo' && !S.th.photo) await ensurePhoto();
+    paintThumbs();
+  }, 450);
+}
+
+/* --------------------------------------------------------- thumbnails */
+let logoP = {};
+async function thumbTeams() {
+  const t = S.match.teams || {};
+  for (const k of ['A', 'B']) {
+    const T = t[k]; if (!T) continue;
+    const key = `${T.logo ? T.logo.length : 0}|${T.logoStyle}|${T.logoBg}`;
+    if (!logoP[k] || logoP[k].key !== key) logoP[k] = { key, p: T.logo ? HighlightThumbs.prepareLogo(T.logo, T.logoStyle, T.logoBg) : Promise.resolve(null) };
+    T._logo = await logoP[k].p;
+  }
+}
+function teamFor(name) {
+  const t = S.match.teams || {};
+  const hit = ['A', 'B'].map(k => t[k]).filter(Boolean).find(T => T.name === name || T.short === name);
+  return hit ? { name: hit.name, short: hit.short, color: hit.color, logo: hit._logo || null } : null;
+}
+function thumbData() {
+  if (!S.title) return null;
+  const T = S.title.title || {}, t = S.match.teams || {}, sb = subjectBody();
+  let teams = [];
+  if (sb.type === 'full') teams = ['A', 'B'].map(k => t[k]).filter(Boolean).map(x => ({ name: x.name, short: x.short, color: x.color, logo: x._logo || null }));
+  else if (sb.type === 'team') { const x = t[sb.team]; if (x) teams = [{ name: x.name, short: x.short, color: x.color, logo: x._logo || null }]; }
+  else if (T.team) { const x = teamFor(T.team.name) || { name: T.team.name, short: T.team.short, color: T.team.color, logo: null }; teams = [x]; }
+  const vs = t.A && t.B ? `${t.A.short || t.A.name} vs ${t.B.short || t.B.name}` : '';
+  return {
+    subject: sb.type === 'player' ? 'player' : sb.type === 'full' ? 'match' : 'team',
+    first: T.first || '', last: T.title || '', headline: (S.th.custom || S.th.headline || S.title.headline || '').toUpperCase(),
+    kicker: T.kicker || 'MATCH HIGHLIGHTS', line: [vs, S.match.title].filter(Boolean).join('  ·  '), venue: S.match.venue || '',
+    stats: T.stats || [], kind: T.kind || 'BRAND', teams, counts: S.title.counts || {}
+  };
+}
+function buildHeadlines() {
+  const d = thumbData(); if (!d) return;
+  const list = HighlightThumbs.headlines(Object.assign({}, d, { headline: S.title.headline }));
+  if (!S.th.headline || !list.includes(S.th.headline)) S.th.headline = list[0] || '';
+  $('hl-pick').innerHTML = list.map(h => `<option${h === S.th.headline ? ' selected' : ''}>${esc(h)}</option>`).join('');
+  $('hl-text').value = S.th.custom || '';
+}
+function buildFrameClips() {
+  const list = (S.sel.length ? S.sel.map(id => S.byId.get(id)) : S.clips).filter(Boolean);
+  const sb = subjectBody();
+  const pref = (c) => (sb.type === 'player' ? ((c.keys && (c.keys.striker === sb.playerKey || c.keys.bowler === sb.playerKey)) ? 0 : 2) : 0) + (c.eventType === 'SIX' ? 0 : c.eventType === 'FOUR' ? 0.3 : c.eventType === 'WICKET' ? 0.5 : 1);
+  const opts = list.slice().sort((a, b) => pref(a) - pref(b)).slice(0, 60);
+  if (!opts.some(c => c.clipId === S.th.frameClip)) { S.th.frameClip = opts[0] ? opts[0].clipId : ''; S.th.frames = []; S.th.photo = S.th.upload ? S.th.photo : null; }
+  $('frame-clip').innerHTML = opts.map(c => `<option value="${esc(c.clipId)}"${c.clipId === S.th.frameClip ? ' selected' : ''}>${esc(`${c.eventType} ${c.over}.${c.ballInOver} · ${nameOfClip(c)}`)}</option>`).join('');
+}
+async function ensurePhoto() {
+  if (S.th.upload) {
+    const u = await DB.get('uploads', KEY);
+    if (u && u.blob) { const img = await HighlightThumbs.prepareImage(URL.createObjectURL(u.blob)); if (img) { S.th.photo = Object.assign(img, { score: null }); return; } }
+    S.th.upload = false;
+  }
+  if (!S.th.frames.length && S.th.frameClip) await getFrames();
+}
+async function getFrames() {
+  const id = S.th.frameClip; if (!id) return;
+  $('frames').innerHTML = Array.from({ length: 6 }, () => '<div class="frame" style="opacity:.4"></div>').join('');
+  $('frames-note').textContent = 'Taking stills from the clip…';
+  const r = await api(`/api/highlights/frames/${encodeURIComponent(id)}?n=6`);
+  if (r.status !== 200 || !r.json.success) { $('frames').innerHTML = ''; $('frames-note').textContent = r.json.error || 'Could not take stills from this clip — try another, or upload a photo.'; return; }
+  S.th.frames = r.json.frames;
+  if (!(S.th.frameIdx < S.th.frames.length)) S.th.frameIdx = 0;
+  $('frames-note').textContent = 'Sharpest first (the score is how crisp the frame is). Pick the one that shows the player best.';
+  paintFrames();
+  if (!S.th.upload) await usePhoto(S.th.frameIdx);
+}
+function paintFrames() {
+  const top = Math.max(1, ...S.th.frames.map(f => f.score));
+  $('frames').innerHTML = S.th.frames.map((f, i) => `<button class="frame${!S.th.upload && i === S.th.frameIdx ? ' on' : ''}" data-f="${i}" title="${f.t}s into the clip"><img src="${f.dataUrl}" alt=""><i>${Math.round(100 * f.score / top)}</i></button>`).join('');
+}
+async function usePhoto(i) {
+  const f = S.th.frames[i]; if (!f) return;
+  const img = await HighlightThumbs.prepareImage(f.dataUrl);
+  if (!img) return;
+  S.th.frameIdx = i; S.th.upload = false;
+  S.th.photo = Object.assign(img, { score: f.score });
+  paintFrames(); save(); paintThumbs();
+}
+function photoObj() { return S.th.photo ? Object.assign({}, S.th.photo, { focusX: S.th.fx, focusY: S.th.fy, zoom: S.th.fz }) : null; }
+// light: only the two big previews (while a slider is being dragged — the
+// three cards follow when it is let go)
+let paintQueued = false, paintLight = true;
+function paintThumbs(light) {
+  paintLight = paintLight && !!light;
+  if (paintQueued) return;
+  paintQueued = true;
+  requestAnimationFrame(() => { const l = paintLight; paintQueued = false; paintLight = true; paintThumbsNow(l); });
+}
+function paintThumbsNow(light) {
+  const d = thumbData();
+  document.querySelectorAll('.mode').forEach(b => b.classList.toggle('on', b.dataset.mode === S.th.mode));
+  $('photo-tools').classList.toggle('hidden', S.th.mode !== 'photo');
+  renderSummary();
+  if (!d) { $('vars').innerHTML = '<div class="tiny">Pick clips to see the thumbnails.</div>'; return; }
+  const H = HighlightThumbs, photo = photoObj();
+  const vars = H.VARIATIONS[S.th.mode];
+  if ($('vars').dataset.mode !== S.th.mode) {
+    $('vars').dataset.mode = S.th.mode;
+    $('vars').innerHTML = vars.map(v => `<button class="var" data-v="${v.n}"><canvas></canvas><b>Variation ${v.n} – ${esc(v.name)}</b><span>${esc(v.blurb)}</span></button>`).join('');
+  }
+  if (!light) [...$('vars').children].forEach((el) => {
+    const n = Number(el.dataset.v);
+    el.classList.toggle('on', n === S.th.variation);
+    const a = el.querySelector('.auto'); if (a) a.remove();
+    if (S.th.auto && S.th.auto.mode === S.th.mode && S.th.auto.variation === n) el.insertAdjacentHTML('afterbegin', '<span class="auto">AUTO</span>');
+    H.render({ mode: S.th.mode, variation: n, format: '16:9', data: d, photo, seed: S.th.seed, scale: 0.25, canvas: el.querySelector('canvas') });
+  });
+  const L = H.render({ mode: S.th.mode, variation: S.th.variation, format: '16:9', data: d, photo, seed: S.th.seed, scale: 0.5, canvas: $('pv-l') });
+  const P = H.render({ mode: S.th.mode, variation: S.th.variation, format: '9:16', data: d, photo, seed: S.th.seed, scale: 0.5, canvas: $('pv-p') });
+  $('pv-l-name').textContent = `${H.MODE_NAME[S.th.mode]} · Variation ${S.th.variation} – ${L.meta.name}`;
+  const qaList = (qa) => qa.passed.map(p => `<li class="pass">${esc(p)}</li>`).join('') + qa.issues.map(i => `<li class="${i.level}">${esc(i.msg)}</li>`).join('');
+  $('qa-l').innerHTML = qaList(L.qa); $('qa-p').innerHTML = qaList(P.qa);
+  $('dl-l').disabled = !L.qa.ok; $('dl-p').disabled = !P.qa.ok; $('dl-both').disabled = !(L.qa.ok && P.qa.ok);
+  $('st-l').textContent = L.qa.ok ? '' : 'Fix the issues above first'; $('st-p').textContent = P.qa.ok ? '' : 'Fix the issues above first';
+}
+async function downloadThumb(format) {
+  const d = thumbData(); if (!d) return;
+  const H = HighlightThumbs;
+  const r = H.render({ mode: S.th.mode, variation: S.th.variation, format, data: d, photo: photoObj(), seed: S.th.seed, scale: 1 });
+  if (!r.qa.ok) { toast(r.qa.issues.find(i => i.level === 'error').msg, 4000); return; }
+  const blob = await H.toBlob(r.canvas, 0.92);
+  if (!blob) { toast('Could not make the image — try again'); return; }
+  const name = H.fileName(d, S.th.mode, S.th.variation, format);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  await DB.put('thumbs', { key: `${KEY}|${S.subject}|${S.th.mode}|${S.th.variation}|${format}`, matchId: MATCH_ID, subject: S.subject, mode: S.th.mode, variation: S.th.variation, format, name, blob,
+    width: r.meta.width, height: r.meta.height, headline: d.headline, at: Date.now() });
+  toast(`Saved ${name}`);
+  loadSaved();
+}
+async function loadSaved() {
+  const all = ((await DB.all('thumbs')) || []).filter(x => x.matchId === MATCH_ID).sort((a, b) => b.at - a.at);
+  const box = $('saved');
+  [...box.querySelectorAll('img')].forEach(i => URL.revokeObjectURL(i.src));
+  if (!all.length) { box.innerHTML = '<div class="tiny">None yet — the ones you download are kept here.</div>'; return; }
+  box.innerHTML = all.map(x => `<div class="it" data-k="${esc(x.key)}"><img alt="" src="${URL.createObjectURL(x.blob)}"><div class="tiny" style="margin-top:4px">${esc(x.name)}</div><div class="tiny">${x.width} × ${x.height} · ${new Date(x.at).toLocaleString()}</div>
+    <div class="row"><button class="btn small" data-dl>Download</button><button class="btn small ghost" data-del>Delete</button></div></div>`).join('');
+  box.onclick = async (e) => {
+    const it = e.target.closest('.it'); if (!it) return;
+    const x = all.find(v => v.key === it.dataset.k); if (!x) return;
+    if (e.target.closest('[data-dl]')) { const a = document.createElement('a'); a.href = URL.createObjectURL(x.blob); a.download = x.name; document.body.appendChild(a); a.click(); a.remove(); }
+    if (e.target.closest('[data-del]')) { await DB.del('thumbs', x.key); loadSaved(); }
+  };
+}
+
+/* -------------------------------------------------------------- binds */
+function bindAll() {
+  const showPane = (p) => { $('wrap').dataset.pane = p; [...$('panes').children].forEach(x => x.classList.toggle('on', x.dataset.p === p)); if (p === 'thumbs') paintThumbs(); };
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => { document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b)); $('wrap').dataset.tab = b.dataset.tab; if (b.dataset.tab === 'library') paintLib(true); if (b.dataset.tab !== 'library') showPane(b.dataset.tab === 'thumbs' ? 'thumbs' : 'work'); });
+  $('panes').onclick = (e) => { const b = e.target.closest('button'); if (b) showPane(b.dataset.p); };
+  let qT = null;
+  $('f-q').oninput = (e) => { clearTimeout(qT); qT = setTimeout(() => { S.f.q = e.target.value; applyFilters(); }, 120); };
+  $('f-ev').onclick = (e) => { const b = e.target.closest('.chip'); if (!b) return; S.f.ev = b.dataset.v; [...$('f-ev').children].forEach(x => x.classList.toggle('on', x === b)); applyFilters(); };
+  $('f-team').onchange = (e) => { S.f.team = e.target.value; applyFilters(); };
+  $('f-player').onchange = (e) => { S.f.player = e.target.value; applyFilters(); };
+  $('f-inn').onchange = (e) => { S.f.inn = e.target.value; applyFilters(); };
+  let raf = 0;
+  $('lib').addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paintLib(false); }); }, { passive: true });
+  window.addEventListener('resize', () => paintLib(false));
+  $('lib').addEventListener('click', (e) => {
+    const play = e.target.closest('[data-play]');
+    if (play) { e.stopPropagation(); openPreview(S.byId.get(play.dataset.play)); return; }
+    const row = e.target.closest('.clip'); if (!row) return;
+    const i = Number(row.dataset.i), c = S.filtered[i]; if (!c) return;
+    if (e.shiftKey && S.lastClick != null) {
+      const [a, b] = [Math.min(S.lastClick, i), Math.max(S.lastClick, i)];
+      const on = !S.selSet.has(c.clipId);
+      for (let k = a; k <= b; k++) toggleClip(S.filtered[k], on);
+    } else toggleClip(c);
+    S.lastClick = i;
+    selectionChanged();
+  });
+  $('sel-all').onclick = () => { S.filtered.forEach(c => toggleClip(c, true)); selectionChanged(); };
+  $('sel-none').onclick = () => { S.sel = []; S.selSet = new Set(); selectionChanged(); };
+  bindTimelineDrag();
+  const order = (c) => [(c.innings || 1), c.over || 0, c.ballInOver || 0, c.n];
+  $('tl-sort').onclick = () => { S.sel.sort((a, b) => { const x = order(S.byId.get(a)), y = order(S.byId.get(b)); for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; }); selectionChanged(); };
+  $('tl-rev').onclick = () => { S.sel.reverse(); selectionChanged(); };
+  $('tl-clear').onclick = () => { if (S.sel.length && confirm(`Remove all ${S.sel.length} clips from the timeline?`)) { S.sel = []; S.selSet = new Set(); selectionChanged(); } };
+  $('subject').onchange = (e) => { S.subject = e.target.value; $('subject-figs').classList.toggle('hidden', !S.subject.startsWith('player:')); S.th.custom = ''; S.th.headline = ''; save(); refreshTitle(); };
+  $('subject-figs').onchange = (e) => { S.figs = e.target.value; S.th.headline = ''; save(); refreshTitle(); };
+  $('fmt').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; S.format = b.dataset.v; syncExportControls(); renderSummary(); save(); };
+  $('wheel').onchange = (e) => { S.wheel = e.target.checked; save(); };
+  $('render').onclick = startRender;
+  $('d-cancel').onclick = cancelRender;
+  $('d-retry').onclick = startRender;
+  document.querySelectorAll('.mode').forEach(b => b.onclick = async () => { S.th.mode = b.dataset.mode; save(); if (S.th.mode === 'photo' && !S.th.photo) await ensurePhoto(); paintThumbs(); });
+  $('vars').onclick = (e) => { const b = e.target.closest('.var'); if (!b) return; S.th.variation = Number(b.dataset.v); save(); paintThumbs(); };
+  $('frame-clip').onchange = (e) => { S.th.frameClip = e.target.value; S.th.frames = []; S.th.frameIdx = 0; save(); getFrames(); };
+  $('frame-get').onclick = () => getFrames();
+  $('frames').onclick = (e) => { const b = e.target.closest('.frame'); if (b && b.dataset.f != null) usePhoto(Number(b.dataset.f)); };
+  $('upload').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const img = await HighlightThumbs.prepareImage(URL.createObjectURL(f));
+    if (!img) { toast('That file is not a picture this browser can read'); return; }
+    await DB.put('uploads', { key: KEY, blob: f, name: f.name, at: Date.now() });
+    S.th.upload = true; S.th.photo = Object.assign(img, { score: null }); S.th.mode = 'photo';
+    paintFrames(); save(); paintThumbs(); toast('Photo uploaded — kept on this device for this match');
+  };
+  ['fx', 'fy', 'fz'].forEach(k => { $(k).value = S.th[k]; $(k).oninput = (e) => { S.th[k] = Number(e.target.value); paintThumbs(true); }; $(k).onchange = () => { save(); paintThumbs(); }; });
+  $('hl-pick').onchange = (e) => { S.th.headline = e.target.value; S.th.custom = ''; $('hl-text').value = ''; save(); paintThumbs(); };
+  let hlT = null;
+  $('hl-text').oninput = (e) => { S.th.custom = e.target.value.trim(); paintThumbs(true); clearTimeout(hlT); hlT = setTimeout(() => { save(); paintThumbs(); }, 400); };
+  $('auto').onclick = () => {
+    const d = thumbData(); if (!d) return;
+    const a = HighlightThumbs.autoSelect(d, photoObj());
+    S.th.auto = a; S.th.mode = a.mode; S.th.variation = a.variation;
+    $('auto-why').textContent = `Auto: ${HighlightThumbs.MODE_NAME[a.mode]} · Variation ${a.variation} – ${a.name} (${a.reason}). You can still pick any other.`;
+    save(); paintThumbs();
+  };
+  $('regen').onclick = async () => {
+    S.th.seed++;
+    // a fresh still too, when the photo is a frame of the clip: the next sharpest
+    if (S.th.mode === 'photo' && !S.th.upload && S.th.frames.length > 1) await usePhoto((S.th.frameIdx + 1) % S.th.frames.length);
+    save(); paintThumbs();
+  };
+  $('dl-l').onclick = () => downloadThumb('16:9');
+  $('dl-p').onclick = () => downloadThumb('9:16');
+  $('dl-both').onclick = async () => { await downloadThumb('16:9'); await downloadThumb('9:16'); };
+  $('modal-close').onclick = closePreview;
+  $('modal').onclick = (e) => { if (e.target === $('modal')) closePreview(); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
+}
+function openPreview(c) {
+  if (!c) return;
+  $('modal-title').textContent = `${c.eventType} · ${c.over}.${c.ballInOver} · ${nameOfClip(c)}`;
+  $('modal-body').innerHTML = `<video controls autoplay playsinline src="${esc(c.playbackUrl || c.watchUrl)}"></video>
+    <dl class="kv"><dt>Batter</dt><dd>${esc(c.striker || '—')}</dd><dt>Bowler</dt><dd>${esc(c.bowler || '—')}</dd>${c.eventType === 'WICKET' ? `<dt>Out</dt><dd>${esc(c.dismissedPlayer || '')} ${esc(c.dismissalType || '')}${c.fielder ? ' · ' + esc(c.fielder) : ''}</dd>` : ''}
+    <dt>Innings · over</dt><dd>${c.innings || 1} · ${c.over}.${c.ballInOver}</dd><dt>Length</dt><dd>${c.duration ? Math.round(c.duration) + ' s' : '—'}</dd><dt>Clip</dt><dd class="tiny">${esc(c.clipId)}</dd></dl>`;
+  $('modal').classList.remove('hidden');
+}
+function closePreview() { const v = $('modal-body').querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } $('modal-body').innerHTML = ''; $('modal').classList.add('hidden'); }
+
+boot().catch(err => { console.error(err); showGate('Something went wrong', String(err && err.message || err), false); });
+</script>
+</body>
+</html>
