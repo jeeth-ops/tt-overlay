@@ -5306,6 +5306,15 @@ app.get('/api/highlights/compile/:jobId/download', (req, res) => {
     const isZip = job.kind === 'zip';
     const ext = isZip ? 'zip' : 'mp4';
     const defaultName = isZip ? 'AllSportsLive_Tournament_Player_Highlights' : 'highlights';
+    // ?inline=1 — the Highlight Studio's player watches a studio video in the
+    // page: served with byte ranges (so it can be seeked), not as an
+    // attachment, and the file stays (a studio video is kept until its job
+    // expires). Every other download is unchanged.
+    if (req.query.inline === '1' && job.keep && !isZip) {
+        return res.sendFile(job.outFile, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'private, no-store' } }, (err) => {
+            if (err && !res.headersSent) res.status(404).json({ success: false, error: 'Highlight file not ready or has expired' });
+        });
+    }
     const filename = `${req.query.name || defaultName}.${ext}`.replace(/[^a-zA-Z0-9_.-]/g, '_');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', isZip ? 'application/zip' : 'video/mp4');
