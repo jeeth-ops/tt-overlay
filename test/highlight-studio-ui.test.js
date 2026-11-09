@@ -106,7 +106,12 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   await page.waitForFunction(() => /^327 of/.test(document.querySelector('#lib-count').textContent));
   // pick: blue, red, yellow (2nd innings, so search it), green — the operator's order
   const pickByOver = async (ob) => { await search(ob); await page.waitForFunction((o) => [...document.querySelectorAll('#lib .clip .ob')].some(x => x.textContent === o), ob); await page.click(`#lib .clip:has(.ob:text-is("${ob}"))`); };
-  await pickByOver('5.1'); await pickByOver('1.2'); await pickByOver('2.2'); await pickByOver('3.4');
+  await pickByOver('5.1'); await pickByOver('1.2');
+  ok('two clips, both Harsh Mendon\'s: the video is about him (picked from the clips — his name on the title card)',
+    (await page.$eval('#subject', x => x.value)) === `player:${F.pk('Harsh Mendon')}` && await page.isVisible('#subject-auto'), await page.$eval('#subject', x => x.value));
+  await pickByOver('2.2');
+  ok('… and with another player\'s wicket among them: the whole match', (await page.$eval('#subject', x => x.value)) === 'full');
+  await pickByOver('3.4');
   await search('');
   const tlOrder = () => page.$$eval('#tl li[data-id]', els => els.map(e => e.dataset.id));
   ok('the timeline: in the order they were picked', JSON.stringify(await tlOrder()) === JSON.stringify(['blue', 'red', 'yellow', 'green'].map(n => ids[n])));
