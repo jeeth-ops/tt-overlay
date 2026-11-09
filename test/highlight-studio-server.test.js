@@ -138,9 +138,11 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   fs.writeFileSync(outFile, dl.body);
   const info = probeFile(outFile);
   ok('downloaded: an MP4 with picture and sound, 1280x720', dl.status === 200 && /AllSportsLive_Test\.mp4/.test(dl.headers['content-disposition']) && info.w === 1280 && info.h === 720 && info.audio, [dl.status, info]);
-  const seg = 80 / 30;   // title card and each 3.2 s clip: 80 frames at 30 fps (see highlight-edit.js)
-  ok('title card + 4 clips + end card: as long as its parts', Math.abs(info.duration - (seg * 5 + 48 / 30)) < 0.3, info.duration);
-  const seen = order.map((n, i) => colourAt(outFile, seg * (i + 1) + seg / 2, 1280, 720));
+  // the opening, each 3.2 s clip (80 frames at 30 fps) and the end card: the engine's own lengths, as the studio is told them
+  const intro = m.edit.intro, seg = 80 / 30, outro = m.edit.outro;
+  ok('the studio is told the engine\'s own lengths (the opening 4.8 s, the end card 3.2 s)', intro === 4.8 && outro === 3.2, m.edit);
+  ok('the opening + 4 clips + end card: as long as its parts', Math.abs(info.duration - (intro + seg * 4 + outro)) < 0.3, info.duration);
+  const seen = order.map((n, i) => colourAt(outFile, intro + seg * i + seg / 2, 1280, 720));
   ok('the clips in the operator\'s order (blue, red, yellow, green — not ball order)', JSON.stringify(seen) === JSON.stringify(order), seen);
   const dl2 = await download(port, `/api/highlights/compile/${jobId}/download`);
   ok('a studio video can be downloaded again', dl2.status === 200 && dl2.body.length === dl.body.length, dl2.status);
@@ -188,6 +190,44 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   ok('… and the CPU is free again soon after (none of its ffmpegs left at all)', mine().length === 0, mine().map(l => l.slice(-200)));
   const notMine = await api('POST', `/api/highlights/compile/${jobId}/cancel`, {}, { Authorization: 'Bearer other-token' });
   ok('cancel by an account that cannot use the studio: refused', notMine.status === 403, notMine.status);
+
+  console.log('\n=== Thumbnails kept on the server (any device) ===');
+  const jpg = path.join(TMP, 'thumb.jpg'), jpgP = path.join(TMP, 'thumb-p.jpg');
+  spawnSync(ffmpegPath, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=1920x1080', '-frames:v', '1', '-q:v', '3', jpg]);
+  spawnSync(ffmpegPath, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=1080x1920', '-frames:v', '1', '-q:v', '3', jpgP]);
+  const jbuf = fs.readFileSync(jpg), pbuf = fs.readFileSync(jpgP);
+  const postRaw = (url, buf, type, headers) => new Promise((resolve) => {
+    const rq = http.request({ host: '127.0.0.1', port, method: 'POST', path: url, headers: Object.assign({ 'Content-Type': type, 'Content-Length': buf.length }, headers || {}) }, (res) => {
+      let b = ''; res.on('data', d => { b += d; }); res.on('end', () => { let j = null; try { j = JSON.parse(b); } catch (e) {} resolve({ status: res.status || res.statusCode, json: j }); });
+    });
+    rq.end(buf);
+  });
+  const tq = (o) => '?' + new URLSearchParams(Object.assign({ subject: 'full', mode: 'photo', variation: '2', format: '16:9', name: 'AllSportsLive_GscVsDyp_WithPhoto_Variation2_16x9.jpg', headline: 'MATCH HIGHLIGHTS' }, o || {})).toString();
+  let tr = await postRaw(`/api/highlights/thumbs/${MATCH}${tq()}`, jbuf, 'image/jpeg');
+  ok('signed out: a thumbnail cannot be kept (401)', tr.status === 401, tr.status);
+  tr = await postRaw(`/api/highlights/thumbs/${MATCH}${tq()}`, jbuf, 'image/jpeg', AUTH);
+  ok('kept: its token, its address, its size; stored in the database here (no R2 in this test)', tr.status === 200 && /^[0-9a-f]{32}$/.test(tr.json.thumb.token) && tr.json.thumb.width === 1920 && tr.json.thumb.height === 1080 && tr.json.thumb.storage === 'db', tr.json);
+  const tok = tr.json.thumb.token;
+  tr = await postRaw(`/api/highlights/thumbs/${MATCH}${tq({ format: '9:16' })}`, jbuf, 'image/jpeg', AUTH);
+  ok('a "9:16" that is not 1080 x 1920: refused, saying why', tr.status === 400 && /1080 x 1920/.test(tr.json.error), tr.json);
+  tr = await postRaw(`/api/highlights/thumbs/${MATCH}${tq({ format: '9:16' })}`, Buffer.from('not a picture at all'), 'image/jpeg', AUTH);
+  ok('not a JPEG: refused', tr.status === 400 && /JPEG/.test(tr.json.error), tr.json);
+  tr = await postRaw(`/api/highlights/thumbs/${MATCH}${tq({ format: '9:16' })}`, pbuf, 'image/jpeg', AUTH);
+  ok('its 9:16 too', tr.status === 200 && tr.json.thumb.width === 1080, tr.json);
+  tr = await postRaw(`/api/highlights/thumbs/${MATCH}${tq({ headline: 'POWER HITTING' })}`, jbuf, 'image/jpeg', AUTH);
+  ok('saved again (same subject, design and shape): the same one, replaced', tr.status === 200 && tr.json.thumb.token === tok && tr.json.thumb.headline === 'POWER HITTING', tr.json);
+  let tl = await api('GET', `/api/highlights/thumbs/${MATCH}`, null, AUTH);
+  ok('the list: the two, newest first, without their pictures', tl.status === 200 && tl.json.thumbs.length === 2 && tl.json.thumbs[0].token === tok && !('data' in tl.json.thumbs[0]), tl.json);
+  const tf = await download(port, `/api/highlights/thumbs/file/${tok}.jpg?download=1`);
+  ok('its picture: the very bytes, as a JPEG download with its name', tf.status === 200 && tf.headers['content-type'] === 'image/jpeg' && tf.body.equals(jbuf) && /Variation2_16x9\.jpg/.test(tf.headers['content-disposition']), [tf.status, tf.headers['content-type']]);
+  const guess = await download(port, `/api/highlights/thumbs/file/${'0'.repeat(32)}.jpg`);
+  ok('a guessed address: nothing', guess.status === 404, guess.status);
+  tl = await api('GET', `/api/highlights/thumbs/${PRIVATE_MATCH}`, null, AUTH);
+  ok('a private creator\'s match: not listed to another creator', tl.status === 404, tl.status);
+  tl = await api('DELETE', `/api/highlights/thumbs/${MATCH}/${tok}`, null, AUTH);
+  const after = await download(port, `/api/highlights/thumbs/file/${tok}.jpg`);
+  const remaining = await api('GET', `/api/highlights/thumbs/${MATCH}`, null, AUTH);
+  ok('deleted: gone from the list and its address', tl.status === 200 && after.status === 404 && remaining.json.thumbs.length === 1, [tl.status, after.status, remaining.json.thumbs.length]);
 
   console.log('\n=== The scorecard\'s own downloads, unchanged ===');
   r = await api('POST', '/api/highlights/compile', { matchId: MATCH, type: 'full' });

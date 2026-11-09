@@ -7,22 +7,41 @@
  *
  *   title card ─▶ clip ─▶ band wipe ─▶ clip ─▶ band wipe ─▶ … ─▶ end card
  *
- * - The title card (~2.6 s) opens on the brand band, which whips away onto the
- *   player: the name, the team's badge, the tournament and the match, what the
- *   video holds and the player's figures (runs and balls, fours, sixes /
- *   wickets, overs…) — over a blurred, slowly pushing still of the first clip.
- * - Each clip carries a small event tag at the top left for its first few
- *   seconds (SIX / FOUR / WICKET …, the player, the over and the bowler), gone
- *   long before the ball is bowled: the shot itself is never covered. Top left
- *   on purpose: the broadcast score bar (bottom) and the channel logo (top
- *   right) are already in the picture.
+ * - The opening (4.8 s), in acts that follow one another — never everything
+ *   at once:
+ *     1. the brand: the band whips away onto a dark stage, team-colour shards
+ *        sweep across, light lines run in, our logo springs up through a ring
+ *        of light with a glint across it, then draws back;
+ *     2. the teams: their colours slide in as panels (one each, from either
+ *        side; a whole panel for one team), their badges rise on white discs,
+ *        their names rise through a mask, VS between them;
+ *     3. the match: the title card — the tournament, the match and venue, the
+ *        player's name rising into place, what the video holds and the
+ *        player's figures (runs and balls, fours, sixes / wickets, overs…),
+ *        the team panel — over a blurred, slowly pushing still of the first clip;
+ *     4. into the footage: the band sweeps in and the first clip is under it.
+ * - Each clip carries an event tag at the top left for its first few seconds:
+ *   a strip in the batting team's colour, the event (SIX / FOUR / WICKET …),
+ *   the team's badge, the player, the over and the bowler — each part sliding
+ *   in after the one before and out in reverse; gone long before the ball is
+ *   bowled, so the shot itself is never covered. Top left on purpose: the
+ *   broadcast score bar (bottom) and the channel logo (top right) are already
+ *   in the picture.
  * - Between clips a branded band sweeps across: a slab in the colour of what
  *   comes next, then the navy panel with the logo. It is motion-blurred while
  *   it rushes in and out, all but stops while it covers the cut (so a cut is
- *   never seen), and a glint of light crosses the logo. It is silent: the only
- *   sound in the video is the clips' own.
- * - The end card (1.6 s): the band clears onto the logo, which springs into
- *   place under a sweep of light, then the website and a fade to black.
+ *   never seen), and a glint of light crosses the logo. It is silent: at a cut
+ *   there is only the clips' own sound.
+ * - The end card (3.2 s): the band clears onto a stage framed by shards in the
+ *   teams' colours; the logo springs into place under a sweep of light; the
+ *   player (or the teams), the tournament and what the video held rise under
+ *   it, then the website, and a fade to black.
+ * - The sound: each clip's own — commentary and crowd untouched — brought to
+ *   one level (a single gain per clip, towards -16 LUFS, never past -1 dBTP,
+ *   so no clip jumps out or clips), and under the opening and the end card
+ *   only, a soft sound design made here from noise and tones (whooshes with
+ *   the shards and panels, a low thump under the logo, a shimmer with its
+ *   glint): nothing sampled, nothing licensed, never over a clip.
  * - Two shapes: 16:9 (YouTube) or 9:16 (Reels / Shorts / status). In 9:16 the
  *   whole 16:9 picture sits in the middle over a blurred copy of itself (the
  *   action is never cropped) and the tag lives in the space above it.
@@ -51,8 +70,9 @@
  *   machine never waits behind an edit.
  * - Built for the server's ffmpeg 4.1 static build (no xfade, no animated
  *   scale): the wipe's frames are cut from the band picture (crop + pad),
- *   names rise through a mask (drawtext into alphamerge), the logo's spring is
- *   zoompan.
+ *   names rise through a mask (drawtext into alphamerge), the logo's spring
+ *   and the rings of light are zoompan, panels and shards are stills drawn
+ *   once (geq on one frame, held) and moved by overlay expressions.
  *
  * Node core only.
  */
@@ -61,15 +81,19 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
-const STYLE = 'v3';             // bump when the look changes: old cached segments are left alone
+const STYLE = 'v4';             // bump when the look changes: old cached segments are left alone
 const STING = 0.6;              // the whole wipe, seconds
 const HALF = STING / 2;         // each segment's half of it
 const EASE_K = 0.85;            // the band rushes in, all but stops over the cut, rushes out
 const SHUTTER = 0.5;            // motion blur: the band smears over half a frame's travel (a 180° shutter)
 const BLUR = [0, 12, 30, 64, 128]; // the band's pre-blurred copies: box radius along the motion, px at 1080p
 const GLINT = [0.16, 0.44];     // stinger time the glint crosses the logo (the cut is at HALF)
-const INTRO_SEC = 2.6;
-const OUTRO_SEC = 1.6;
+const INTRO_SEC = 4.8;          // the opening: brand · teams · the match · into the footage
+const OUTRO_SEC = 3.2;
+const ACT = { teams: 1.15, card: 2.45 };   // when the opening's second and third acts begin (s)
+// A clip's level: one gain towards -16 LUFS (integrated), at most +6 dB up or
+// 10 dB down, and never so much that its true peak passes -1 dBTP.
+const LOUD = { target: -16, up: 6, down: 10, ceiling: -1.0 };
 const TAG_IN = 0.5;             // the event tag arrives just after the band has gone…
 const TAG_HOLD = 3.0;           // …and is gone long before the ball is bowled
 const WHEEL_LEAD = 4.0;         // the wheel's shot draws this long before a clip ends: after the shot (the
@@ -109,6 +133,7 @@ const prog = (a, d, v = 't') => clampExpr(`(${v}-${r2(a)})/${r2(d)}`);
 const easeOut = (u) => `(1-pow(1-${u},3))`;                                  // decelerates into place
 const easeIn = (u) => `pow(${u},3)`;                                         // accelerates away
 const easeOutBack = (u) => `(1+2.70158*pow(${u}-1,3)+1.70158*pow(${u}-1,2))`; // overshoots a touch, settles
+const easeInOut = (u) => `(${u}*${u}*(3-2*${u}))`;                          // smooth start and stop
 // Text shown on the video: one line, plain printable characters, upper case.
 function cleanText(s, max = 64) {
   return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, max);
@@ -144,8 +169,19 @@ function memBudgetMB() {
 // What the event tag on a clip says. clip: a clips-collection doc (or the same
 // fields): eventType, outcomeLabel, strikerName, bowlerName, fielderName,
 // dismissedPlayerName, dismissalType, over (0-based), ballInOver.
-function cardForClip(clip) {
+// team (optional): the batting side's { name, short, color, logo } — its
+// colour and badge go on the tag (the logo itself only as a fingerprint here:
+// the card is part of the cached segment's key).
+function cardForClip(clip, team) {
   const c = clip || {};
+  const card = cardOf(c);
+  if (team && (team.name || team.short)) {
+    card.team = { short: cleanText(team.short || String(team.name).split(/\s+/).map(w => w[0]).join(''), 6), color: hexOf(team.color) || null,
+      logo: team.logo ? sha1(String(team.logo)).slice(0, 12) : null };
+  }
+  return card;
+}
+function cardOf(c) {
   const ev = String(c.eventType || '').toUpperCase();
   const at = (c.over != null && c.ballInOver != null) ? `${Number(c.over)}.${Number(c.ballInOver)} OV` : '';
   const bowler = cleanText(c.bowlerName || c.bowler, 40);
@@ -226,16 +262,32 @@ function createHighlightEditor(opts = {}) {
   const cacheDir = opts.cacheDir || path.join(require('os').tmpdir(), 'scorvix-highlight-cache');
   const cacheMaxBytes = opts.cacheMaxBytes || 1536 * 1048576;
   const preset = opts.preset || 'superfast';
-  // ⚡ How many ffmpegs at once: the cores really available, two per ffmpeg —
-  // ONE on a small server (one CPU or less: the live server on it comes
-  // first, exactly as before), two on four cores, at most four. A clip's
-  // segment is a filtergraph (drawtext, overlays) that runs mostly on one
-  // core, so separate clips side by side use the machine far better than
-  // more threads inside one. HIGHLIGHT_PARALLEL / opts.parallel overrides.
-  const parallel = Math.max(1, Math.min(4, Number(opts.parallel) || Math.floor(cpuBudget() / 2) || 1));
-  // Decoder / encoder threads each: the cores left per ffmpeg, at most 3
-  // (beyond that each thread only adds frames held in memory on a small server).
-  const threads = Math.max(1, Math.min(opts.threads || Math.floor(cpuBudget() / parallel) || 1, 3));
+  // ⚡ How many ffmpegs at once: one per core but one (that core is left for
+  // the live server on the same machine), at most four, and no more than the
+  // memory holds (~700 MB each, all in) — ONE on a small server (two CPUs or
+  // less: the live server comes first, exactly as before). A clip's segment
+  // is a filtergraph (drawtext, overlays) that runs mostly on one core, so
+  // separate clips side by side use the machine far better than more threads
+  // inside one. Measured, 50 clips at 720p on 4 cores: one at a time 137 s,
+  // two 99 s, three 86 s, four 82 s. HIGHLIGHT_PARALLEL / opts.parallel overrides.
+  const cores = cpuBudget();
+  // 🎮 NVIDIA NVENC, only when asked for (opts.encoder 'nvenc' /
+  // HIGHLIGHT_ENCODER=nvenc) AND this ffmpeg has h264_nvenc AND a real
+  // one-frame encode works on this machine — else x264, as always. Every
+  // segment of a video comes from the one encoder (the finished picture is a
+  // copy of them), and the encoder is part of a cached segment's key.
+  let encoder = 'x264';
+  if (String(opts.encoder || '').toLowerCase() === 'nvenc') {
+    try {
+      const t = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:r=30:d=0.2', '-frames:v', '2', '-c:v', 'h264_nvenc', '-f', 'null', '-'], { timeout: 20000 });
+      if (t.status === 0) encoder = 'nvenc';
+      else log('NVENC asked for but not usable here — encoding with x264');
+    } catch (e) { log('NVENC asked for but not usable here — encoding with x264'); }
+  }
+  const parallel = Math.max(1, Math.min(encoder === 'nvenc' ? 2 : 4, Number(opts.parallel) || (cores <= 2 ? 1 : Math.min(cores - 1, Math.floor(memBudgetMB() / 700) || 1))));
+  // Decoder / encoder threads each: the cores per ffmpeg, rounded up, at most
+  // 2 (beyond that each thread only adds frames held in memory).
+  const threads = Math.max(1, Math.min(opts.threads || Math.ceil(cores / parallel) || 1, opts.threads ? 3 : 2));
   fs.mkdirSync(cacheDir, { recursive: true });
 
   // Low priority where the OS has it: the live server on the same machine
@@ -355,9 +407,14 @@ function createHighlightEditor(opts = {}) {
   }
   function encodeArgs(p) {
     const big = p.h >= 1080;
-    return ['-c:v', 'libx264', '-preset', preset, '-crf', '23', '-maxrate', big ? '6M' : '4M', '-bufsize', big ? '12M' : '8M',
-      '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p', '-r', String(p.fps),
-      '-x264-params', `stitchable=1:keyint=${p.fps * 2}:min-keyint=${p.fps}`,
+    const video = encoder === 'nvenc'
+      // the same quality target and caps as x264's, a key frame every 2 s, no B-frames (every segment opens and closes cleanly)
+      ? ['-c:v', 'h264_nvenc', '-preset', 'slow', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-maxrate', big ? '6M' : '4M', '-bufsize', big ? '12M' : '8M',
+        '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(p.fps), '-g', String(p.fps * 2), '-bf', '0', '-forced-idr', '1', '-spatial_aq', '1']
+      : ['-c:v', 'libx264', '-preset', preset, '-crf', '23', '-maxrate', big ? '6M' : '4M', '-bufsize', big ? '12M' : '8M',
+        '-profile:v', 'high', '-level', '4.1', '-pix_fmt', 'yuv420p', '-r', String(p.fps),
+        '-x264-params', `stitchable=1:keyint=${p.fps * 2}:min-keyint=${p.fps}`];
+    return [...video,
       // Lossless sound inside a segment (MKV + FLAC): AAC would put an encoder
       // delay at the start of every segment, and the joins would stutter. The
       // finished video gets ONE AAC encode of the whole soundtrack.
@@ -466,6 +523,23 @@ function createHighlightEditor(opts = {}) {
     const glow = `exp(-(pow((X-${ew / 2})/${r2(ew * 0.42)},2)+pow((Y-${eh * 0.44})/${r2(eh * 0.5)},2)))`;
     await makeOnce(out.endBg, ['-f', 'lavfi', '-i', `color=c=black:s=${ew}x${eh},format=rgb24`, '-vf',
       `geq=r='6+20*${glow}':g='10+30*${glow}':b='22+50*${glow}'`, '-frames:v', '1']);
+    // The opening's logo: drawn at 1.3x the size it settles at, on a box twice
+    // the frame it is shown in — zoompan springs it from 0.65 of its size to
+    // all of it, always scaling down (sharp).
+    out.Ci = even(S * 0.30 * 1.25); out.introZ = 1 / 0.65;
+    out.logoIntro = path.join(dir, 'logo-intro.png');
+    await makeOnce(out.logoIntro, ['-i', LOGO, '-vf', `scale=-2:${even(S * 0.30 * 1.3)}:flags=lanczos,format=rgba,pad=${2 * out.Ci}:${2 * out.Ci}:(ow-iw)/2:(oh-ih)/2:color=black@0`, '-frames:v', '1']);
+    out.shineIntro = path.join(dir, 'shine-intro.png');
+    await makeOnce(out.shineIntro, ['-f', 'lavfi', '-i', `color=c=white@0:s=${3 * out.Ci}x${out.Ci},format=rgba`, '-vf',
+      `geq=r=255:g=255:b=255:a='210*exp(-pow((X-${1.5 * out.Ci}-0.45*(Y-${out.Ci / 2}))/${r2(out.Ci * 0.08)},2))'`, '-frames:v', '1']);
+    // A ring of light (it grows out from behind the logo and fades): a soft
+    // white circle line with a warm glow round it.
+    out.RR = even(S * 0.62);
+    out.ring = path.join(dir, 'ring.png');
+    const rr0 = `(hypot(X-${out.RR / 2},Y-${out.RR / 2})-${r2(out.RR * 0.2)})`;   // small: zoompan only enlarges, so it grows from here
+    await makeOnce(out.ring, ['-f', 'lavfi', '-i', `color=c=white@0:s=${out.RR}x${out.RR},format=rgba`, '-vf',
+      // (its alpha falls to nothing well inside the picture's edges: the glow is never cut off square)
+      `geq=r=255:g='238+17*exp(-pow(${rr0}/${r2(3 * k)},2))':b='200+55*exp(-pow(${rr0}/${r2(3 * k)},2))':a='min(255,235*exp(-pow(${rr0}/${r2(2.6 * k)},2))+60*exp(-pow(${rr0}/${r2(14 * k)},2)))*clip((${r2(out.RR * 0.46)}-hypot(X-${out.RR / 2},Y-${out.RR / 2}))/${r2(out.RR * 0.1)},0,1)'`, '-frames:v', '1']);
 
     // The band in each accent colour, lazily: sharp, plus its blurred copies;
     // and from them the band's frames for either side of a cut.
@@ -576,6 +650,134 @@ function createHighlightEditor(opts = {}) {
     G.add(`[${cur}]null[${outLabel}]`);
   }
 
+  /* --------------------------------------------- stills drawn in a graph */
+  // A picture drawn inside a graph — geq on ONE frame, then held for the
+  // length of the segment: as cheap for a long card as for a short one.
+  function heldStill(G, p, w, h, expr, label) {
+    G.add(`color=c=black@0:s=${even(w)}x${even(h)}:r=${p.fps}:d=0.1,format=rgba,geq=${expr},loop=loop=-1:size=1:start=0,settb=1/${p.fps},setpts=N[${label}]`);
+  }
+  // A slanted slab (a parallelogram leaning by sp over its height) in a
+  // colour deepening downwards, with faint diagonal ribs and a hairline on
+  // its leading edge; drawn at half size (it is only seen moving, or behind
+  // sharp type) and scaled up. side: which edge leans ('right' / 'left' /
+  // 'bottom' / 'top' / 'both').
+  function slab(G, p, w, h, hex, side, label, o = {}) {
+    const q = 0.5, W2 = even(w * q), H2 = even(h * q), sp = Math.round((o.sp != null ? o.sp : h * 0.18) * q), hair = Math.max(1, Math.round(2 * p.k));
+    const [R, Gc, B] = rgbOf(hex || ACCENT.BRAND);
+    // u: how far inside the slab, from its slanted edge(s)
+    const u = side === 'right' ? `(${W2}-${sp}*(${H2}-Y)/${H2}-X)` : side === 'left' ? `(X-${sp}*Y/${H2})`
+      : side === 'bottom' ? `(${H2}-${sp}*X/${W2}-Y)` : side === 'top' ? `(Y-${sp}*(${W2}-X)/${W2})`
+      : `min(X-${sp}*(${H2}-Y)/${H2},${W2}-${sp}*Y/${H2}-X)`;
+    const shade = `(${o.top == null ? 1.0 : o.top}-${o.fall == null ? 0.42 : o.fall}*Y/${H2})`;
+    const rib = `(1+0.05*sin((X+Y)/${r2(9 * p.k)}))`;
+    const c = (v) => `if(lt(${u},${hair}),245,clip(${v}*${shade}*${rib},0,255))`;
+    const a = `255*clip(${u}/1.5,0,1)*${o.alpha == null ? 1 : o.alpha}`;
+    G.add(`color=c=black@0:s=${W2}x${H2}:r=${p.fps}:d=0.1,format=rgba,geq=r='${c(R)}':g='${c(Gc)}':b='${c(B)}':a='${a}',scale=${even(w)}:${even(h)}:flags=bicubic,loop=loop=-1:size=1:start=0,settb=1/${p.fps},setpts=N[${label}]`);
+  }
+  // A team's badge on a white disc ringed in its colour (its initials when it
+  // has no badge) → { file, size } (the size with its ring).
+  async function teamDisc(p, team, D, dir, name, signal) {
+    const ring = Math.max(3, Math.round(D * 0.045)), DD = even(D + 2 * ring);
+    const col = hexOf(team && team.color) || ACCENT.BRAND, [r, g, b] = rgbOf(col);
+    const G = graph();
+    const rr = `hypot(X-${DD / 2},Y-${DD / 2})`, inner = `lt(${rr},${r2(D / 2 - 1)})`;
+    G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=black@0:s=${DD}x${DD},format=rgba`])}:v]geq=r='if(${inner},255,${r})':g='if(${inner},255,${g})':b='if(${inner},255,${b})':a='255*${clampExpr(`${DD / 2}-${rr}`)}'[d]`);
+    const badge = team ? await badgeFile(team.logo, dir, `${name}-badge`) : null;
+    if (badge) {
+      const box = Math.round(D * 0.66);
+      G.add(`[${G.file(badge)}:v]scale=${box}:${box}:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba[lg]`);
+      G.add(`[d][lg]overlay=x=(W-w)/2:y=(H-h)/2:format=rgb[f]`);
+    } else {
+      const initials = cleanText((team && (team.short || String(team.name || '').split(/\s+/).map(w => w[0]).join(''))) || '', 4) || 'TEAM';
+      const light = 0.2126 * r + 0.7152 * g + 0.0722 * b > 150;
+      G.add(`[d]${drawtext({ font: FONTS.display, file: textFile(dir, `${name}-ini`, initials), size: Math.round(D * (initials.length > 3 ? 0.34 : 0.42)),
+        color: light ? '0x0b1220' : `0x${col}`, x: '(w-text_w)/2', y: '(h-text_h)/2' })}[f]`);
+    }
+    const file = path.join(dir, `${name}.png`);
+    await run(withScript(dir, G, ['-map', '[f]', '-frames:v', '1', file]), { signal });
+    return { file, size: DD };
+  }
+  // A picture springing in (zoompan): from `from` of its size to all of it
+  // (overshooting a touch), starting `at`, for frames [0, n) of the segment —
+  // the file is a box twice the frame it is shown in. → label (frames 0…n).
+  function springIn(G, p, file, box, n, { at, dur = 0.5, from, out }) {
+    const Z = 1 / from, fps = p.fps, u = clampExpr(`(on-${r2(at * fps)})/${r2(dur * fps)}`);
+    const back = out ? `-${r2((Z - 1) * out.by)}*${easeIn(clampExpr(`(on-${r2(out.at * fps)})/${r2(out.dur * fps)}`))}` : '';
+    const L = G.label('spr');
+    G.add(`[${G.file(file)}:v]format=rgba,zoompan=z='1+${r2(Z - 1)}*${easeOutBack(u)}${back}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${n}:s=${box}x${box}:fps=${fps},format=rgba[${L}]`);
+    return L;
+  }
+  // A ring of light growing out (zoompan from half its size) and fading,
+  // over [at, at + dur], as a stream of exactly those frames, timed to them.
+  function ringBurst(G, p, a, at, dur, label) {
+    const fps = p.fps, nf = Math.max(2, Math.round(dur * fps)), u = clampExpr(`on/${nf - 1}`);
+    G.add(`[${G.file(a.ring)}:v]format=rgba,zoompan=z='1+0.9*${easeOut(u)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${nf}:s=${a.RR}x${a.RR}:fps=${fps},format=rgba,` +
+      `fade=t=out:st=${f6(dur * 0.35)}:d=${f6(dur * 0.65)}:alpha=1,settb=1/${fps},setpts=N+${Math.round(at * fps)}[${label}]`);
+  }
+
+  /* -------------------------------------------------------- sound design */
+  // The opening's and the end card's sound, made here — noise and tones
+  // shaped by ffmpeg, nothing sampled or licensed — quiet (never past -12
+  // dBFS), and only ever under the cards (never over a clip). events:
+  // [{ type: whoosh | impact | shimmer | riser, at, dur, db }] — db: the
+  // event's own true peak (dBFS). The sources' own peaks, measured: ffmpeg's
+  // sine is 1/8 (-18.1 dBFS); pink noise kept to 260 Hz – 4.2 kHz peaks at
+  // -7.7 dBFS, kept to 1.2 – 9 kHz at -9.9 — the envelopes make up the rest.
+  function sfxTrack(G, T, events, label) {
+    const parts = [], dur = f6(T + 0.25);
+    const CAL = { whoosh: 7.7, riser: 9.9, impact: 18.1, shimmer: 18.1 };
+    events.forEach((e) => {
+      const L = G.label('sx'), a = r2(e.at), d = r2(e.dur || 0.4);
+      const pk = Math.round(Math.pow(10, ((e.db == null ? -20 : e.db) + (CAL[e.type] || 0)) / 20) * 1000) / 1000;
+      if (e.type === 'whoosh') {
+        // pink noise through a band, swelling and falling away
+        const env = `${pk}*if(between(t,${a},${r2(a + d)}),pow(sin(PI*(t-${a})/${d}),1.7),0)`;
+        G.add(`anoisesrc=color=pink:amplitude=1:sample_rate=48000:nb_samples=256:duration=${dur},highpass=f=${e.lo || 260},lowpass=f=${e.hi || 4200},volume='${env}':eval=frame,aformat=sample_fmts=fltp:channel_layouts=stereo[${L}]`);
+      } else if (e.type === 'impact') {
+        // a low thump: a deep tone dying away fast
+        const env = `${pk}*if(gte(t,${a}),exp(-(t-${a})*${r2(e.decay || 7)}),0)`;
+        G.add(`sine=frequency=${e.f || 58}:sample_rate=48000:samples_per_frame=256:duration=${dur},volume='${env}':eval=frame,aformat=sample_fmts=fltp:channel_layouts=stereo[${L}]`);
+      } else if (e.type === 'shimmer') {
+        // two high tones, a fifth apart, ringing out
+        const env = `${pk}*if(gte(t,${a}),exp(-(t-${a})*${r2(e.decay || 4)}),0)`;
+        const s1 = G.label('sh'), s2 = G.label('sh');
+        G.add(`sine=frequency=${e.f || 2093}:sample_rate=48000:samples_per_frame=256:duration=${dur}[${s1}]`);
+        G.add(`sine=frequency=${Math.round((e.f || 2093) * 1.5)}:sample_rate=48000:samples_per_frame=256:duration=${dur}[${s2}]`);
+        G.add(`[${s1}][${s2}]amix=inputs=2:duration=longest,volume='${env}':eval=frame,aformat=sample_fmts=fltp:channel_layouts=stereo[${L}]`);
+      } else {
+        // a riser: high noise building to the cut
+        const env = `${pk}*if(between(t,${a},${r2(a + d)}),pow((t-${a})/${d},2.2),0)`;
+        G.add(`anoisesrc=color=pink:amplitude=1:sample_rate=48000:nb_samples=256:duration=${dur},highpass=f=${e.lo || 1200},lowpass=f=${e.hi || 9000},volume='${env}':eval=frame,aformat=sample_fmts=fltp:channel_layouts=stereo[${L}]`);
+      }
+      parts.push(L);
+    });
+    G.add(`${parts.map(x => `[${x}]`).join('')}amix=inputs=${parts.length}:duration=longest:dropout_transition=0,volume=${parts.length},alimiter=limit=0.25:level=false[${label}]`);
+  }
+  // A clip's loudness (EBU R128 integrated, LUFS) and true peak (dBTP), from
+  // its sound alone. → { I, peak } or null (no sound, or unreadable).
+  function loudness(file) {
+    return new Promise((resolve) => {
+      const pr = spawn(ffmpegPath, ['-hide_banner', '-nostats', '-i', file, '-vn', '-af', 'ebur128=peak=true', '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      pr.stderr.on('data', (d) => { err += d; if (err.length > 40000) err = err.slice(-20000); });
+      pr.on('error', () => resolve(null));
+      pr.on('close', () => {
+        const sum = err.slice(err.lastIndexOf('Summary:'));
+        const I = /I:\s+(-?[\d.]+) LUFS/.exec(sum), tp = /Peak:\s+(-?[\d.]+|-inf) dBFS/.exec(sum);
+        resolve(I && Number(I[1]) > -70 ? { I: Number(I[1]), peak: tp && tp[1] !== '-inf' ? Number(tp[1]) : null } : null);
+      });
+    });
+  }
+  // The one gain (dB) a clip gets (LOUD): 0 when its loudness is unknown.
+  // (a mono clip plays in both ears: it is 3 dB louder than measured)
+  const gainFor = (L, mono) => {
+    if (!L || opts.level === false) return 0;
+    let g = Math.max(-LOUD.down, Math.min(LOUD.up, LOUD.target - (L.I + (mono ? 3.01 : 0))));
+    if (L.peak != null) g = Math.min(g, LOUD.ceiling - L.peak);
+    return Math.round(g * 10) / 10;
+  };
+  const sfxOn = opts.sfx !== false;
+
   /* -------------------------------------------------------- the text bits */
   function textFile(dir, name, text) {
     const f = path.join(dir, `${name}.txt`);
@@ -599,18 +801,24 @@ function createHighlightEditor(opts = {}) {
   const fitSize = (text, base, width) => Math.max(Math.round(base * 0.55), Math.min(base, Math.floor(width / Math.max(1, text.length))));
   // A line of white text that rises into place through the line it sits on
   // (masked), starting at `at`: one small canvas, its mask drawn by drawtext.
-  function risingText(G, dir, name, { text, font, size, at, dur = 0.42, T, p, color = 'white' }) {
+  function risingText(G, dir, name, { text, font, size, at, dur = 0.42, T, p, color = 'white', align }) {
     const bw = even(Math.max(16, Math.ceil(size * 0.62 * text.length + size))), bh = even(size * 1.32), pad = Math.round(size * 0.1);
     const m = G.label('mask'), f = G.label('fill'), o = G.label('txt');
-    G.add(`color=c=black:s=${bw}x${bh}:r=${p.fps}:d=${f6(T)},format=gray,drawtext=fontfile='${fpath(font)}':textfile='${fpath(textFile(dir, name, text))}':expansion=none:fontsize=${size}:fontcolor=white:x=0:y='${pad}+${bh}*(1-${easeOut(prog(at, dur))})',lut=c0='clip((val-16)*255/219,0,255)'[${m}]`);
+    const tx = align === 'center' ? '(w-text_w)/2' : '0';
+    G.add(`color=c=black:s=${bw}x${bh}:r=${p.fps}:d=${f6(T)},format=gray,drawtext=fontfile='${fpath(font)}':textfile='${fpath(textFile(dir, name, text))}':expansion=none:fontsize=${size}:fontcolor=white:x=${tx}:y='${pad}+${bh}*(1-${easeOut(prog(at, dur))})',lut=c0='clip((val-16)*255/219,0,255)'[${m}]`);
     G.add(`color=c=${color}:s=${bw}x${bh}:r=${p.fps}:d=${f6(T)},format=yuva420p[${f}]`);
     G.add(`[${f}][${m}]alphamerge[${o}]`);
     return { label: o, w: bw, h: bh, pad };
   }
 
-  // The stacked event tag at the top left: event pill / name / over · bowler.
-  // Small: it says what is coming and gets out of the way of the shot.
-  function tagFilters(p, card, dir, T) {
+  // A team colour made to show on the picture: a very dark one lifted.
+  const vivid = (hex) => { if (!hex) return null; const [r, g, b] = rgbOf(hex); const L = 0.2126 * r + 0.7152 * g + 0.0722 * b; if (L >= 46) return hex; const f = 0.42; return [r, g, b].map(v => Math.round(v + (255 - v) * f).toString(16).padStart(2, '0')).join(''); };
+  // The stacked event tag at the top left: the team strip, the event pill, the
+  // team's badge and the name, then over · bowler. Each part slides in after
+  // the one before and out in reverse. Small: it says what is coming and gets
+  // out of the way of the shot. → { text (drawtext filters), strip, disc }:
+  // where the strip and the badge go (overlays, laid by renderClip).
+  function tagFilters(p, card, dir, T, hasDisc) {
     const k = p.k, x0 = Math.round(46 * k), y0 = Math.round(40 * k);
     const accent = `0x${ACCENT[card.kind] || ACCENT.HIGHLIGHT}`;
     const outAt = Math.max(TAG_IN + 1.2, Math.min(TAG_IN + TAG_HOLD, T - HALF - 0.6));
@@ -620,16 +828,29 @@ function createHighlightEditor(opts = {}) {
     const pb = Math.round(9 * k), nb = Math.round(11 * k), sb = Math.round(8 * k);
     const nameY = y0 + Math.round(pillSize * 1.2 + 2 * pb + 5 * k);
     const subY = nameY + Math.round(nameSize * 0.98 + 2 * nb + 5 * k);
+    const nameH = Math.round(nameSize * 0.98 + 2 * nb), gapD = Math.round(8 * k);
+    const disc = hasDisc ? { size: even(nameH), x: x0, y: nameY - nb, inAt: TAG_IN + 0.04, outAt: outAt + 0.07, dist } : null;
+    const nameX = x0 + nb + (disc ? disc.size + gapD : 0);
+    const team = card.team && vivid(card.team.color);
+    const bottom = sub ? subY + Math.round(subSize * 0.95) + sb : nameY + Math.round(nameSize * 0.98) + nb;
+    const strip = team ? { color: team, w: Math.max(4, Math.round(8 * k)), h: bottom - y0, x: x0 - Math.round(16 * k), y: y0, inAt: TAG_IN - 0.06, outAt: outAt + 0.14, dist } : null;
     const f = [];
     f.push(drawtext({ font: FONTS.event, file: textFile(dir, 'tag-label', label), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
       x: slideX(x0 + pb, dist, TAG_IN, outAt + 0.10), y: y0 + pb, alpha: fadeAlpha(TAG_IN, outAt + 0.10), from: TAG_IN, to: outAt + 0.45 }));
     f.push(drawtext({ font: FONTS.display, file: textFile(dir, 'tag-title', title), size: nameSize, color: 'white', box: '0x0b1220@0.88', boxBorder: nb,
-      x: slideX(x0 + nb, dist, TAG_IN + 0.06, outAt + 0.05), y: nameY, alpha: fadeAlpha(TAG_IN + 0.06, outAt + 0.05), from: TAG_IN + 0.06, to: outAt + 0.4 }));
+      x: slideX(nameX, dist, TAG_IN + 0.06, outAt + 0.05), y: nameY, alpha: fadeAlpha(TAG_IN + 0.06, outAt + 0.05), from: TAG_IN + 0.06, to: outAt + 0.4 }));
     if (sub) {
       f.push(drawtext({ font: FONTS.body, file: textFile(dir, 'tag-sub', sub), size: subSize, color: '0xdbe4f0', box: '0x131c30@0.88', boxBorder: sb,
         x: slideX(x0 + sb, dist, TAG_IN + 0.12, outAt), y: subY, alpha: fadeAlpha(TAG_IN + 0.12, outAt), from: TAG_IN + 0.12, to: outAt + 0.35 }));
     }
-    return f.join(',');
+    return { text: f.join(','), strip, disc };
+  }
+  // An overlay that slides with the tag (slideX) and fades with it.
+  function layTagPart(G, p, cur, part, srcLabel) {
+    const o = G.label('tg'), fl = G.label('tf');
+    G.add(`[${srcLabel}]fade=t=in:st=${f6(part.inAt)}:d=0.22:alpha=1,fade=t=out:st=${f6(part.outAt + 0.08)}:d=0.22:alpha=1[${fl}]`);
+    G.add(`[${cur}][${fl}]overlay=x='${slideX(part.x, part.dist, part.inAt, part.outAt)}':y=${part.y}:eval=frame:enable='between(t,${r2(part.inAt)},${r2(part.outAt + 0.5)})'[${o}]`);
+    return o;
   }
 
   // 9:16: where the 16:9 picture sits — the full width, a little above the
@@ -640,25 +861,37 @@ function createHighlightEditor(opts = {}) {
     return { cw: p.w, ch, y: wheelOn ? even(p.h * 0.29) : even((p.h - ch) / 2) };
   }
   // 9:16: the event tag in the space above the picture, centred, there for
-  // the whole clip (it covers nothing): event pill / NAME / over · bowler.
-  function tagPortrait(p, card, dir, T, box) {
+  // the whole clip (it covers nothing): the team's badge beside the event
+  // pill / NAME, underlined in the team's colour / over · bowler.
+  // → { text, disc, line }: the badge and the underline are overlays.
+  function tagPortrait(p, card, dir, T, box, hasDisc) {
     const k = p.k, W = p.w;
     const accent = `0x${ACCENT[card.kind] || ACCENT.HIGHLIGHT}`;
     const label = cleanText(card.label, 18), title = cleanText(card.title, 40), sub = cleanText(card.sub, 72);
     const pillSize = Math.round(40 * k), pb = Math.round(13 * k), nameSize = fitSize(title, Math.round(104 * k), Math.round(W * 0.88) / 0.45);
     const subSize = fitSize(sub, Math.round(30 * k), Math.round(W * 0.9) / 0.6);
     const hPill = Math.round(pillSize * 1.22 + 2 * pb), gap1 = Math.round(26 * k), gap2 = Math.round(16 * k);
-    const hBlock = hPill + gap1 + nameSize + (sub ? gap2 + Math.round(subSize * 1.2) : 0);
+    const team = card.team && vivid(card.team.color);
+    const lineGap = team ? Math.round(18 * k) : 0, lineH = team ? Math.max(3, Math.round(6 * k)) : 0;
+    const hBlock = hPill + gap1 + nameSize + lineGap + lineH + (sub ? gap2 + Math.round(subSize * 1.2) : 0);
     const top = Math.max(Math.round(150 * k), Math.round((box.y - hBlock) / 2 + 36 * k));
     const rise = (y, at) => `${y}+${Math.round(30 * k)}*(1-${easeOut(prog(at, 0.42))})`;
+    // the badge and the pill side by side, centred together (the pill's width
+    // from its letters: Inter Display Black Italic is about 0.64 em a letter)
+    const D = hasDisc ? even(hPill * 1.15) : 0, gapD = hasDisc ? Math.round(16 * k) : 0;
+    const pillW = Math.round(label.length * pillSize * 0.64 + 2 * pb);
+    const gx = Math.round((W - (D + gapD + pillW)) / 2);
+    const disc = hasDisc ? { size: D, x: gx, y: top + Math.round((hPill - D) / 2), at: TAG_IN - 0.04 } : null;
+    const yName = top + hPill + gap1;
+    const line = team ? { color: team, w: Math.round(150 * k), h: lineH, x: Math.round((W - 150 * k) / 2), y: yName + nameSize + lineGap, at: TAG_IN + 0.2 } : null;
     const f = [];
     f.push(drawtext({ font: FONTS.event, file: textFile(dir, 'tag-label', label), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
-      x: '(w-text_w)/2', y: rise(top + pb, TAG_IN), alpha: prog(TAG_IN, 0.3) }));
+      x: hasDisc ? `${gx + D + gapD + pb}` : '(w-text_w)/2', y: rise(top + pb, TAG_IN), alpha: prog(TAG_IN, 0.3) }));
     f.push(drawtext({ font: FONTS.display, file: textFile(dir, 'tag-title', title), size: nameSize, color: 'white',
-      x: '(w-text_w)/2', y: rise(top + hPill + gap1, TAG_IN + 0.08), alpha: prog(TAG_IN + 0.08, 0.3) }));
+      x: '(w-text_w)/2', y: rise(yName, TAG_IN + 0.08), alpha: prog(TAG_IN + 0.08, 0.3) }));
     if (sub) f.push(drawtext({ font: FONTS.body, file: textFile(dir, 'tag-sub', sub), size: subSize, color: '0xdbe4f0',
-      x: '(w-text_w)/2', y: rise(top + hPill + gap1 + nameSize + gap2, TAG_IN + 0.16), alpha: prog(TAG_IN + 0.16, 0.3) }));
-    return f.join(',');
+      x: '(w-text_w)/2', y: rise(yName + nameSize + lineGap + lineH + gap2, TAG_IN + 0.16), alpha: prog(TAG_IN + 0.16, 0.3) }));
+    return { text: f.join(','), disc, line, rise };
   }
 
   // The clip's wagon wheel (spec: wheelFor): the field pops in, then the shot
@@ -712,7 +945,9 @@ function createHighlightEditor(opts = {}) {
   // (wheelOn: the video has wheels; wheel: this clip's delivery), both wipe
   // halves, and its own sound (nothing added: a touch of fade at each end,
   // against clicks).
-  async function renderClip({ src, info, card, wheel, wheelOn, profile: p, assets, out, workDir, onProgress, signal }) {
+  // disc: the batting team's badge on its disc ({ file }, for the tag), or
+  // null; gain: the clip's one level change (dB, see LOUD).
+  async function renderClip({ src, info, card, wheel, wheelOn, profile: p, assets, out, workDir, onProgress, signal, disc, gain = 0 }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'seg-'));
     try {
       const n = clipFrames(info, p), T = n / p.fps, k = p.k;
@@ -726,7 +961,20 @@ function createHighlightEditor(opts = {}) {
       // being scaled down, which sharpens it already
       const sharp = `unsharp=5:5:${info.height > box.ch + 8 ? SHARPEN.down : SHARPEN.same}:5:5:0`;
       if (!p.portrait) {
-        G.add(`[0:v]fps=${p.fps},${fit},format=yuv420p,${sharp},trim=end_frame=${n},setpts=PTS-STARTPTS,${tagFilters(p, card, dir, T)}[v0]`);
+        const tg = tagFilters(p, card, dir, T, !!disc);
+        G.add(`[0:v]fps=${p.fps},${fit},format=yuv420p,${sharp},trim=end_frame=${n},setpts=PTS-STARTPTS[vb]`);
+        let cv = 'vb';
+        if (tg.strip) {
+          const st = G.label('strip');
+          G.add(`color=c=0x${tg.strip.color}:s=${tg.strip.w}x${even(tg.strip.h)}:r=${p.fps}:d=${f6(T)},format=yuva420p[${st}]`);
+          cv = layTagPart(G, p, cv, tg.strip, st);
+        }
+        if (tg.disc) {
+          const dl = G.label('disc');
+          G.add(loopImg(G.file(disc.file), p.fps, dl, `scale=${tg.disc.size}:${tg.disc.size}:flags=lanczos,format=rgba,`));
+          cv = layTagPart(G, p, cv, tg.disc, dl);
+        }
+        G.add(`[${cv}]${tg.text}[v0]`);
       } else {
         // the picture, corners rounded, over a blurred, darkened copy of itself
         const bw = even(p.w / 4), bh = even(p.h / 4), lg = G.label('logo');
@@ -737,14 +985,32 @@ function createHighlightEditor(opts = {}) {
         G.add(`[s2]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},boxblur=8:2,eq=brightness=-0.16:saturation=0.85,scale=${p.w}:${p.h}:flags=bicubic,setsar=1[bg]`);
         G.add(`[bg][picr]overlay=x=0:y=${box.y}:format=yuv420[v1]`);
         G.add(loopImg(G.file(assets.logoSmall), p.fps, lg, 'format=rgba,'));
-        G.add(`[v1][${lg}]overlay=x=${Math.round(46 * k)}:y=${Math.round(56 * k)}:shortest=1,${tagPortrait(p, card, dir, T, box)}[v0]`);
+        const tg = tagPortrait(p, card, dir, T, box, !!disc);
+        G.add(`[v1][${lg}]overlay=x=${Math.round(46 * k)}:y=${Math.round(56 * k)}:shortest=1[v2]`);
+        let cv = 'v2';
+        if (tg.disc) {
+          const dl = G.label('disc'), df = G.label('df'), o = G.label('tg');
+          G.add(loopImg(G.file(disc.file), p.fps, dl, `scale=${tg.disc.size}:${tg.disc.size}:flags=lanczos,format=rgba,`));
+          G.add(`[${dl}]fade=t=in:st=${f6(tg.disc.at)}:d=0.3:alpha=1[${df}]`);
+          G.add(`[${cv}][${df}]overlay=x=${tg.disc.x}:y='${tg.rise(tg.disc.y, tg.disc.at)}':eval=frame:shortest=1[${o}]`);
+          cv = o;
+        }
+        if (tg.line) {
+          const ln = G.label('uline'), o = G.label('tg');
+          G.add(`color=c=0x${tg.line.color}:s=${even(tg.line.w)}x${tg.line.h}:r=${p.fps}:d=${f6(T)},format=yuva420p,fade=t=in:st=${f6(tg.line.at)}:d=0.3:alpha=1[${ln}]`);
+          G.add(`[${cv}][${ln}]overlay=x='${tg.line.x}-${Math.round(40 * k)}*(1-${easeOut(prog(tg.line.at, 0.4))})':y=${tg.line.y}:eval=frame:shortest=1[${o}]`);
+          cv = o;
+        }
+        G.add(`[${cv}]${tg.text}[v0]`);
       }
       const spec = wheelOn ? wheelFor(wheel) : null;
       const cur = spec && addWheel(G, p, dir, spec, T, 'v0', 'vw', box) ? 'vw' : 'v0';
       await withWipes(G, p, assets, cur, 'vout', n, { head: card.kind in ACCENT ? card.kind : 'HIGHLIGHT', tail: 'BRAND', signal });
       // mono goes to both ears at its own level (the default upmix would lower it 3 dB)
       const up = info.hasAudio && info.mono ? 'pan=stereo|c0=c0|c1=c0,' : '';
-      G.add(`[${aIn}]${up}${cutAudio(T)},afade=t=in:d=0.05,afade=t=out:st=${f6(T - 0.12)}:d=0.12[aout]`);
+      // its one level change (a single gain: its own dynamics, commentary and crowd, untouched)
+      const lev = info.hasAudio && gain ? `volume=${gain}dB,` : '';
+      G.add(`[${aIn}]${up}${lev}${cutAudio(T)},afade=t=in:d=0.05,afade=t=out:st=${f6(T - 0.12)}:d=0.12[aout]`);
       await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, onProgress, signal });
       return { duration: T, wheel: cur === 'vw' };
     } finally {
@@ -857,31 +1123,43 @@ function createHighlightEditor(opts = {}) {
     return { file, x: X0, y: 0, w: PW, h: PH };
   }
 
-  // Title card: the band clears onto the player — kicker, match, name, what
-  // the video holds and their figures, the team panel at the right.
-  // title: { kicker, line, first, title, pill, meta, stats: [{ value, label, sub }], team: { name, short, color, logo }, kind }
+  // The opening (INTRO_SEC), in the four acts at the top of this file: the
+  // brand, the teams, the match (the title card), into the footage.
+  // title: { kicker, line, venue, first, title, pill, meta, stats: [{ value, label, sub }],
+  //          team: { name, short, color, logo }, teams: [two of those], kind }
   async function renderIntro({ title, bgSrc, bgInfo, profile: p, assets, out, workDir, signal }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'intro-'));
     try {
-      const k = p.k, W = p.w, H = p.h, n = gridLength(INTRO_SEC, p.fps), T = n / p.fps;
+      const k = p.k, W = p.w, H = p.h, n = gridLength(INTRO_SEC, p.fps), T = n / p.fps, fps = p.fps, S = Math.min(W, H);
       const kind = ACCENT[title.kind] ? title.kind : 'BRAND';
       const accent = `0x${ACCENT[kind]}`;
+      const O = ACT.card, A2 = ACT.teams;               // the clocks of the third and second acts
+      const okTeam = (t) => !!(t && (t.name || t.short));
+      const pair = (Array.isArray(title.teams) ? title.teams.filter(okTeam) : []).slice(0, 2);
+      const teams = pair.length === 2 ? pair : okTeam(title.team) ? [title.team] : [];
+      const two = teams.length === 2;
+      const colA = vivid(hexOf(teams[0] && teams[0].color)) || ACCENT[kind];
+      const colB = two ? (vivid(hexOf(teams[1].color)) || ACCENT.BRAND) : (kind === 'BRAND' ? '38b2c1' : ACCENT.BRAND);
       const bg = bgSrc ? await stillFrom(bgSrc, bgInfo, p, path.join(dir, 'bg.png'), 1.2, signal) : null;
       const hero = await buildHero(p, title, dir, signal);
-      const kicker = cleanText(title.kicker, 60), line = cleanText(title.line, 70), first = cleanText(title.first, 40);
+      const discs = [];
+      for (let t = 0; t < teams.length; t++) discs.push(await teamDisc(p, teams[t], even(S * (two ? 0.28 : 0.34)), dir, `act2-${t}`, signal));
+      const kicker = cleanText(title.kicker, 60), first = cleanText(title.first, 40);
+      const line = [cleanText(title.line, 70), cleanText(title.venue, 40)].filter(Boolean).join('  ·  ').slice(0, 96);
       const main = cleanText(title.title, 40) || 'HIGHLIGHTS', pill = cleanText(title.pill, 28), meta = cleanText(title.meta, 70);
-      const stats = (Array.isArray(title.stats) ? title.stats : []).map(s => ({ value: cleanText(s && s.value, 9), label: cleanText(s && s.label, 14), sub: cleanText(s && s.sub, 16) }))
-        .filter(s => s.value).slice(0, 4);
+      const stats = (Array.isArray(title.stats) ? title.stats : []).map(st => ({ value: cleanText(st && st.value, 9), label: cleanText(st && st.label, 14), sub: cleanText(st && st.sub, 16) }))
+        .filter(st => st.value).slice(0, 4);
 
+      // ---- the title card's layout (the third act)
       // 16:9: the text at the left of the team panel; 9:16: under it, across
       const x0 = Math.round((p.portrait ? 72 : 110) * k), maxW = p.portrait ? W - 2 * x0 : Math.round(W * 0.5);
       const firstSize = fitSize(first, Math.round(84 * k), maxW / 0.5), mainSize = fitSize(main, Math.round(176 * k), maxW / 0.46);
-      const lineSize = Math.round(32 * k), pillSize = Math.round(36 * k), pb = Math.round(13 * k);
+      const lineSize = fitSize(line, Math.round(32 * k), maxW / 0.55), pillSize = Math.round(36 * k), pb = Math.round(13 * k);
       // the figures: each as wide as its widest line (font widths measured),
       // with a gap and a hairline between — shrunk together if they would
       // not fit the width
       const gapW = Math.round(64 * k);
-      const cellWidths = (v, l, sb) => stats.map(s => Math.max(s.value.length * 0.48 * v, s.label.length * 0.74 * l, s.sub.length * 0.6 * sb));
+      const cellWidths = (v, l, sb) => stats.map(st => Math.max(st.value.length * 0.48 * v, st.label.length * 0.74 * l, st.sub.length * 0.6 * sb));
       let fz = 1;
       if (stats.length) { const tw = cellWidths(92 * k, 25 * k, 22 * k).reduce((a, b) => a + b + gapW, -gapW); if (tw > maxW) fz = Math.max(0.6, maxW / tw); }
       const vSize = Math.round(92 * k * fz), lSize = Math.round(25 * k * fz), sSize = Math.round(22 * k * fz);
@@ -889,78 +1167,183 @@ function createHighlightEditor(opts = {}) {
       // the space under the logo: match line / first name / NAME / pill / figures
       const hLine = line ? lineSize + Math.round(46 * k) : 0, hFirst = first ? Math.round(firstSize * 1.06) : 0, hMain = mainSize;
       const hRow = Math.round(pillSize * 1.22 + 2 * pb), gMain = Math.round(40 * k), gStats = Math.round(64 * k);
-      const hStats = stats.length ? Math.round(vSize * 1.04 + lSize * 1.3 + (stats.some(s => s.sub) ? sSize * 1.5 : 0)) : (meta ? Math.round(40 * k) : 0);
+      const hStats = stats.length ? Math.round(vSize * 1.04 + lSize * 1.3 + (stats.some(st => st.sub) ? sSize * 1.5 : 0)) : (meta ? Math.round(40 * k) : 0);
       const total = hLine + hFirst + hMain + gMain + hRow + (hStats ? gStats + hStats : 0);
       const yLine = p.portrait ? Math.max(hero.h + Math.round(70 * k), Math.round(hero.h + (H - hero.h - total) / 2))
         : Math.max(Math.round(205 * k), Math.round((H - total) / 2 + 40 * k));
       const yFirst = yLine + hLine, yMain = yFirst + hFirst, yRow = yMain + hMain + gMain, yStats = yRow + hRow + gStats;
+
       const G = graph();
+      // ---- the stage: the blurred first clip pushing in slowly (done small:
+      // it is all soft), under a deep navy veil for the first two acts that
+      // lifts as the title card comes in, a drift of team-colour light over it
       const bgIdx = bg ? G.file(bg) : G.input(['-f', 'lavfi', '-i', `color=c=0x0d1526:s=${even(W / 4)}x${even(H / 4)}`]);
-      // a slow push-in on the blurred picture (done small: it is all soft)
-      G.add(`[${bgIdx}:v]scale=${W}:${H}:flags=bicubic,zoompan=z='1.0+${r2(0.07 / n * 10000) / 10000}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${n}:s=${even(W / 2)}x${even(H / 2)}:fps=${p.fps},` +
+      G.add(`[${bgIdx}:v]scale=${W}:${H}:flags=bicubic,zoompan=z='1.0+${r2(0.09 / n * 10000) / 10000}*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${n}:s=${even(W / 2)}x${even(H / 2)}:fps=${fps},` +
         `scale=${W}:${H}:flags=bicubic,setsar=1,format=yuv420p,trim=end_frame=${n},setpts=PTS-STARTPTS[bg0]`);
-      // the team panel slides in: from the right (16:9), down from the top (9:16)
-      const hi = G.file(hero.file), hp = G.label('hero'), into = `(1-${easeOut(prog(0.05, 0.55))})`;
-      G.add(loopImg(hi, p.fps, hp));
-      G.add(`[bg0][${hp}]overlay=` + (p.portrait ? `x=0:y='-${hero.h}*${into}'` : `x='${hero.x}+${W - hero.x}*${into}':y=0`) + `:eval=frame:shortest=1[bg2]`);
-      // our logo and the kicker, top left
+      G.add(`color=c=0x050a14:s=${W}x${H}:r=${fps}:d=${f6(T)},format=yuva420p,fade=t=out:st=${f6(O - 0.28)}:d=0.5:alpha=1[veil]`);
+      G.add(`[bg0][veil]overlay=0:0:shortest=1[st0]`);
+      const gw = even(W * 1.1), gh = even(H * 1.1), [gr, gg, gb] = rgbOf(colA);
+      G.add(`color=c=black@0:s=${even(gw / 4)}x${even(gh / 4)}:r=${fps}:d=0.1,format=rgba,geq=r=${gr}:g=${gg}:b=${gb}:a='110*exp(-(pow((X-W/2)/(W*0.3),2)+pow((Y-H/2)/(H*0.32),2)))',` +
+        `scale=${gw}:${gh}:flags=bicubic,loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N,fade=t=in:st=0:d=0.5:alpha=1,fade=t=out:st=${f6(O - 0.45)}:d=0.5:alpha=1[glow]`);
+      G.add(`[st0][glow]overlay=x='-${Math.round(W * 0.4)}+${Math.round(W * 0.32)}*t/${r2(O)}':y=-${Math.round(H * 0.05)}:eval=frame:enable='lt(t,${r2(O + 0.1)})'[st1]`);
+
+      // ---- act 1: the brand
+      const cx = Math.round(W / 2), cy = Math.round(H * (p.portrait ? 0.42 : 0.46)), Ci = assets.Ci;
+      // team-colour shards sweeping across, crossing behind the logo
+      const wA = even(W * (p.portrait ? 0.7 : 0.5)), wB = even(W * (p.portrait ? 0.52 : 0.36)), spS = Math.round(H * 0.3);
+      slab(G, p, wA, H, colA, 'both', 'shA', { sp: spS, top: 1.06, fall: 0.38 });
+      slab(G, p, wB, H, colB, 'both', 'shB', { sp: spS, top: 1.0, fall: 0.42 });
+      G.add(`[st1][shA]overlay=x='-${wA}+${W + wA}*${easeInOut(prog(0.18, 0.68))}':y=0:eval=frame:enable='between(t,0.16,0.88)'[a1]`);
+      G.add(`[a1][shB]overlay=x='${W}-${W + wB}*${easeInOut(prog(0.28, 0.64))}':y=0:eval=frame:enable='between(t,0.26,0.94)'[a2]`);
+      // two lines of light running in to the logo from either side
+      const lw = even(W * 0.3), lh = Math.max(2, Math.round(3 * k)), gapL = Math.round(Ci * 0.56);
+      heldStill(G, p, lw, lh, `r=255:g=244:b=214:a='255*pow(X/W,1.5)'`, 'lnL');
+      heldStill(G, p, lw, lh, `r=255:g=244:b=214:a='255*pow(1-X/W,1.5)'`, 'lnR');
+      G.add(`[lnL]fade=t=out:st=0.95:d=0.25:alpha=1[lnLf]`);
+      G.add(`[lnR]fade=t=out:st=0.95:d=0.25:alpha=1[lnRf]`);
+      G.add(`[a2][lnLf]overlay=x='-${lw}+${cx - gapL}*${easeOut(prog(0.3, 0.42))}':y=${cy - Math.round(lh / 2)}:eval=frame:enable='between(t,0.28,1.25)'[a3]`);
+      G.add(`[a3][lnRf]overlay=x='${W}-${W - cx - gapL}*${easeOut(prog(0.3, 0.42))}':y=${cy - Math.round(lh / 2)}:eval=frame:enable='between(t,0.28,1.25)'[a4]`);
+      // a ring of light grows out from behind the logo as it springs up
+      ringBurst(G, p, assets, 0.34, 0.75, 'rng1');
+      G.add(`[a4][rng1]overlay=x=${cx - assets.RR / 2}:y=${cy - assets.RR / 2}:eof_action=pass[a5]`);
+      // the logo: springs from 0.65 of its size, a glint crosses it, then it draws back and fades
+      const nL = Math.round((A2 + 0.3) * fps);
+      const lgo = springIn(G, p, assets.logoIntro, Ci, nL, { at: 0.3, dur: 0.56, from: 0.65, out: { at: A2 - 0.16, dur: 0.3, by: 0.5 } });
+      G.add(`[${lgo}]split[lgA][lgM]`);
+      G.add(`[lgM]alphaextract[lgal]`);
+      G.add(`[${G.file(assets.shineIntro)}:v]format=rgba,loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N,trim=end_frame=${nL},crop=w=${Ci}:h=${Ci}:x='${2 * Ci}-${2 * Ci}*${prog(0.66, 0.44)}':y=0,alphaextract[lgsa]`);
+      G.add(`[lgsa][lgal]blend=all_mode=multiply:shortest=1[lgma]`);
+      G.add(`color=c=white:s=${Ci}x${Ci}:r=${fps}:d=${f6(nL / fps)},format=yuva420p[lgwh]`);
+      G.add(`[lgwh][lgma]alphamerge[lgshn]`);
+      G.add(`[lgA][lgshn]overlay=0:0:format=auto:shortest=1,fade=t=in:st=0.28:d=0.16:alpha=1,fade=t=out:st=${f6(A2 - 0.14)}:d=0.28:alpha=1[lgF]`);
+      G.add(`[a5][lgF]overlay=x=${cx - Ci / 2}:y=${cy - Ci / 2}:eof_action=pass[a6]`);
+      let cur = 'a6';
+
+      // ---- act 2: the teams — panels in their colours, badges rising on
+      // their discs, names rising under them; they leave as the title card comes
+      const out2 = O - 0.32;
+      const leave = (d = 0) => easeIn(prog(out2 + d, 0.32));
+      const lay = (src, x, y, from, to) => { const o = G.label('c'); G.add(`[${cur}][${src}]overlay=x='${x}':y='${y}':eval=frame:enable='between(t,${r2(from)},${r2(to)})'[${o}]`); cur = o; };
+      const spots = [];
+      if (two && !p.portrait) {
+        const PW = even(W * 0.56), sp = Math.round(H * 0.16);
+        slab(G, p, PW, H, colA, 'right', 'pA', { sp, top: 0.92, fall: 0.5 });
+        slab(G, p, PW, H, colB, 'left', 'pB', { sp, top: 0.92, fall: 0.5 });
+        lay('pA', `-${PW}*(1-${easeOut(prog(A2, 0.42))})-${PW}*${leave()}`, '0', A2 - 0.02, O + 0.05);
+        lay('pB', `${W - PW}+${PW}*(1-${easeOut(prog(A2 + 0.06, 0.42))})+${PW}*${leave(0.02)}`, '0', A2 + 0.04, O + 0.07);
+        spots.push({ x: Math.round(W * 0.26), y: Math.round(H * 0.42), dx: `-${PW}*${leave()}`, dy: '' }, { x: Math.round(W * 0.74), y: Math.round(H * 0.42), dx: `+${PW}*${leave(0.02)}`, dy: '' });
+      } else if (two) {
+        const PH = even(H * 0.54), sp = Math.round(W * 0.16);
+        slab(G, p, W, PH, colA, 'bottom', 'pA', { sp, top: 0.92, fall: 0.5 });
+        slab(G, p, W, PH, colB, 'top', 'pB', { sp, top: 0.92, fall: 0.5 });
+        lay('pA', '0', `-${PH}*(1-${easeOut(prog(A2, 0.42))})-${PH}*${leave()}`, A2 - 0.02, O + 0.05);
+        lay('pB', '0', `${H - PH}+${PH}*(1-${easeOut(prog(A2 + 0.06, 0.42))})+${PH}*${leave(0.02)}`, A2 + 0.04, O + 0.07);
+        spots.push({ x: cx, y: Math.round(H * 0.25), dx: '', dy: `-${PH}*${leave()}` }, { x: cx, y: Math.round(H * 0.73), dx: '', dy: `+${PH}*${leave(0.02)}` });
+      } else if (teams.length === 1) {
+        const sp = Math.round(H * 0.2), PW = even(W + sp);
+        slab(G, p, PW, H, colA, 'both', 'pA', { sp, top: 0.95, fall: 0.5 });
+        lay('pA', `${W}*(1-${easeOut(prog(A2, 0.46))})-${Math.round(sp / 2)}-${PW}*${leave()}`, '0', A2 - 0.02, O + 0.05);
+        spots.push({ x: cx, y: Math.round(H * (p.portrait ? 0.4 : 0.42)), dx: `-${PW}*${leave()}`, dy: '' });
+      }
+      if (teams.length) {
+        // a glint of light runs across the panels once they are in
+        const gl = G.label('gl'), glw = even(assets.glintW + Math.round(0.324 * H));
+        G.add(loopImg(G.file(assets.glint), fps, gl, 'format=rgba,'));
+        lay(gl, `-${glw}+${W + glw}*${prog(A2 + 0.52, 0.6)}`, '0', A2 + 0.5, A2 + 1.15);
+      }
+      spots.forEach((sp, t) => {
+        const at = A2 + 0.26 + 0.08 * t, DD = discs[t].size, dl = G.label('d2'), df = G.label('d2f');
+        G.add(loopImg(G.file(discs[t].file), fps, dl, 'format=rgba,'));
+        G.add(`[${dl}]fade=t=in:st=${f6(at)}:d=0.3:alpha=1[${df}]`);
+        lay(df, `${sp.x - DD / 2}${sp.dx}`, `${sp.y - DD / 2}+${Math.round(46 * k)}*(1-${easeOut(prog(at, 0.5))})${sp.dy}`, at, O + 0.1);
+        const nm = cleanText(teams[t].name || teams[t].short, 32);
+        const size = fitSize(nm, Math.round((two ? 52 : 64) * k), Math.round(W * (two && !p.portrait ? 0.4 : 0.8)) / 0.45);
+        const r = risingText(G, dir, `t2n${t}`, { text: nm, font: FONTS.display, size, at: at + 0.14, T, p, align: 'center' });
+        lay(r.label, `${sp.x - r.w / 2}${sp.dx}`, `${sp.y + DD / 2 + Math.round(24 * k) - r.pad}${sp.dy}`, at + 0.1, O + 0.1);
+      });
+      if (two) {
+        // VS between them, in a navy disc ringed in the brand colour, with a ring of light
+        const vy = p.portrait ? Math.round(H * 0.49) : Math.round(H * 0.42), vsD = even(S * 0.14), vat = A2 + 0.44;
+        const rr = `hypot(X-${vsD / 2},Y-${vsD / 2})`, inr = `lt(${rr},${r2(vsD * 0.4)})`;
+        ringBurst(G, p, assets, vat, 0.62, 'rng2');
+        lay('rng2', `${cx - assets.RR / 2}`, `${vy - assets.RR / 2}`, vat, vat + 0.62);
+        G.add(`color=c=black@0:s=${vsD}x${vsD}:r=${fps}:d=0.1,format=rgba,geq=r='if(${inr},11,245)':g='if(${inr},18,158)':b='if(${inr},32,11)':a='255*${clampExpr(`${vsD / 2}-${rr}`)}',` +
+          `${drawtext({ font: FONTS.display, file: textFile(dir, 'vs2', 'VS'), size: Math.round(vsD * 0.42), color: 'white', x: '(w-text_w)/2', y: '(h-text_h)/2' })},` +
+          `loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N,fade=t=in:st=${f6(vat)}:d=0.22:alpha=1,fade=t=out:st=${f6(out2)}:d=0.24:alpha=1[vs]`);
+        lay('vs', `${cx - vsD / 2}`, `${vy - vsD / 2}+${Math.round(24 * k)}*(1-${easeOut(prog(vat, 0.34))})`, vat, O);
+      }
+
+      // ---- act 3: the title card — the team panel slides in (from the
+      // right in 16:9, down from the top in 9:16), our logo and the kicker,
+      // the match line, the name rising into place, the pill, the figures
+      const hi = G.file(hero.file), hp = G.label('hero'), into = `(1-${easeOut(prog(O + 0.05, 0.55))})`;
+      G.add(loopImg(hi, fps, hp));
+      lay(hp, p.portrait ? '0' : `${hero.x}+${W - hero.x}*${into}`, p.portrait ? `-${hero.h}*${into}` : '0', O, T + 1);
       const li = G.file(assets.logoSmall), lg = G.label('logo');
-      G.add(loopImg(li, p.fps, lg, 'format=rgba,'));
-      G.add(`[${lg}]fade=t=in:st=0.15:d=0.3:alpha=1[${lg}f]`);
+      G.add(loopImg(li, fps, lg, 'format=rgba,'));
+      G.add(`[${lg}]fade=t=in:st=${f6(O + 0.15)}:d=0.3:alpha=1[${lg}f]`);
       const logoY = Math.round((p.portrait ? 56 : 70) * k), logoH = even(Math.min(W, H) * 0.075);
-      G.add(`[bg2][${lg}f]overlay=x=${x0}:y=${logoY}:shortest=1[bg3]`);
-      let cur = 'bg3';
+      lay(`${lg}f`, `${x0}`, `${logoY}`, O + 0.1, T + 1);
       const text = [];
       if (kicker) text.push(drawtext({ font: FONTS.body, file: textFile(dir, 'kicker', kicker), size: Math.round(30 * k), color: '0xe2e8f0',
-        x: `${x0 + logoH + Math.round(22 * k)}-${Math.round(20 * k)}*(1-${easeOut(prog(0.2, 0.4))})`, y: `${logoY + Math.round(logoH / 2 - 18 * k)}`, alpha: prog(0.2, 0.3) }));
+        x: `${x0 + logoH + Math.round(22 * k)}-${Math.round(20 * k)}*(1-${easeOut(prog(O + 0.2, 0.4))})`, y: `${logoY + Math.round(logoH / 2 - 18 * k)}`, alpha: prog(O + 0.2, 0.3), from: O + 0.15 }));
       if (line) {
-        text.push(`drawbox=x=${x0}:y=${yLine + Math.round(3 * k)}:w=${Math.max(3, Math.round(6 * k))}:h=${lineSize}:color=${accent}@1:t=fill:enable='gte(t,0.24)'`);
+        text.push(`drawbox=x=${x0}:y=${yLine + Math.round(3 * k)}:w=${Math.max(3, Math.round(6 * k))}:h=${lineSize}:color=${accent}@1:t=fill:enable='gte(t,${r2(O + 0.24)})'`);
         text.push(drawtext({ font: FONTS.body, file: textFile(dir, 'line', line), size: lineSize, color: '0xf1f5f9',
-          x: `${x0 + Math.round(20 * k)}-${Math.round(26 * k)}*(1-${easeOut(prog(0.24, 0.4))})`, y: `${yLine}`, alpha: prog(0.24, 0.3) }));
+          x: `${x0 + Math.round(20 * k)}-${Math.round(26 * k)}*(1-${easeOut(prog(O + 0.24, 0.4))})`, y: `${yLine}`, alpha: prog(O + 0.24, 0.3), from: O + 0.2 }));
       }
-      if (text.length) { G.add(`[${cur}]${text.join(',')}[t1]`); cur = 't1'; }
-      // the name rises into place: first name, then the big surname
+      if (text.length) { const o = G.label('c'); G.add(`[${cur}]${text.join(',')}[${o}]`); cur = o; }
       const rise = (name, opt, y) => {
         const r = risingText(G, dir, name, { ...opt, T, p });
-        const o = G.label('c');
-        G.add(`[${cur}][${r.label}]overlay=x=${x0 - Math.round(opt.size * 0.04)}:y=${y - r.pad}:shortest=1[${o}]`);
-        cur = o;
+        lay(r.label, `${x0 - Math.round(opt.size * 0.04)}`, `${y - r.pad}`, opt.at - 0.02, T + 1);
       };
-      if (first) rise('first', { text: first, font: FONTS.display, size: firstSize, at: 0.26, color: '0xdbe4f0' }, yFirst);
-      rise('main', { text: main, font: FONTS.display, size: mainSize, at: first ? 0.34 : 0.28 }, yMain);
-      // accent bar, the pill, then what the video holds or the figures
+      if (first) rise('first', { text: first, font: FONTS.display, size: firstSize, at: O + 0.26, color: '0xdbe4f0' }, yFirst);
+      rise('main', { text: main, font: FONTS.display, size: mainSize, at: first ? O + 0.34 : O + 0.28 }, yMain);
       const barW = Math.round(84 * k), barH = Math.max(4, Math.round(8 * k));
       const bar = G.label('bar');
-      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=${accent}:s=${barW}x${barH}:r=${p.fps}:d=${f6(T)}`])}:v]format=yuva420p[${bar}]`);
+      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=${accent}:s=${barW}x${barH}:r=${fps}:d=${f6(T)}`])}:v]format=yuva420p[${bar}]`);
       const yPillText = yRow + pb;
       const barY = yPillText + Math.round(pillSize * 0.62) - Math.round(barH / 2);
-      G.add(`[${cur}][${bar}]overlay=x='${x0}-${barW}*(1-${easeOut(prog(0.46, 0.4))})':y=${barY}:eval=frame:shortest=1[c_bar]`);
-      cur = 'c_bar';
+      lay(bar, `${x0}-${barW}*(1-${easeOut(prog(O + 0.46, 0.4))})`, `${barY}`, O + 0.44, T + 1);
       const rest = [];
       if (pill) rest.push(drawtext({ font: FONTS.event, file: textFile(dir, 'pill', pill), size: pillSize, color: 'white', box: `${accent}@1.0`, boxBorder: pb,
-        x: `${x0 + barW + Math.round(22 * k) + pb}-${Math.round(36 * k)}*(1-${easeOut(prog(0.52, 0.4))})`, y: `${yPillText}`, alpha: prog(0.52, 0.25) }));
+        x: `${x0 + barW + Math.round(22 * k) + pb}-${Math.round(36 * k)}*(1-${easeOut(prog(O + 0.52, 0.4))})`, y: `${yPillText}`, alpha: prog(O + 0.52, 0.25), from: O + 0.5 }));
       if (stats.length) {
         const widths = cellWidths(vSize, lSize, sSize);
-        let cx = x0;
-        const xs = widths.map(w => { const x = cx; cx += Math.round(w) + gapW; return x; });
-        stats.forEach((s, i) => {
-          const at = 0.64 + 0.08 * i, cx = xs[i];
+        let xx = x0;
+        const xs = widths.map(w => { const x = xx; xx += Math.round(w) + gapW; return x; });
+        stats.forEach((st, t) => {
+          const at = O + 0.64 + 0.08 * t, sx = xs[t];
           const up = (dy) => `${dy}+${Math.round(26 * k)}*(1-${easeOut(prog(at, 0.36))})`;
-          if (i) rest.push(`drawbox=x=${cx - Math.round(gapW / 2)}:y=${yStats + Math.round(14 * k)}:w=${Math.max(1, Math.round(2 * k))}:h=${hStats - Math.round(14 * k)}:color=white@0.2:t=fill:enable='gte(t,${r2(at)})'`);
-          rest.push(drawtext({ font: FONTS.display, file: textFile(dir, `sv${i}`, s.value), size: vSize, color: 'white', x: `${cx}`, y: up(yStats), alpha: prog(at, 0.25) }));
-          rest.push(drawtext({ font: FONTS.body, file: textFile(dir, `sl${i}`, s.label.split('').join('\u2009')), size: lSize, color: accent, x: `${cx + Math.round(3 * k)}`,
-            y: up(yStats + Math.round(vSize * 1.04)), alpha: prog(at + 0.04, 0.25) }));
-          if (s.sub) rest.push(drawtext({ font: FONTS.body, file: textFile(dir, `ss${i}`, s.sub), size: sSize, color: '0xa9b6c8', x: `${cx + Math.round(3 * k)}`,
-            y: up(yStats + Math.round(vSize * 1.04 + lSize * 1.5)), alpha: prog(at + 0.08, 0.25) }));
+          if (t) rest.push(`drawbox=x=${sx - Math.round(gapW / 2)}:y=${yStats + Math.round(14 * k)}:w=${Math.max(1, Math.round(2 * k))}:h=${hStats - Math.round(14 * k)}:color=white@0.2:t=fill:enable='gte(t,${r2(at)})'`);
+          rest.push(drawtext({ font: FONTS.display, file: textFile(dir, `sv${t}`, st.value), size: vSize, color: 'white', x: `${sx}`, y: up(yStats), alpha: prog(at, 0.25), from: at - 0.02 }));
+          rest.push(drawtext({ font: FONTS.body, file: textFile(dir, `sl${t}`, st.label.split('').join(' ')), size: lSize, color: accent, x: `${sx + Math.round(3 * k)}`,
+            y: up(yStats + Math.round(vSize * 1.04)), alpha: prog(at + 0.04, 0.25), from: at }));
+          if (st.sub) rest.push(drawtext({ font: FONTS.body, file: textFile(dir, `ss${t}`, st.sub), size: sSize, color: '0xa9b6c8', x: `${sx + Math.round(3 * k)}`,
+            y: up(yStats + Math.round(vSize * 1.04 + lSize * 1.5)), alpha: prog(at + 0.08, 0.25), from: at + 0.04 }));
         });
       } else if (meta) {
         rest.push(drawtext({ font: FONTS.body, file: textFile(dir, 'meta', meta), size: Math.round(30 * k), color: '0xdbe4f0',
-          x: `${x0}`, y: `${yStats}`, alpha: prog(0.66, 0.3) }));
+          x: `${x0}`, y: `${yStats}`, alpha: prog(O + 0.66, 0.3), from: O + 0.64 }));
       }
-      if (rest.length) { G.add(`[${cur}]${rest.join(',')}[c_rest]`); cur = 'c_rest'; }
-      // opens on the band leaving (in the video's colour), ends on it arriving
+      if (rest.length) { const o = G.label('c'); G.add(`[${cur}]${rest.join(',')}[${o}]`); cur = o; }
+      // ---- act 4: it opens on the band leaving (in the video's colour), and ends on it arriving
       await withWipes(G, p, assets, cur, 'vout', n, { head: kind, tail: 'BRAND', signal });
-      G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
+      if (sfxOn) {
+        const ev = [
+          { type: 'whoosh', at: 0.0, dur: 0.36, db: -21, lo: 320, hi: 3800 },      // the band leaving
+          { type: 'whoosh', at: 0.16, dur: 0.72, db: -17, lo: 220, hi: 5200 },     // the shards
+          { type: 'impact', at: 0.33, db: -13, f: 56, decay: 6 },                  // the logo
+          { type: 'shimmer', at: 0.68, db: -25, f: 2093, decay: 3.5 }              // its glint
+        ];
+        if (teams.length) ev.push({ type: 'whoosh', at: A2 - 0.05, dur: 0.52, db: -18 }, { type: 'whoosh', at: out2 - 0.02, dur: 0.4, db: -22, lo: 400 });
+        if (two) ev.push({ type: 'impact', at: A2 + 0.44, db: -16, f: 74, decay: 9 });
+        ev.push({ type: 'whoosh', at: O + 0.02, dur: 0.5, db: -22 },              // the team panel
+          { type: 'riser', at: T - 0.86, dur: 0.56, db: -22 },                     // into the footage…
+          { type: 'whoosh', at: T - 0.32, dur: 0.34, db: -19 });                   // …the band arriving
+        sfxTrack(G, T, ev, 'sfx');
+        G.add(`[sfx]${cutAudio(T)}[aout]`);
+      } else G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
       await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, signal });
       return { duration: T };
     } finally {
@@ -968,16 +1351,31 @@ function createHighlightEditor(opts = {}) {
     }
   }
 
-  // End card: the band clears onto our logo, which springs into place under a
-  // sweep of light; the website rises under it; then black.
-  async function renderOutro({ kind = 'BRAND', profile: p, assets, out, workDir, site, signal }) {
+  // The end card (OUTRO_SEC): the band clears onto a stage framed by shards in
+  // the teams' colours; our logo springs into place under a sweep of light;
+  // the player (or the teams), the tournament and what the video held rise
+  // under it, then the website; then black.
+  async function renderOutro({ kind = 'BRAND', title = {}, profile: p, assets, out, workDir, site, signal }) {
     const dir = fs.mkdtempSync(path.join(workDir, 'outro-'));
     try {
-      const k = p.k, W = p.w, H = p.h, n = gridLength(OUTRO_SEC, p.fps), T = n / p.fps, C = assets.C, fps = p.fps;
+      const k = p.k, W = p.w, H = p.h, n = gridLength(OUTRO_SEC, p.fps), T = n / p.fps, C = assets.C, fps = p.fps, S = Math.min(W, H);
       const siteText = cleanText(site || 'allsportslivestreams.com', 48).toLowerCase();
+      const okTeam = (t) => !!(t && (t.name || t.short));
+      const pair = (Array.isArray(title.teams) ? title.teams.filter(okTeam) : []).slice(0, 2);
+      const teams = pair.length === 2 ? pair : okTeam(title.team) ? [title.team] : [];
+      const colA = vivid(hexOf(teams[0] && teams[0].color)) || ACCENT.BRAND;
+      const colB = teams.length === 2 ? (vivid(hexOf(teams[1].color)) || '38b2c1') : '38b2c1';
+      const who = [cleanText(title.first, 40), cleanText(title.title, 40)].filter(Boolean).join(' ');
+      const what = [cleanText(title.kicker, 50), cleanText(title.meta, 60)].filter(Boolean).join('  ·  ').slice(0, 96);
       const G = graph();
       const bgi = G.file(assets.endBg);
       G.add(`[${bgi}:v]scale=${W}:${H}:flags=bicubic,setsar=1,format=yuv420p,loop=loop=-1:size=1:start=0,settb=1/${fps},setpts=N,trim=end_frame=${n}[bg]`);
+      // the frame: two shards in the teams' colours leaning in from either edge, and staying
+      const wA = even(W * (p.portrait ? 0.56 : 0.36)), wB = even(W * (p.portrait ? 0.46 : 0.28)), sp = Math.round(H * 0.22);
+      slab(G, p, wA, H, colA, 'both', 'fA', { sp, top: 0.95, fall: 0.5, alpha: 0.92 });
+      slab(G, p, wB, H, colB, 'both', 'fB', { sp, top: 0.95, fall: 0.5, alpha: 0.88 });
+      G.add(`[bg][fA]overlay=x='-${wA}+${Math.round(wA * 0.62)}*${easeOut(prog(0.1, 0.52))}':y=0:eval=frame:shortest=1[f1]`);
+      G.add(`[f1][fB]overlay=x='${W}-${Math.round(wB * 0.66)}*${easeOut(prog(0.16, 0.52))}':y=0:eval=frame:shortest=1[f2]`);
       // the spring: zoompan from 0.86 of the size to a touch past it, settling
       const li = G.file(assets.logoSpring);
       const u = clampExpr(`(on-${r2(0.24 * fps)})/${r2(0.5 * fps)}`);
@@ -990,17 +1388,48 @@ function createHighlightEditor(opts = {}) {
       G.add(`color=c=white:s=${C}x${C}:r=${fps}:d=${f6(T)},format=yuva420p[wh]`);
       G.add(`[wh][ma]alphamerge[shn]`);
       G.add(`[lg][shn]overlay=0:0:format=auto:shortest=1,fade=t=in:st=0.22:d=0.24:alpha=1[lgf]`);
-      const yLogo = Math.round(H * 0.44 - C / 2);
-      G.add(`[bg][lgf]overlay=x=${Math.round((W - C) / 2)}:y=${yLogo}:shortest=1[b1]`);
-      const ySite = yLogo + Math.round(C / 2 + Math.min(W, H) * 0.15 + 26 * k);
+      const yLogo = Math.round(H * (p.portrait ? 0.3 : 0.33) - C / 2);
+      // a ring of light grows out from behind it as it springs (as in the opening)
+      ringBurst(G, p, assets, 0.26, 0.75, 'orng');
+      G.add(`[f2][orng]overlay=x=${Math.round(W / 2 - assets.RR / 2)}:y=${Math.round(yLogo + C / 2 - assets.RR / 2)}:eof_action=pass[f3]`);
+      G.add(`[f3][lgf]overlay=x=${Math.round((W - C) / 2)}:y=${yLogo}:shortest=1[b1]`);
+      let cur = 'b1';
+      const lay = (src, x, y, from) => { const o = G.label('c'); G.add(`[${cur}][${src}]overlay=x='${x}':y='${y}':eval=frame:enable='gte(t,${r2(from)})'[${o}]`); cur = o; };
+      // the player (or the teams), rising through a mask; the tournament and what the video held
+      let y = Math.round(H * (p.portrait ? 0.5 : 0.6));
+      if (who) {
+        const size = fitSize(who, Math.round(84 * k), Math.round(W * 0.84) / 0.45);
+        const r = risingText(G, dir, 'who', { text: who, font: FONTS.display, size, at: 0.6, T, p, align: 'center' });
+        lay(r.label, `${Math.round(W / 2 - r.w / 2)}`, `${y - r.pad}`, 0.58);
+        y += Math.round(size * 1.18);
+      }
+      const ys = [];
+      if (what) {
+        const size = fitSize(what, Math.round(28 * k), Math.round(W * 0.86) / 0.55);
+        const o = G.label('c');
+        G.add(`[${cur}]${drawtext({ font: FONTS.body, file: textFile(dir, 'what', what), size, color: '0xcbd5e1', x: '(w-text_w)/2',
+          y: `${y}+${Math.round(18 * k)}*(1-${easeOut(prog(0.74, 0.4))})`, alpha: prog(0.74, 0.3), from: 0.72 })}[${o}]`);
+        cur = o; y += Math.round(size * 2.1);
+      }
+      const ySite = Math.max(y + Math.round(10 * k), Math.round(H * (p.portrait ? 0.62 : 0.8)));
       const ul = G.label('ul');
-      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=0x${ACCENT.BRAND}:s=${Math.round(120 * k)}x${Math.max(3, Math.round(5 * k))}:r=${fps}:d=${f6(T)}`])}:v]format=yuva420p,fade=t=in:st=0.55:d=0.2:alpha=1[${ul}]`);
-      G.add(`[b1]${drawtext({ font: FONTS.body, file: textFile(dir, 'site', siteText), size: Math.round(36 * k), color: 'white',
-        x: '(w-text_w)/2', y: `${ySite}+${Math.round(22 * k)}*(1-${easeOut(prog(0.42, 0.4))})`, alpha: prog(0.42, 0.3) })}[b2]`);
-      G.add(`[b2][${ul}]overlay=x=${Math.round(W / 2 - 60 * k)}:y=${ySite + Math.round(60 * k)}:shortest=1[b3]`);
-      await withWipes(G, p, assets, 'b3', 'bw', n, { head: kind, tail: null, signal });
-      G.add(`[bw]fade=t=out:st=${f6(T - 0.32)}:d=0.32[vout]`);
-      G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
+      G.add(`[${G.input(['-f', 'lavfi', '-i', `color=c=0x${ACCENT.BRAND}:s=${Math.round(120 * k)}x${Math.max(3, Math.round(5 * k))}:r=${fps}:d=${f6(T)}`])}:v]format=yuva420p,fade=t=in:st=0.95:d=0.2:alpha=1[${ul}]`);
+      { const o = G.label('c');
+        G.add(`[${cur}]${drawtext({ font: FONTS.body, file: textFile(dir, 'site', siteText), size: Math.round(36 * k), color: 'white',
+          x: '(w-text_w)/2', y: `${ySite}+${Math.round(22 * k)}*(1-${easeOut(prog(0.86, 0.4))})`, alpha: prog(0.86, 0.3), from: 0.84 })}[${o}]`);
+        cur = o; }
+      lay(ul, `${Math.round(W / 2 - 60 * k)}`, `${ySite + Math.round(60 * k)}`, 0.9);
+      await withWipes(G, p, assets, cur, 'bw', n, { head: kind, tail: null, signal });
+      G.add(`[bw]fade=t=out:st=${f6(T - 0.4)}:d=0.4[vout]`);
+      if (sfxOn) {
+        sfxTrack(G, T, [
+          { type: 'whoosh', at: 0.0, dur: 0.34, db: -21, lo: 320, hi: 3800 },     // the band leaving
+          { type: 'whoosh', at: 0.1, dur: 0.56, db: -19, lo: 240, hi: 4600 },     // the shards
+          { type: 'impact', at: 0.26, db: -14, f: 54, decay: 5 },                  // the logo
+          { type: 'shimmer', at: 0.74, db: -26, f: 1760, decay: 3 }                // its sweep of light
+        ], 'sfx');
+        G.add(`[sfx]${cutAudio(T)},afade=t=out:st=${f6(T - 0.6)}:d=0.6[aout]`);
+      } else G.add(`[${silence(G, T)}:a]${cutAudio(T)}[aout]`);
       await run(withScript(dir, G, ['-map', '[vout]', '-map', '[aout]', ...encodeArgs(p), '-frames:v', String(n), out]), { totalSec: T, signal });
       return { duration: T };
     } finally {
@@ -1027,7 +1456,7 @@ function createHighlightEditor(opts = {}) {
   /* ------------------------------------------------------------- cache */
   const segDir = path.join(cacheDir, 'segments');
   fs.mkdirSync(segDir, { recursive: true });
-  function segmentKey(clipKey, card, p, wheelOn, spec) { return sha1({ STYLE, clipKey, card, p: p.key, wheelOn: !!wheelOn, spec: spec || null }); }
+  function segmentKey(clipKey, card, p, wheelOn, spec, gain) { return sha1({ STYLE, clipKey, card, p: p.key, wheelOn: !!wheelOn, spec: spec || null, gain: gain || 0, enc: encoder === 'x264' ? undefined : encoder }); }
   const inflight = new Map(); // segment key → the render making it
   // segments a video being made is using: never trimmed from under it (a
   // long video's own segments can be more than the whole cache allows)
@@ -1058,8 +1487,10 @@ function createHighlightEditor(opts = {}) {
   }
 
   /* ---------------------------------------------------------- the whole */
-  // clips: [{ file, clipKey, card, wheel? }] in play order (files already
-  // local; wheel: the delivery's data, see wheelFor). title: see renderIntro.
+  // clips: [{ file, clipKey, card, wheel?, team? }] in play order (files
+  // already local; wheel: the delivery's data, see wheelFor; team: the
+  // batting side { name, short, color, logo } for the tag's badge — the card
+  // made with cardForClip(clip, team)). title: see renderIntro.
   // format: '16:9' (default) or '9:16'; wheel: lay each clip's wagon wheel on.
   // onProgress(0…1, message); onStage(stage, done, total) — 'probe', 'assets',
   // 'intro', 'clips', 'outro', 'encode', 'validate' — what is really being done;
@@ -1086,18 +1517,20 @@ function createHighlightEditor(opts = {}) {
     onStage('probe', 0, clips.length);
     // four at a time: a probe is a whole ffmpeg, and two hundred of them at
     // once would swamp a small server
-    const infos = new Array(clips.length);
+    // (and each clip's loudness, for its one level change — see LOUD)
+    const infos = new Array(clips.length), louds = new Array(clips.length).fill(null);
     let probed = 0, pi = 0;
     await Promise.all(Array.from({ length: Math.min(4, clips.length) }, async () => {
       while (pi < clips.length) {
         if (signal && signal.aborted) return;
         const i = pi++;
         infos[i] = await probe(clips[i].file);
+        if (infos[i] && infos[i].hasAudio && opts.level !== false) louds[i] = await loudness(clips[i].file);
         if (++probed % 10 === 0) onStage('probe', probed, clips.length);
       }
     }));
     stop();
-    const usable = clips.map((c, i) => ({ ...c, info: infos[i], index: i })).filter(c => c.info && c.info.duration > 0.8);
+    const usable = clips.map((c, i) => ({ ...c, info: infos[i], index: i, gain: gainFor(louds[i], infos[i] && infos[i].mono) })).filter(c => c.info && c.info.duration > 0.8);
     const unusable = clips.map((c, i) => (infos[i] && infos[i].duration > 0.8) ? null : i).filter(i => i !== null);
     if (!usable.length) throw Object.assign(new Error('no playable clips'), { unusable });
     if (strict && unusable.length) throw Object.assign(new Error(`${unusable.length} clip(s) could not be played`), { unusable });
@@ -1106,6 +1539,15 @@ function createHighlightEditor(opts = {}) {
     onProgress(0.02, 'Getting the graphics ready…');
     onStage('assets', 0, 1);
     const assets = await untilAbort(ensureAssets(p), signal);
+    stop();
+    // the batting teams' badges for the tags, once each (a disc a little
+    // bigger than any tag needs: each segment scales it to its own)
+    const discs = new Map();
+    const discKey = (c) => (c.card && c.card.team && c.team) ? `${c.card.team.short}|${c.card.team.color}|${c.card.team.logo}` : null;
+    for (const c of usable) {
+      const dk = discKey(c);
+      if (dk && !discs.has(dk)) discs.set(dk, await teamDisc(p, c.team, even(130 * p.k), workDir, `tagdisc-${discs.size}`, signal));
+    }
     stop();
     onStage('assets', 1, 1);
     const total = usable.reduce((n, c) => n + c.info.duration, 0) + INTRO_SEC + OUTRO_SEC;
@@ -1119,7 +1561,7 @@ function createHighlightEditor(opts = {}) {
     onStage('intro', 0, 1);
     const intro = path.join(workDir, 'intro.mkv'), outro = path.join(workDir, 'outro.mkv');
     const introP = renderIntro({ title: title || {}, bgSrc: usable[0].file, bgInfo: usable[0].info, profile: p, assets, out: intro, workDir, signal })
-      .then(r => { doneSec[usable.length] = INTRO_SEC; onStage('intro', 1, 1); report('Title card done'); return r; });
+      .then(r => { doneSec[usable.length] = INTRO_SEC; onStage('intro', 1, 1); report('Opening done'); return r; });
     const drop = (i) => { if (dropSources) fs.unlink(usable[i].file, () => {}); };
     introP.then(() => { introDone = true; if (clipSegs[0]) drop(0); }, () => {});
     introP.catch(() => {});
@@ -1132,7 +1574,7 @@ function createHighlightEditor(opts = {}) {
         const i = next++;
         const c = usable[i];
         const msg = `Editing clip ${i + 1} of ${usable.length} — titles & transitions…`;
-        const key = c.clipKey ? segmentKey(c.clipKey, c.card, p, wheelOn, wheelOn ? wheelFor(c.wheel) : null) : null;
+        const key = c.clipKey ? segmentKey(c.clipKey, c.card, p, wheelOn, wheelOn ? wheelFor(c.wheel) : null, c.gain) : null;
         let seg = key ? cached(key) : null;
         if (!seg && key && inflight.has(key)) seg = await inflight.get(key).catch(() => null); // another video is making it right now
         if (seg) reused++;
@@ -1142,6 +1584,7 @@ function createHighlightEditor(opts = {}) {
             const target = key ? path.join(segDir, `${key}.${process.pid}-${Date.now()}-${i}.part.mkv`) : path.join(workDir, `seg-${i}.mkv`);
             try {
               await renderClip({ src: c.file, info: c.info, card: c.card, wheel: c.wheel, wheelOn, profile: p, assets, out: target, workDir, signal,
+                disc: discKey(c) ? discs.get(discKey(c)) : null, gain: c.gain,
                 onProgress: (f) => { doneSec[i] = c.info.duration * f; report(msg); } });
             } catch (e) { fs.unlink(target, () => {}); throw e; }
             if (!key) return target;
@@ -1169,7 +1612,7 @@ function createHighlightEditor(opts = {}) {
     const introLen = await introP;
     stop();
     onStage('outro', 0, 1);
-    const outroLen = await renderOutro({ kind: 'BRAND', profile: p, assets, out: outro, workDir, site, signal });
+    const outroLen = await renderOutro({ kind: 'BRAND', title: title || {}, profile: p, assets, out: outro, workDir, site, signal });
     doneSec[usable.length + 1] = OUTRO_SEC;
     onStage('outro', 1, 1);
     const segs = [{ file: intro, dur: introLen.duration }, ...clipSegs, { file: outro, dur: outroLen.duration }];
@@ -1192,12 +1635,13 @@ function createHighlightEditor(opts = {}) {
     } catch (e) { fs.unlink(part, () => {}); throw e; }
     trimCache();
     const secs = (Date.now() - started) / 1000;
-    log(`${usable.length} clip(s) at ${p.key}${wheelOn ? ' with wheels' : ''} in ${secs.toFixed(1)} s (${reused} from the cache, ${parallel} at a time)`);
+    log(`${usable.length} clip(s) at ${p.key}${wheelOn ? ' with wheels' : ''} in ${secs.toFixed(1)} s (${reused} from the cache, ${parallel} at a time, ${encoder})`);
     onProgress(1, 'Done');
-    return { profile: p, included: usable.length, skipped: clips.length - usable.length, unusable, reused, seconds: secs, format: p.portrait ? '9:16' : '16:9' };
+    return { profile: p, included: usable.length, skipped: clips.length - usable.length, unusable, reused, seconds: secs, format: p.portrait ? '9:16' : '16:9', encoder,
+      gains: usable.map(c => c.gain) };
   }
 
-  return { renderHighlight, renderClip, renderIntro, renderOutro, concat, probe, pickProfile, ensureAssets, cardForClip, wheelFor, queueLength: () => queued, parallel, threads, STYLE,
+  return { renderHighlight, renderClip, renderIntro, renderOutro, concat, probe, loudness, gainFor, pickProfile, ensureAssets, cardForClip, wheelFor, queueLength: () => queued, parallel, threads, encoder, STYLE,
     // the frame counts it will use (tests): a clip, and the title / end cards
     framesOf: (info, p) => clipFrames(info, p), cardFrames: (p) => ({ intro: gridLength(INTRO_SEC, p.fps), outro: gridLength(OUTRO_SEC, p.fps) }),
     // where things go (tests): the 9:16 picture, a clip's wheel, when its shot draws

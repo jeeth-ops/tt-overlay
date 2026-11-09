@@ -185,7 +185,10 @@ a { color: var(--teal); }
 .saved { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
 .saved .it { background: #0a1120; border: 1px solid var(--line); border-radius: 10px; padding: 6px; font-size: 11px; }
 .saved .it img { width: 100%; border-radius: 6px; display: block; max-height: 150px; object-fit: contain; background: #000; }
+.saved .it { min-width: 0; } .saved .it .tiny { overflow-wrap: anywhere; }
 .saved .it .row { margin-top: 6px; justify-content: space-between; }
+.badge-dev, .badge-srv { display: inline-block; margin: 4px 4px 0 0; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.badge-dev { background: #1e293b; color: #cbd5e1; } .badge-srv { background: rgba(56,178,193,.18); color: #67e8f9; }
 
 /* ---- gate / modal / toast */
 .gate { max-width: 520px; margin: 12vh auto; text-align: center; padding: 30px; }
@@ -397,7 +400,7 @@ a { color: var(--teal); }
         <div class="row" style="margin-top:12px"><button class="btn" id="dl-both">Download both</button></div>
       </div>
       <div class="card">
-        <h2>Saved thumbnails <span class="n">on this device</span></h2>
+        <h2>Saved thumbnails <span class="n">this device and the server</span></h2>
         <div class="saved" id="saved"><div class="tiny">None yet — the ones you download are kept here.</div></div>
       </div>
     </div>
@@ -523,6 +526,12 @@ async function boot() {
   $('gate').classList.add('hidden'); $('wrap').classList.remove('hidden'); $('tabs').style.display = '';
   try { if (auth && auth.currentUser) $('who').textContent = auth.currentUser.email; } catch (e) { /* none */ }
   S.match = r.json.match;
+  if (r.json.edit && r.json.edit.intro > 0) { INTRO = r.json.edit.intro; OUTRO = r.json.edit.outro; }
+  if (r.json.edit && r.json.edit.encoder) {
+    const e = r.json.edit;
+    $('quality-note').textContent = `Quality: the clips' own resolution — 1080p footage stays 1080p where this server has the power for it, otherwise 720p. ` +
+      `This server encodes with ${e.encoder === 'nvenc' ? 'the NVIDIA GPU (NVENC)' : 'x264 (software)'}, ${e.parallel} clip${e.parallel === 1 ? '' : 's'} at a time. Edited clips are kept, so a re-render only makes what changed.`;
+  }
   S.clips = r.json.clips.map((c, i) => Object.assign(c, { n: i + 1 }));
   S.byId = new Map(S.clips.map(c => [c.clipId, c]));
   const t = S.match.teams || {};
@@ -627,7 +636,7 @@ function selectionChanged() { refreshLibSelection(); renderTimeline(); renderSum
 // the engine's own lengths (highlight-edit.js): 30 fps, a clip cut down to
 // whole 16-frame spans (at least 48 frames), the title card 80 frames, the end card 48
 const gridSec = (d) => Math.max(48, Math.floor(((d || 0) - 0.05) * 30 / 16 + 1e-6) * 16) / 30;
-const INTRO = 80 / 30, OUTRO = 48 / 30;
+let INTRO = 144 / 30, OUTRO = 96 / 30;   // (the server says: its engine's own lengths)
 function renderTimeline() {
   const list = S.sel.map(id => S.byId.get(id)).filter(Boolean);
   $('tl-count').textContent = list.length ? `${list.length} clip${list.length === 1 ? '' : 's'}` : '';
@@ -995,21 +1004,51 @@ async function downloadThumb(format) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   await DB.put('thumbs', { key: `${KEY}|${S.subject}|${S.th.mode}|${S.th.variation}|${format}`, matchId: MATCH_ID, subject: S.subject, mode: S.th.mode, variation: S.th.variation, format, name, blob,
     width: r.meta.width, height: r.meta.height, headline: d.headline, at: Date.now() });
-  toast(`Saved ${name}`);
+  // and on the server, so it can be reopened on any device
+  const q = new URLSearchParams({ subject: S.subject, mode: S.th.mode, variation: String(S.th.variation), format, name, headline: d.headline || '' }).toString();
+  let kept = null;
+  try {
+    const res = await fetch(`/api/highlights/thumbs/${encodeURIComponent(MATCH_ID)}?${q}`, { method: 'POST', headers: Object.assign({ 'Content-Type': 'image/jpeg' }, await authHeaders()), body: blob });
+    kept = { status: res.status, json: await res.json().catch(() => ({})) };
+  } catch (e) { kept = null; }
+  const onServer = !!(kept && kept.status === 200 && kept.json.success);
+  toast(onServer ? `Saved ${name} — on this device and on the server` : `Saved ${name} on this device (the server could not keep it${kept && kept.json && kept.json.error ? ': ' + kept.json.error : ''})`, onServer ? 2600 : 4200);
   loadSaved();
 }
+// What is kept: this device's copies (IndexedDB) and the server's (any
+// device), one entry per subject · design · shape.
 async function loadSaved() {
-  const all = ((await DB.all('thumbs')) || []).filter(x => x.matchId === MATCH_ID).sort((a, b) => b.at - a.at);
+  const local = ((await DB.all('thumbs')) || []).filter(x => x.matchId === MATCH_ID);
+  let server = [];
+  try { const r = await api(`/api/highlights/thumbs/${encodeURIComponent(MATCH_ID)}`); if (r.status === 200 && r.json.success) server = r.json.thumbs || []; } catch (e) { server = []; }
+  const items = new Map();
+  local.forEach(x => items.set(`${x.subject}|${x.mode}|${x.variation}|${x.format}`, { local: x, server: null, name: x.name, at: x.at, w: x.width, h: x.height }));
+  server.forEach(t => {
+    const id = `${t.subject}|${t.mode}|${t.variation}|${t.format}`, it = items.get(id);
+    if (it) { it.server = t; it.at = Math.max(it.at, new Date(t.updatedAt).getTime()); }
+    else items.set(id, { local: null, server: t, name: t.name, at: new Date(t.updatedAt).getTime(), w: t.width, h: t.height });
+  });
+  const all = [...items.entries()].sort((a, b) => b[1].at - a[1].at);
   const box = $('saved');
-  [...box.querySelectorAll('img')].forEach(i => URL.revokeObjectURL(i.src));
-  if (!all.length) { box.innerHTML = '<div class="tiny">None yet — the ones you download are kept here.</div>'; return; }
-  box.innerHTML = all.map(x => `<div class="it" data-k="${esc(x.key)}"><img alt="" src="${URL.createObjectURL(x.blob)}"><div class="tiny" style="margin-top:4px">${esc(x.name)}</div><div class="tiny">${x.width} × ${x.height} · ${new Date(x.at).toLocaleString()}</div>
+  [...box.querySelectorAll('img')].forEach(i => { if (i.src.startsWith('blob:')) URL.revokeObjectURL(i.src); });
+  if (!all.length) { box.innerHTML = '<div class="tiny">None yet — the ones you download are kept here (and on the server, for any device).</div>'; return; }
+  box.innerHTML = all.map(([id, x]) => `<div class="it" data-k="${esc(id)}"><img alt="" src="${x.local ? URL.createObjectURL(x.local.blob) : esc(x.server.url)}"><div class="tiny" style="margin-top:4px">${esc(x.name)}</div>
+    <div class="tiny">${x.w} × ${x.h} · ${new Date(x.at).toLocaleString()}</div>
+    <div class="tiny">${x.local ? '<span class="badge-dev">This device</span>' : ''}${x.server ? '<span class="badge-srv">Server</span>' : ''}</div>
     <div class="row"><button class="btn small" data-dl>Download</button><button class="btn small ghost" data-del>Delete</button></div></div>`).join('');
   box.onclick = async (e) => {
     const it = e.target.closest('.it'); if (!it) return;
-    const x = all.find(v => v.key === it.dataset.k); if (!x) return;
-    if (e.target.closest('[data-dl]')) { const a = document.createElement('a'); a.href = URL.createObjectURL(x.blob); a.download = x.name; document.body.appendChild(a); a.click(); a.remove(); }
-    if (e.target.closest('[data-del]')) { await DB.del('thumbs', x.key); loadSaved(); }
+    const x = items.get(it.dataset.k); if (!x) return;
+    if (e.target.closest('[data-dl]')) {
+      const a = document.createElement('a');
+      a.href = x.local ? URL.createObjectURL(x.local.blob) : `${x.server.url}?download=1`;
+      a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
+    }
+    if (e.target.closest('[data-del]')) {
+      if (x.local) await DB.del('thumbs', x.local.key);
+      if (x.server) await api(`/api/highlights/thumbs/${encodeURIComponent(MATCH_ID)}/${encodeURIComponent(x.server.token)}`, { method: 'DELETE' });
+      loadSaved();
+    }
   };
 }
 

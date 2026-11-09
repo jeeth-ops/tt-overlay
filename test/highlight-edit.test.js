@@ -5,11 +5,14 @@
 // - each clip's tag says the right thing (SIX / FOUR / WICKET / a HIGHLIGHT);
 // - the title card says who and what, with the player's team and figures
 //   (runs, balls, fours, sixes / wickets, overs) — scorecard and tournament;
-// - the finished video: title card + clips + end card, every frame on time
+// - the finished video: the opening + clips + end card, every frame on time
 //   (no gap or jolt at any join), one continuous soundtrack, 720p / 1080p;
-// - the transition: the band covers the whole frame at every cut, and it is
-//   silent — the title and end cards have no sound, and at a cut there is
-//   nothing but the clips' own sound, kept at its own level to its ends;
+//   the opening's second act shows the team's colour;
+// - the sound: under the opening and the end card only their own soft sound
+//   design (never past -12 dB); each clip its own sound, brought to the house
+//   level by one gain (towards -16 LUFS, never past -1 dBTP), kept to its
+//   ends; at a cut nothing but the clips' own sound (no transition sound);
+// - the transition: the band covers the whole frame at every cut;
 // - the viewer's options: 9:16 (Reels) — every frame on time, the wheel only
 //   ever under the picture — and the animated wagon wheel — from the
 //   delivery's own shot, and in 16:9 never over the middle of the picture
@@ -51,6 +54,20 @@ function audioRuns(file){
   let gaps = 0;
   for(let i = 1; i < r.length; i++){ if(Math.abs(r[i].t - (r[i - 1].t + r[i - 1].n / 48000)) > 0.0006) gaps++; }
   return { end: r.length ? r[r.length - 1].t + r[r.length - 1].n / 48000 : 0, gaps };
+}
+// A file's loudness (EBU R128: integrated LUFS, true peak dBTP).
+function loudOf(file){
+  const e = ff(['-nostats', '-i', file, '-vn', '-af', 'ebur128=peak=true', '-f', 'null', '-']);
+  const sum = e.slice(e.lastIndexOf('Summary:'));
+  const I = /I:\s+(-?[\d.]+) LUFS/.exec(sum), tp = /Peak:\s+(-?[\d.]+) dBFS/.exec(sum);
+  return { I: I ? Number(I[1]) : null, peak: tp ? Number(tp[1]) : null };
+}
+// The average colour of a region of the frame at time t → [r, g, b].
+function colourOf(file, t, crop){
+  const r = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', String(t), '-i', file, '-frames:v', '1', '-vf', `crop=${crop},scale=16:16`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { maxBuffer: 1 << 20 });
+  const px = r.stdout, m = [0, 0, 0];
+  for(let i = 0; i < px.length; i += 3){ m[0] += px[i]; m[1] += px[i + 1]; m[2] += px[i + 2]; }
+  return m.map(v => v / Math.max(1, px.length / 3));
 }
 // Mean and peak loudness (dB) of a stretch of a file's sound.
 function level(file, t, d){
@@ -94,7 +111,7 @@ function lumaAt(file, t){
     H.grab('proMatchContext', 'async function '), H.grab('proTitleForMatchCompile', 'async function '),
     'return { proCountsLine, proPlayerName, proSplitName, proPlayerFigures, proStatCells, proTitleForMatchCompile };'].join('\n');
   const badgeA = 'data:image/png;base64,iVBORw0KGgo=';
-  const match1 = { matchId: 'm-1', roomId: 'room-1', ownerUid: 'u1', leagueKey: 'mca', matchTitle: 'League Match', matchResultText: 'PSC won by 16 runs',
+  const match1 = { matchId: 'm-1', roomId: 'room-1', ownerUid: 'u1', leagueKey: 'mca', matchTitle: 'League Match', matchResultText: 'PSC won by 16 runs', venue: 'Wankhede Stadium',
     teamA: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logoUrl: badgeA }, teamB: { name: 'MIG Cricket Club', short: 'MIG', logoUrl: 'https://example.com/mig.png' },
     battingCard: { A: [{ name: 'Harsh Rane', runs: 45, balls: 23, fours: 2, sixes: 3 }], B: [{ name: 'Alim', runs: 4, balls: 6, fours: 1, sixes: 0 }] },
     bowlingCard: { A: [{ name: 'Harsh Rane', overs: 1, balls: 0, runs: 12, wickets: 0 }], B: [{ name: 'Alim', overs: 4, balls: 0, runs: 22, wickets: 3 }] },
@@ -107,11 +124,11 @@ function lumaAt(file, t){
   eq('a player\'s name as the clips spell it', [T.proPlayerName(clipsX, 'harsh rane'), T.proPlayerName(clipsX, 'alim')], ['Harsh Rane', 'Alim']);
   eq('the name on the card: first name small, surname big (one word: just big)', [T.proSplitName('Aadit Bahutule'), T.proSplitName('M S Dhoni'), T.proSplitName('Sai'), T.proSplitName('Rohit Sharma Jr')],
     [{ first: 'Aadit', title: 'Bahutule' }, { first: 'M S', title: 'Dhoni' }, { first: '', title: 'Sai' }, { first: 'Rohit', title: 'Sharma Jr' }]);
-  eq('a player\'s sixes in one match: tournament / match / name / ALL SIXES / their batting figures / their team with its badge',
+  eq('a player\'s sixes in one match: tournament / match / name / ALL SIXES / their batting figures / their team with its badge / where it was played',
     await T.proTitleForMatchCompile({ type: 'player', playerKey: 'Harsh Rane', category: 'sixes' }, 'room-1', clipsX.slice(0, 2)),
     { kicker: 'MCA President Cup 2026', line: 'PSC vs MIG  ·  League Match', first: 'Harsh', title: 'Rane', pill: 'ALL SIXES', meta: '2 SIXES',
       stats: [{ value: '45', label: 'RUNS', sub: '23 BALLS' }, { value: '3', label: 'SIXES' }, { value: '2', label: 'FOURS' }, { value: '195.7', label: 'STRIKE RATE' }],
-      team: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: badgeA }, kind: 'SIX' });
+      team: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: badgeA }, kind: 'SIX', venue: 'Wankhede Stadium' });
   const wk = await T.proTitleForMatchCompile({ type: 'player', playerKey: 'Alim', category: 'wickets' }, 'room-1', clipsX.slice(3));
   eq('a bowler\'s wickets: their bowling figures, their team (a badge given as a link is never fetched)', [wk.title, wk.pill, wk.stats, wk.team],
     ['Alim', 'WICKETS', [{ value: '3', label: 'WICKETS', sub: '22 RUNS' }, { value: '4.0', label: 'OVERS' }, { value: '5.50', label: 'ECONOMY' }], { name: 'MIG Cricket Club', short: 'MIG', color: '', logo: '' }]);
@@ -119,10 +136,10 @@ function lumaAt(file, t){
     [{ value: '4', label: 'RUNS', sub: '6 BALLS' }, { value: '0', label: 'SIXES' }, { value: '3', label: 'WICKETS', sub: '22 RUNS' }, { value: '4.0', label: 'OVERS' }]);
   const fours = await T.proTitleForMatchCompile({ type: 'fours', team: 'B' }, 'room-1', [{ eventType: 'FOUR' }]);
   eq('a team\'s fours: the team, its innings, its badge', [fours.title, fours.stats[0], fours.team && fours.team.name], ['MIG Cricket Club', { value: '140/9', label: 'SCORE', sub: '19.4 OVERS' }, 'MIG Cricket Club']);
-  eq('the whole match: both teams (and their badges), the result, both scores', await T.proTitleForMatchCompile({ type: 'full' }, 'room-1', clipsX),
+  eq('the whole match: both teams (and their badges), the result, both scores, the venue', await T.proTitleForMatchCompile({ type: 'full' }, 'room-1', clipsX),
     { kicker: 'MCA President Cup 2026', line: 'League Match  ·  PSC won by 16 runs', title: 'PSC vs MIG', pill: 'FULL MATCH HIGHLIGHTS',
       meta: '2 SIXES  ·  1 FOUR  ·  1 WICKET', stats: [{ value: '156/7', label: 'PSC', sub: '20.0 OVERS' }, { value: '140/9', label: 'MIG', sub: '19.4 OVERS' }],
-      teams: [{ name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: badgeA }, { name: 'MIG Cricket Club', short: 'MIG', color: '', logo: '' }], kind: 'BRAND' });
+      teams: [{ name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logo: badgeA }, { name: 'MIG Cricket Club', short: 'MIG', color: '', logo: '' }], kind: 'BRAND', venue: 'Wankhede Stadium' });
   const lost = await T.proTitleForMatchCompile({ type: 'wickets' }, 'nope', [{ eventType: 'WICKET' }]);
   eq('a match the database does not know: still a title, just no figures', [lost.pill, lost.stats, lost.team], ['ALL WICKETS', [], null]);
   const match2 = { teamA: { name: 'Thane Tigers' }, teamB: { name: 'Parel Sporting Club', short: 'PSC' }, battingCard: { B: [{ name: 'harsh  rane', runs: 12, balls: 10, fours: 1, sixes: 1 }] } };
@@ -192,14 +209,20 @@ function lumaAt(file, t){
   const lumas = cuts.map(t => lumaAt(out, t - 0.017));
   eq('at every cut the band covers the frame (dark navy, not the bright picture)', lumas.every(l => l < 50), true);
   eq('… and between cuts the clip itself shows', lumaAt(out, cuts[0] + 1.5) > 60, true);
-  // The sound: the clips' own, nothing added (no whoosh), kept to their ends.
-  const src = level(clipA, 1.0, 1.0);
-  const lv = { intro: level(out, 0.1, cuts[0] - 0.2), mid: level(out, cuts[0] + 1.0, 1.0), cut: level(out, cuts[1] - 0.3, 0.6), end: level(out, cuts[1] - 0.3, 0.15),
+  // the opening's second act: the team's panel, in its colour (blue), across the frame
+  const act2 = colourOf(out, 1.9, 'iw/4:ih/3:0:ih/3');
+  eq('the opening\'s second act: the team\'s own colour across the frame', act2[2] > act2[0] + 40 && act2[2] > act2[1] + 20, true);
+  // The sound: each clip's own, brought to one level by one gain; the cards' soft sound design; nothing at a cut.
+  const src = level(clipA, 1.0, 1.0), L = loudOf(clipA);
+  // (the test clips are mono: they play in both ears, 3 dB louder than measured)
+  const want = Math.round(Math.min(Math.max(-10, Math.min(6, -16 - (L.I + 3.01))), -1 - L.peak) * 10) / 10;
+  const lv = { intro: level(out, 0.1, cuts[0] - 0.2), mid: level(out, cuts[0] + 1.0, 1.0), midB: level(out, cuts[1] + 1.0, 1.0), cut: level(out, cuts[1] - 0.3, 0.6), end: level(out, cuts[1] - 0.3, 0.15),
     silentClip: level(out, cuts[2] + 0.4, (clipF[2] / 30) - 0.8), outro: level(out, cuts[3] + 0.05, cardF.outro / 30 - 0.1) };
-  eq('the title card, the clip with no sound and the end card are silent', [lv.intro.mean < -70, lv.silentClip.mean < -70, lv.outro.mean < -70], [true, true, true]);
-  eq('a clip\'s sound is its own, at its own level', Math.abs(lv.mid.mean - src.mean) < 1, true);
-  eq('across a cut: nothing louder than the clips themselves (no transition sound)', lv.cut.max <= Math.max(src.max, level(clipB, 1.0, 1.0).max) + 1, true);
-  eq('… and a clip keeps its full sound right up to the cut (only a click-guard fade)', Math.abs(lv.end.mean - src.mean) < 1.5, true);
+  eq('the opening and the end card: their own soft sound design (there, and never past -12 dB); the clip with no sound is silent',
+    [lv.intro.mean > -70 && lv.intro.max <= -12, lv.outro.mean > -70 && lv.outro.max <= -12, lv.silentClip.mean < -70], [true, true, true]);
+  eq('a clip\'s sound is its own, brought to the house level by one gain (towards -16 LUFS, never past -1 dBTP)', [r.gains[0], Math.abs(lv.mid.mean - (src.mean + want)) < 1], [want, true]);
+  eq('across a cut: nothing louder than the clips themselves (no transition sound)', lv.cut.max <= Math.max(lv.mid.max, lv.midB.max) + 1, true);
+  eq('… and a clip keeps its full sound right up to the cut (only a click-guard fade)', Math.abs(lv.end.mean - lv.mid.mean) < 1.5, true);
   eq('progress runs forwards to the end, with words', [steps.every((s, i) => i === 0 || s[0] >= steps[i - 1][0]), steps[steps.length - 1][0], /Editing clip 1 of 3/.test(steps.map(s => s[1]).join('|'))], [true, 1, true]);
 
   console.log('\n=== Cached clips ===');
@@ -207,9 +230,10 @@ function lumaAt(file, t){
   eq('each edited clip is kept for the next video', segFiles.length, 3);
   t0 = Date.now();
   const out2 = path.join(tmp, 'out2.mp4');
-  await ed.renderHighlight({ clips: [clips[1], clips[0]], title, out: out2, workDir, onProgress: () => {} });
-  const secondMs = Date.now() - t0;
-  eq('a later video with those clips reuses them (no new segment, much faster)', [fs.readdirSync(path.join(cacheDir, 'segments')).filter(n => /\.mkv$/.test(n)).length, secondMs < firstMs * 0.75], [3, true]);
+  const r2 = await ed.renderHighlight({ clips: [clips[1], clips[0]], title, out: out2, workDir, onProgress: () => {} });
+  // (no time race: the opening is made for every video, alongside its clips —
+  // what counts is that not one clip is edited again)
+  eq('a later video with those clips reuses them: not one edited again, no new segment', [fs.readdirSync(path.join(cacheDir, 'segments')).filter(n => /\.mkv$/.test(n)).length, r2.reused], [3, 2]);
   const changed = [{ ...clips[0], card: cardForClip({ eventType: 'SIX', strikerName: 'Someone Else', over: 1, ballInOver: 2 }) }];
   await ed.renderHighlight({ clips: changed, title, out: path.join(tmp, 'out3.mp4'), workDir, onProgress: () => {} });
   eq('a clip re-labelled (another player) is edited again, never shown with the old tag', fs.readdirSync(path.join(cacheDir, 'segments')).filter(n => /\.mkv$/.test(n)).length, 4);
@@ -249,8 +273,9 @@ function lumaAt(file, t){
   eq('without the wheel the picture sits in the middle (to the even pixel)', Math.abs(ed.layout.portraitBox(pr, false).y - (1280 - 406) / 2) <= 1, true);
 
   console.log('\n=== The server job ===');
-  const jobCode = [H.grabConst('HIGHLIGHT_PRO_ON'), H.grabConst('HIGHLIGHT_PRO_MAX_CLIPS'), H.grabConst('SHOT_ZONES'), H.grab('setCompileJob'), H.grab('chronologicalClipOrder'), H.grab('dedupeClipsById'),
-    H.grab('concatClipsToFile'), H.grab('getHighlightEditor'), H.grab('proClipKey'), H.grab('sanitizeShot'), H.grab('proWheelData', 'async function '), H.grab('runCompileJob', 'async function '),
+  const jobCode = [H.grabConst('HIGHLIGHT_PRO_ON'), H.grabConst('HIGHLIGHT_PRO_MAX_CLIPS'), H.grabConst('SHOT_ZONES'), H.grabConst('SINGLE_MATCHES_LEAGUE_KEY'), H.grab('setCompileJob'), H.grab('chronologicalClipOrder'), H.grab('dedupeClipsById'),
+    H.grab('concatClipsToFile'), H.grab('getHighlightEditor'), H.grab('proClipKey'), H.grab('sanitizeShot'), H.grab('proWheelData', 'async function '), H.grab('proTeam'), H.grab('proMatchContext', 'async function '),
+    H.grab('proClipTeams', 'async function '), H.grab('runCompileJob', 'async function '),
     'return { runCompileJob };'].join('\n');
   const fluent = require('fluent-ffmpeg'); fluent.setFfmpegPath(ffmpegPath);
   const files = { c1: clipA, c2: clipB };
@@ -259,6 +284,8 @@ function lumaAt(file, t){
     const deps = {
       process: { env: {} }, fs, path, ffmpeg: fluent, ffmpegInstallerPath: ffmpegPath, HIGHLIGHTS_TMP_DIR: path.join(tmp, 'jobs'),
       createHighlightEditor: () => editor, cardForClip, compileJobs, highlightEditor: null, console: { log: () => {} }, ballsCollection: balls,
+      matchRecordsCollection: H.coll([{ matchId: 'm-1', roomId: 'm-1', teamA: { name: 'Parel Sporting Club', short: 'PSC', color: '#1d4ed8', logoUrl: 'data:image/png;base64,iVBORw0KGgo=' }, teamB: { name: 'MIG Cricket Club', short: 'MIG', color: '#b91c1c' } }]),
+      leaguesCollection: null,
       downloadClipToTemp: async (clip, dir, i) => { await new Promise(r => setTimeout(r, 60)); const f = path.join(dir, `clip_${i}.mp4`); fs.copyFileSync(files[clip.clipId], f); return f; }
     };
     fs.mkdirSync(deps.HIGHLIGHTS_TMP_DIR, { recursive: true });
@@ -294,8 +321,11 @@ function lumaAt(file, t){
   const spy = { queueLength: () => 0, renderHighlight: async (a) => { asked = a; fs.copyFileSync(clipA, a.out); return {}; } };
   J = makeJob(spy);
   J.compileJobs.set('job4', { status: 'queued', progress: 0, createdAt: Date.now() });
-  await J.run('job4', [{ ...docs[1], matchId: 'm-1', deliveryId: 'u1' }, { ...docs[0], matchId: 'm-1', deliveryId: 'u2' }], { title: { title: 'X' }, format: '9:16', wheel: true });
+  await J.run('job4', [{ ...docs[1], matchId: 'm-1', deliveryId: 'u1', battingTeam: 'A' }, { ...docs[0], matchId: 'm-1', deliveryId: 'u2', battingTeam: 'B' }], { title: { title: 'X' }, format: '9:16', wheel: true });
   job = J.compileJobs.get('job4');
+  eq('each clip\'s tag knows its batting side from its match: colour, short name, badge (only as a fingerprint in the cached card)',
+    [asked.clips.map(c => c.card.team && c.card.team.short), asked.clips.map(c => c.card.team && c.card.team.color), !!asked.clips[0].card.team.logo, asked.clips[1].card.team.logo, asked.clips[0].team.logo.slice(0, 10)],
+    [['PSC', 'MIG'], ['1d4ed8', 'b91c1c'], true, null, 'data:image']);
   eq('9:16 + wheel asked: the editor gets them, each clip with its delivery\'s shot; the job says what it made',
     [asked.format, asked.wheel, asked.clips.map(c => c.wheel && c.wheel.event), asked.clips[0].wheel.shot.zone, job.format, job.wheel], ['9:16', true, ['SIX', 'FOUR'], 'midwicket', '9:16', true]);
 
