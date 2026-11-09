@@ -313,6 +313,7 @@ a { color: var(--teal); }
           <div class="field">
             <label>What it is about</label>
             <select class="input" id="subject"></select>
+            <div class="tiny hidden" id="subject-auto">Picked from the clips: they are all this player's. Choose another to change it.</div>
             <select class="input hidden" id="subject-figs">
               <option value="all">Show batting &amp; bowling figures</option>
               <option value="boundaries">Show batting figures</option>
@@ -474,7 +475,7 @@ $('gate-signin').onclick = () => {
 const S = {
   match: null, clips: [], byId: new Map(), filtered: [], sel: [], selSet: new Set(), lastClick: null,
   f: { q: '', ev: '', team: '', player: '', inn: '' },
-  subject: 'full', figs: 'all', format: '16:9', wheel: false,
+  subject: 'full', subjectAuto: true, figs: 'all', format: '16:9', wheel: false,
   job: null, poll: null, seen: null, recent: [],
   title: null, titleSig: '',
   th: { mode: 'photo', variation: 1, seed: 1, headline: '', custom: '', frameClip: '', frames: [], frameIdx: 0, photo: null, upload: false, fx: 0.5, fy: 0.45, fz: 1, auto: null }
@@ -482,7 +483,7 @@ const S = {
 const KEY = `asl-studio:${MATCH_ID}`;
 function save() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ sel: S.sel, subject: S.subject, figs: S.figs, format: S.format, wheel: S.wheel, job: S.job, recent: S.recent.slice(0, 8),
+    localStorage.setItem(KEY, JSON.stringify({ sel: S.sel, subject: S.subject, subjectAuto: S.subjectAuto, figs: S.figs, format: S.format, wheel: S.wheel, job: S.job, recent: S.recent.slice(0, 8),
       th: { mode: S.th.mode, variation: S.th.variation, seed: S.th.seed, custom: S.th.custom, headline: S.th.headline, frameClip: S.th.frameClip, frameIdx: S.th.frameIdx, upload: S.th.upload, fx: S.th.fx, fy: S.th.fy, fz: S.th.fz } }));
   } catch (e) { /* private mode: nothing kept */ }
 }
@@ -493,6 +494,7 @@ function restore() {
   S.sel = (o.sel || []).filter(id => S.byId.has(id));
   S.selSet = new Set(S.sel);
   ['subject', 'figs', 'format', 'wheel', 'job'].forEach(k => { if (o[k] != null) S[k] = o[k]; });
+  S.subjectAuto = o.subjectAuto !== false;   // (a project from before: still chosen from its clips)
   S.recent = o.recent || [];
   if (o.th) Object.assign(S.th, o.th);
 }
@@ -540,7 +542,7 @@ async function boot() {
   $('m-sub').textContent = [S.match.tournament, S.match.venue, S.match.result].filter(Boolean).join(' · ');
   document.title = `${A} vs ${B} · Highlight Studio`;
   restore();
-  buildFilters(); buildSubject(); bindAll();
+  buildFilters(); buildSubject(); autoSubject(); bindAll();
   applyFilters(); renderTimeline(); renderSummary(); renderRecent();
   syncExportControls();
   if (S.job && S.job.jobId) { $('dash').classList.remove('hidden'); pollJob(); }
@@ -630,7 +632,30 @@ function toggleClip(c, on) {
   if (on && !has) { S.sel.push(c.clipId); S.selSet.add(c.clipId); }
   if (!on && has) { S.sel = S.sel.filter(x => x !== c.clipId); S.selSet.delete(c.clipId); }
 }
-function selectionChanged() { refreshLibSelection(); renderTimeline(); renderSummary(); save(); refreshTitle(); }
+// What the video is about, until the organiser picks it: when every clip
+// chosen is one player's (his shots, his wickets, his dismissal), that
+// player — his name on the title card, the match under it; otherwise the
+// whole match.
+function autoSubject() {
+  if (!S.subjectAuto) return;
+  const list = S.sel.map(id => S.byId.get(id)).filter(Boolean);
+  let subject = 'full', figs = 'all';
+  if (list.length) {
+    const sets = list.map(c => { const k = c.keys || {}; return new Set([k.striker, c.eventType === 'WICKET' ? k.bowler : null, k.dismissed].filter(Boolean)); });
+    let common = [...sets[0]].filter(k => sets.every(st => st.has(k)));
+    if (common.length > 1) common.sort((a, b) => list.filter(c => (c.keys || {}).striker === b).length - list.filter(c => (c.keys || {}).striker === a).length);
+    if (common.length) {
+      const pk = common[0];
+      subject = 'player:' + pk;
+      const bat = list.every(c => (c.keys || {}).striker === pk && c.eventType !== 'WICKET'), bowl = list.every(c => c.eventType === 'WICKET' && (c.keys || {}).bowler === pk);
+      figs = bat ? 'boundaries' : bowl ? 'wickets' : 'all';
+    }
+  }
+  if (subject === S.subject && figs === S.figs) return;
+  S.subject = subject; S.figs = figs; S.th.custom = ''; S.th.headline = '';
+  buildSubject();
+}
+function selectionChanged() { autoSubject(); refreshLibSelection(); renderTimeline(); renderSummary(); save(); refreshTitle(); }
 
 /* ----------------------------------------------------------- timeline */
 // the engine's own lengths (highlight-edit.js): 30 fps, a clip cut down to
@@ -718,13 +743,19 @@ function renderSummary() {
 /* ------------------------------------------------- subject + export */
 function buildSubject() {
   const t = S.match.teams || {}, players = new Map();
-  S.clips.forEach(c => { if (c.striker && c.keys && c.keys.striker) players.set(c.keys.striker, c.striker); if (c.bowler && c.keys && c.keys.bowler && !players.has(c.keys.bowler)) players.set(c.keys.bowler, c.bowler); });
+  S.clips.forEach(c => {
+    const k = c.keys || {};
+    if (c.striker && k.striker) players.set(k.striker, c.striker);
+    if (c.bowler && k.bowler && !players.has(k.bowler)) players.set(k.bowler, c.bowler);
+    if (c.dismissedPlayer && k.dismissed && !players.has(k.dismissed)) players.set(k.dismissed, c.dismissedPlayer);
+  });
   $('subject').innerHTML = `<option value="full">The whole match</option>` +
     ['A', 'B'].filter(k => t[k]).map(k => `<option value="team:${k}">${esc(t[k].name || t[k].short)}</option>`).join('') +
     [...players.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([k, n]) => `<option value="player:${esc(k)}">${esc(n)}</option>`).join('');
   if (![...$('subject').options].some(o => o.value === S.subject)) S.subject = 'full';
   $('subject').value = S.subject;
   $('subject-figs').value = S.figs;
+  $('subject-auto').classList.toggle('hidden', !S.subjectAuto || !S.subject.startsWith('player:'));
   $('subject-figs').classList.toggle('hidden', !S.subject.startsWith('player:'));
 }
 function subjectBody() {
@@ -1086,8 +1117,8 @@ function bindAll() {
   $('tl-sort').onclick = () => { S.sel.sort((a, b) => { const x = order(S.byId.get(a)), y = order(S.byId.get(b)); for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; }); selectionChanged(); };
   $('tl-rev').onclick = () => { S.sel.reverse(); selectionChanged(); };
   $('tl-clear').onclick = () => { if (S.sel.length && confirm(`Remove all ${S.sel.length} clips from the timeline?`)) { S.sel = []; S.selSet = new Set(); selectionChanged(); } };
-  $('subject').onchange = (e) => { S.subject = e.target.value; $('subject-figs').classList.toggle('hidden', !S.subject.startsWith('player:')); S.th.custom = ''; S.th.headline = ''; save(); refreshTitle(); };
-  $('subject-figs').onchange = (e) => { S.figs = e.target.value; S.th.headline = ''; save(); refreshTitle(); };
+  $('subject').onchange = (e) => { S.subjectAuto = false; S.subject = e.target.value; $('subject-auto').classList.add('hidden'); $('subject-figs').classList.toggle('hidden', !S.subject.startsWith('player:')); S.th.custom = ''; S.th.headline = ''; save(); refreshTitle(); };
+  $('subject-figs').onchange = (e) => { S.subjectAuto = false; S.figs = e.target.value; S.th.headline = ''; save(); refreshTitle(); };
   $('fmt').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; S.format = b.dataset.v; syncExportControls(); renderSummary(); save(); };
   $('wheel').onchange = (e) => { S.wheel = e.target.checked; save(); };
   $('render').onclick = startRender;
