@@ -754,13 +754,13 @@ function createHighlightEditor(opts = {}) {
 
   // The blurred picture behind a title card, small (it is all soft light):
   // darkened from the left for the text.
-  async function stillFrom(src, info, p, out, atSec) {
+  async function stillFrom(src, info, p, out, atSec, signal) {
     const at = Math.max(0, Math.min((info && info.duration ? info.duration - 0.2 : 1), atSec));
     const w = even(p.w / 4), h = even(p.h / 4);
     await run(['-ss', String(r2(at)), '-i', src, '-f', 'lavfi', '-i', `color=c=black:s=${w}x${h},format=rgba`, '-filter_complex',
       `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=7:2,eq=saturation=0.8:brightness=-0.05,format=rgba[s];` +
       `[1:v]geq=r=4:g=8:b=18:a='min(255,225*pow(1-X/W,1.3)+100*pow(Y/H,2.4)+55)'[d];[s][d]overlay=format=rgb[o]`,
-      '-map', '[o]', '-frames:v', '1', out]);
+      '-map', '[o]', '-frames:v', '1', out], { signal });
     return out;
   }
   // A team badge given as a data: URL → a file ffmpeg can read, or null.
@@ -786,7 +786,7 @@ function createHighlightEditor(opts = {}) {
   // — the team's badge on a white disc (its initials when it has no badge)
   // and its name; both teams side by side for a whole match, our logo when
   // there is no team. → { file, x, y, w, h }
-  async function buildHero(p, title, dir) {
+  async function buildHero(p, title, dir, signal) {
     const k = p.k, W = p.w, H = p.h;
     const ok = (t) => !!(t && (t.name || t.short));
     const both = (Array.isArray(title.teams) ? title.teams.filter(ok) : []).slice(0, 2);
@@ -853,7 +853,7 @@ function createHighlightEditor(opts = {}) {
       cur = t;
     }
     const file = path.join(dir, 'hero.png');
-    await run(withScript(dir, G, ['-map', `[${cur}]`, '-frames:v', '1', file]));
+    await run(withScript(dir, G, ['-map', `[${cur}]`, '-frames:v', '1', file]), { signal });
     return { file, x: X0, y: 0, w: PW, h: PH };
   }
 
@@ -866,8 +866,8 @@ function createHighlightEditor(opts = {}) {
       const k = p.k, W = p.w, H = p.h, n = gridLength(INTRO_SEC, p.fps), T = n / p.fps;
       const kind = ACCENT[title.kind] ? title.kind : 'BRAND';
       const accent = `0x${ACCENT[kind]}`;
-      const bg = bgSrc ? await stillFrom(bgSrc, bgInfo, p, path.join(dir, 'bg.png'), 1.2) : null;
-      const hero = await buildHero(p, title, dir);
+      const bg = bgSrc ? await stillFrom(bgSrc, bgInfo, p, path.join(dir, 'bg.png'), 1.2, signal) : null;
+      const hero = await buildHero(p, title, dir, signal);
       const kicker = cleanText(title.kicker, 60), line = cleanText(title.line, 70), first = cleanText(title.first, 40);
       const main = cleanText(title.title, 40) || 'HIGHLIGHTS', pill = cleanText(title.pill, 28), meta = cleanText(title.meta, 70);
       const stats = (Array.isArray(title.stats) ? title.stats : []).map(s => ({ value: cleanText(s && s.value, 9), label: cleanText(s && s.label, 14), sub: cleanText(s && s.sub, 16) }))

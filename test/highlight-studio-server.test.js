@@ -50,7 +50,7 @@ function download(port, url){
   });
 }
 // ffmpegs running now (as themselves or under nice)
-const ffmpegList = () => execSync('ps -eo etimes,args', { encoding: 'utf8' }).split('\n').map(l => l.trim()).filter(l => l.includes(ffmpegPath) && !/^\d+\s+(\/bin\/)?(ba)?sh /.test(l));
+const ffmpegList = () => execSync('ps -ww -eo etimes,args', { encoding: 'utf8' }).split('\n').map(l => l.trim()).filter(l => l.includes(ffmpegPath) && !/^\d+\s+(\/bin\/)?(ba)?sh /.test(l));
 const ffmpegs = () => ffmpegList().length;
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -172,15 +172,20 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   await wait(1500);
   st = (await api('GET', `/api/highlights/compile/${cj}/status`)).json;
   ok('a cancelled job stays cancelled (its last steps do not bring it back)', st.status === 'cancelled', st.status);
-  ok('… its own ffmpegs (its clips, title and end cards, the video) stopped at once', ffmpegList().filter(l => /\.part\.mkv|intro\.mkv|outro\.mkv|\.mp4\.part/.test(l)).length === 0, ffmpegList().map(l => l.slice(0, 160)));
-  const leftC = fs.readdirSync(path.join(TMP, 'scorvix-highlights')).filter(n => n.startsWith(cj) || n.startsWith(r2.json.jobId));
-  ok('… and nothing of it left on disk (no half-written video)', leftC.length === 0, leftC);
+  // (this server's ffmpegs only: their files are in this test's own folder)
+  const own = () => ffmpegList().filter(l => l.includes(TMP) && /\.part\.mkv|intro\.mkv|outro\.mkv|\.mp4\.part/.test(l));
+  ok('… its own ffmpegs (its clips, title and end cards, the video) stopped at once', own().length === 0, own().map(l => l.slice(-200)));
+  // (its folder goes as soon as its last ffmpeg has been stopped)
+  const leftOf = () => fs.readdirSync(path.join(TMP, 'scorvix-highlights')).filter(n => n.startsWith(cj) || n.startsWith(r2.json.jobId));
+  for(const end = Date.now() + 5000; Date.now() < end && leftOf().length;) await wait(100);
+  ok('… and nothing of it left on disk (no half-written video)', leftOf().length === 0, leftOf());
   const segDir = path.join(TMP, 'scorvix-highlights', 'pro-cache', 'segments');
   ok('… nor a half-made segment in the cache', fs.readdirSync(segDir).filter(n => /\.part\.mkv$/.test(n)).length === 0, fs.readdirSync(segDir));
   // (the transition frames it had started are shared — made once for every
   // video — so they are finished and kept; then nothing at all runs)
-  for(const end = Date.now() + 30000; Date.now() < end && ffmpegs() > 0;) await wait(200);
-  ok('… and the CPU is free again soon after (no ffmpeg left at all)', ffmpegs() === 0, ffmpegList().map(l => l.slice(0, 160)));
+  const mine = () => ffmpegList().filter(l => l.includes(TMP));
+  for(const end = Date.now() + 30000; Date.now() < end && mine().length > 0;) await wait(200);
+  ok('… and the CPU is free again soon after (none of its ffmpegs left at all)', mine().length === 0, mine().map(l => l.slice(-200)));
   const notMine = await api('POST', `/api/highlights/compile/${jobId}/cancel`, {}, { Authorization: 'Bearer other-token' });
   ok('cancel by an account that cannot use the studio: refused', notMine.status === 403, notMine.status);
 

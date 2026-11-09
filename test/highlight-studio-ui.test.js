@@ -207,6 +207,7 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   [d1] = await Promise.all([page.waitForEvent('download'), page.click('#dl-l')]);
   ok('download: …_NoPhoto_Variation3_16x9.jpg', d1.suggestedFilename() === 'AllSportsLive_HarshMendon_NoPhoto_Variation3_16x9.jpg', d1.suggestedFilename());
   await page.click('#auto');
+  await page.waitForFunction(() => !!document.querySelector('#vars .var .auto'));
   ok('Auto select: a choice, with the reason, and the operator still picks', /Auto: /.test(await page.textContent('#auto-why')) && !!(await page.$('#vars .var .auto')));
   // the six designs look different from each other (not one template recoloured): their pictures differ a lot
   const diffs = await page.evaluate(async () => {
