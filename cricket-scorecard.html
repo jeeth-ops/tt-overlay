@@ -40,7 +40,7 @@
 <link rel="stylesheet" href="/page-transitions.css">
 <link rel="stylesheet" href="/fluid-ui.css">
 <script src="/page-transitions.js" defer></script>
-<script src="/highlight-options.js?v=20261010" defer></script>
+<script src="/highlight-options.js?v=20261109" defer></script>
 <!-- ===== Content Protection (deterrent only, not foolproof) ===== -->
 <style>
   body {
@@ -3345,8 +3345,8 @@
     <button class="hl-btn hl-full" data-hl-type="full"><span class="hl-ico hl-ico--full"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 6v12M17 6v12M2 10h5M2 14h5M17 10h5M17 14h5"/></svg></span><span>Download Complete Match Highlights</span></button>
     <!-- 🎛️ The Highlight Studio (highlight-studio.html): the organiser picks and
          orders the clips, renders one package and designs its thumbnails.
-         Shown once someone is signed in; the studio checks the account. -->
-    <a class="hl-studio-link" id="hl-studio-link" href="/highlight-studio" hidden>
+         Always shown; the studio itself asks the organiser to sign in. -->
+    <a class="hl-studio-link" id="hl-studio-link" href="/highlight-studio">
       <span class="hl-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M12 16v4M8 10l2.5 2 5-4"/></svg></span>
       <span><b>Highlight Studio</b><small>Pick &amp; order clips, render one package, design its thumbnails — for organisers</small></span>
     </a>
@@ -3654,12 +3654,9 @@ const OWNER_EMAIL = 'chhayajeeth@gmail.com';
 let isOwner = false;
 auth.onAuthStateChanged((user) => {
   isOwner = !!(user && user.email && user.email.toLowerCase() === OWNER_EMAIL);
-  // the Highlight Studio link, for whoever is signed in (the studio checks the account)
+  // the Highlight Studio link: to this match's clips (the studio asks for the sign-in)
   const studio = document.getElementById('hl-studio-link');
-  if(studio){
-    studio.hidden = !user;
-    studio.onclick = (e) => { e.preventDefault(); const id = (typeof getClipMatchId === 'function' && getClipMatchId()) || ''; location.href = '/highlight-studio' + (id ? '?matchId=' + encodeURIComponent(id) : ''); };
-  }
+  if(studio) studio.onclick = (e) => { e.preventDefault(); location.href = studioHref(); };
   const chip = document.getElementById('owner-chip');
   if(chip) chip.classList.toggle('show', isOwner);
   // Re-render highlight clips so the reassign pencil appears/disappears
@@ -3721,8 +3718,13 @@ document.getElementById('compile-modal-backdrop').addEventListener('click', (e) 
 // on the server understands. filename becomes the downloaded file's name
 // (without .mp4 — the server appends it). First the viewer picks the shape
 // (16:9 / 9:16) and the wagon wheel (highlight-options.js).
+// The Highlight Studio for this match's clips.
+function studioHref(){
+  const id = (typeof getClipMatchId === 'function' && getClipMatchId()) || '';
+  return '/highlight-studio' + (id ? '?matchId=' + encodeURIComponent(id) : '');
+}
 async function startCompile(body, filename){
-  const choice = window.HighlightOptions ? await window.HighlightOptions.ask({ title: 'One video of these clips, with titles and transitions.' }) : { format: '16:9', wheel: false };
+  const choice = window.HighlightOptions ? await window.HighlightOptions.ask({ title: 'One video of these clips, with titles and transitions.', studio: studioHref() }) : { format: '16:9', wheel: false };
   if(!choice) return;
   body = { ...body, format: choice.format, wheel: choice.wheel };
   if(choice.format === '9:16') filename += '_Reels';

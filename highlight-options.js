@@ -6,7 +6,9 @@
      • the shape — 16:9 (YouTube, landscape) or 9:16 (Reels / Shorts /
        status, the whole picture kept, nothing cropped);
      • the animated wagon wheel — on or off.
-   HighlightOptions.ask({ title }) → Promise<{ format, wheel } | null>
+   HighlightOptions.ask({ title, studio }) → Promise<{ format, wheel } | null>
+   (studio: the Highlight Studio's address for this match — when given, a
+   line under the buttons offers it: pick and order the clips, thumbnails)
    (null: the viewer closed it). The last choice is remembered on this
    device, so the next download is one tap. Styled from the page's own
    theme variables (--panel, --text, --accent…), with fallbacks.
@@ -74,6 +76,13 @@
   #hlo .hlo-btn.ghost:hover{ background:var(--panel-2,#171f30); }
   #hlo .hlo-btn.go{ flex:1.6; background:var(--accent,#22c55e); color:var(--accent-contrast,#06170c); }
   #hlo .hlo-btn.go:hover{ filter:brightness(1.07); }
+  #hlo .hlo-studio{ display:flex; align-items:center; gap:10px; margin-top:14px; padding:10px 12px; border-radius:var(--radius-md,12px);
+    border:1px dashed var(--border,#232c40); color:var(--text,#eef1f6); text-decoration:none; font-size:12.5px; line-height:1.35; }
+  #hlo .hlo-studio:hover{ background:var(--panel-2,#171f30); }
+  #hlo .hlo-studio b{ font-weight:800; }
+  #hlo .hlo-studio span{ color:var(--text-dim,#8791a3); }
+  #hlo .hlo-studio i{ font-style:normal; margin-left:auto; font-weight:800; color:var(--accent,#22c55e); white-space:nowrap; }
+  #hlo .hlo-studio[hidden]{ display:none; }
   @media (max-width:560px){
     #hlo-back{ align-items:flex-end; padding:0; }
     #hlo{ width:100%; max-height:92dvh; border-radius:18px 18px 0 0; border-bottom:0; padding:18px 16px calc(14px + env(safe-area-inset-bottom)); transform:translateY(40px); }
@@ -106,6 +115,7 @@
       <label class="hlo-toggle">${WHEEL_ICON}<span class="hlo-tt"><b>Wagon wheel</b><small>Shows where each shot went, animated — never over the batter, the bowler or the ball</small></span>
         <input type="checkbox" role="switch" id="hlo-wheel"><span class="hlo-switch" aria-hidden="true"></span></label>
       <div class="hlo-actions"><button type="button" class="hlo-btn ghost" data-act="cancel">Cancel</button><button type="button" class="hlo-btn go" data-act="go">Make video</button></div>
+      <a class="hlo-studio" id="hlo-studio" href="/highlight-studio" hidden><span><b>Highlight Studio</b> — pick and order the clips yourself, make thumbnails (for organisers)</span><i>Open →</i></a>
     </div>`;
     document.body.appendChild(back);
     dlg = back.querySelector('#hlo');
@@ -158,6 +168,9 @@
     const last = load() || {};
     state = { format: last.format === '9:16' ? '9:16' : '16:9', wheel: last.wheel === true };
     dlg.querySelector('#hlo-sub').textContent = (opts && opts.title) || 'One video with titles and transitions, ready to post.';
+    const studio = dlg.querySelector('#hlo-studio');
+    studio.hidden = !(opts && opts.studio);
+    if (opts && opts.studio) studio.href = opts.studio;
     paint();
     lastFocus = document.activeElement;
     return new Promise((resolve) => {
