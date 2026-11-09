@@ -178,6 +178,10 @@ let playerIdentity = null;
 let scorecardImportsCollection = null;
 let scorecardImportPhotosCollection = null;
 let importedCommentaryCollection = null;
+// 🖼️ The Highlight Studio's thumbnails (one per match · subject · design ·
+// shape), kept so they can be reopened on any device: the JPEG in R2 when it
+// is set up, else in the document itself. Net-new, starts empty.
+let highlightThumbsCollection = null;
 let scorecardImport = null;
 
 // 🛟 STARTUP — connectMongo() runs in the background while the server is
@@ -229,6 +233,15 @@ async function connectMongoOnce() {
         // the "old matches won't load" symptom this fixes. Matches now
         // scale to unlimited history with no per-owner size ceiling.
         matchRecordsCollection = mongoDb.collection('matchRecords');
+        try {
+            highlightThumbsCollection = mongoDb.collection('highlightThumbs');
+            await highlightThumbsCollection.createIndex({ key: 1 }, { unique: true });
+            await highlightThumbsCollection.createIndex({ matchId: 1, updatedAt: -1 });
+            await highlightThumbsCollection.createIndex({ token: 1 }, { unique: true });
+        } catch (e) {
+            console.log('highlightThumbs init error (thumbnails stay on the device that made them):', e.message || e);
+            highlightThumbsCollection = null;
+        }
         try {
             matchPanelStatesCollection = mongoDb.collection('matchPanelStates');
             await matchPanelStatesCollection.createIndex({ matchId: 1 }, { unique: true });
@@ -4803,11 +4816,16 @@ let highlightEditor = null;
 function getHighlightEditor() {
     if (!highlightEditor) {
         highlightEditor = createHighlightEditor({
-            ffmpegPath: ffmpegInstallerPath,
+            ffmpegPath: process.env.HIGHLIGHT_FFMPEG || ffmpegInstallerPath,
             cacheDir: path.join(HIGHLIGHTS_TMP_DIR, 'pro-cache'),
             maxHeight: Number(process.env.HIGHLIGHT_MAX_HEIGHT) || undefined,
-            // ffmpegs at once (default: one per two CPUs this server really has — one on a small one)
+            // ffmpegs at once (default: one per CPU this server really has but one — one on a small one)
             parallel: Number(process.env.HIGHLIGHT_PARALLEL) || undefined,
+            // HIGHLIGHT_ENCODER=nvenc on a machine with an NVIDIA GPU (and HIGHLIGHT_FFMPEG pointing at an
+            // ffmpeg built with NVENC): used only after a test encode works there, else x264
+            encoder: process.env.HIGHLIGHT_ENCODER || undefined,
+            // HIGHLIGHT_SFX=0: no sound design under the opening and the end card; HIGHLIGHT_LEVEL=0: clips at their own level
+            sfx: process.env.HIGHLIGHT_SFX !== '0', level: process.env.HIGHLIGHT_LEVEL !== '0',
             log: (m) => console.log('[HIGHLIGHT-EDIT]', m)
         });
     }
@@ -4957,6 +4975,7 @@ const proVs = (a, b) => (a && b ? `${a} vs ${b}` : (a || b || ''));
 // what the video holds, and the figures behind it.
 async function proTitleForMatchCompile(body, matchId, clips) {
     const ctx = await proMatchContext(matchId);
+    const venue = (ctx.rec && ctx.rec.venue) || '';   // the opening shows it with the match
     const type = String(body.type || '').toLowerCase();
     const category = String(body.category || '').toLowerCase();
     const team = String(body.team || '').toUpperCase();
@@ -4970,18 +4989,35 @@ async function proTitleForMatchCompile(body, matchId, clips) {
         const pk = playerKey(body.playerKey);
         const fig = ctx.rec ? proPlayerFigures([ctx.rec], pk) : null;
         return { kicker, line, ...proSplitName(proPlayerName(clips, pk) || 'PLAYER'), pill: category ? PRO_PILL[category] || 'HIGHLIGHTS' : 'MATCH HIGHLIGHTS', meta,
-            stats: fig ? proStatCells(fig, category) : [], team: proTeam(fig && fig.team), kind: PRO_KIND[category] || 'BRAND' };
+            stats: fig ? proStatCells(fig, category) : [], team: proTeam(fig && fig.team), kind: PRO_KIND[category] || 'BRAND', venue };
     }
     const teamStats = side ? proTeamCells(ctx.rec, side) : [];
     const teamCard = side && ctx.rec ? proTeam(ctx.rec['team' + side]) : null;
     if (type === 'sixes' || type === 'fours' || type === 'wickets') {
         return { kicker, line, title: teamName || proVs(ctx.teamA, ctx.teamB) || 'MATCH HIGHLIGHTS', pill: type === 'wickets' ? 'ALL WICKETS' : PRO_PILL[type], meta,
-            stats: teamStats, team: teamCard, kind: PRO_KIND[type] };
+            stats: teamStats, team: teamCard, kind: PRO_KIND[type], venue };
     }
-    if (type === 'team') return { kicker, line, title: teamName || 'TEAM HIGHLIGHTS', pill: 'TEAM HIGHLIGHTS', meta, stats: teamStats, team: teamCard, kind: 'BRAND' };
+    if (type === 'team') return { kicker, line, title: teamName || 'TEAM HIGHLIGHTS', pill: 'TEAM HIGHLIGHTS', meta, stats: teamStats, team: teamCard, kind: 'BRAND', venue };
     const both = ['A', 'B'].map(k => { const c = proTeamCells(ctx.rec, k)[0]; return c && { ...c, label: ctx['short' + k] || `TEAM ${k}` }; }).filter(Boolean);
     return { kicker, line: [ctx.title, ctx.result].filter(Boolean).join('  ·  '), title: vs || 'MATCH HIGHLIGHTS', pill: 'FULL MATCH HIGHLIGHTS', meta, stats: both,
-        teams: ctx.rec ? [proTeam(ctx.rec.teamA), proTeam(ctx.rec.teamB)].filter(Boolean) : [], kind: 'BRAND' };
+        teams: ctx.rec ? [proTeam(ctx.rec.teamA), proTeam(ctx.rec.teamB)].filter(Boolean) : [], kind: 'BRAND', venue };
+}
+
+// Each clip's batting side as its tag shows it — the team's colour, short
+// name and badge — from the clip's own match record (a wicket's batter is of
+// the batting side too). → Map clip _id → { name, short, color, logo }.
+async function proClipTeams(clips) {
+    const out = new Map(), byMatch = new Map();
+    for (const c of clips) if (c && c.matchId && (c.battingTeam === 'A' || c.battingTeam === 'B')) byMatch.set(c.matchId, null);
+    for (const id of byMatch.keys()) {
+        const ctx = await proMatchContext(id);
+        byMatch.set(id, ctx && ctx.rec ? { A: proTeam(ctx.rec.teamA), B: proTeam(ctx.rec.teamB) } : null);
+    }
+    for (const c of clips) {
+        const m = c && byMatch.get(c.matchId), t = m && m[c.battingTeam];
+        if (t) out.set(String(c._id), t);
+    }
+    return out;
 }
 
 // Runs one compilation job end-to-end: order -> dedupe -> download each
@@ -5064,8 +5100,12 @@ async function runCompileJob(jobId, clipDocs, pro, opts = {}) {
         try {
             const title = typeof pro.makeTitle === 'function' ? await pro.makeTitle(kept.map(x => x.clip)) : (pro.title || {});
             const wheels = pro.wheel ? await proWheelData(kept.map(x => x.clip)) : null;
+            const sides = await proClipTeams(kept.map(x => x.clip));
             const made = await editor.renderHighlight({
-                clips: kept.map(x => ({ file: x.file, clipKey: proClipKey(x.clip), card: cardForClip(x.clip), wheel: (wheels && wheels.get(String(x.clip._id))) || null })),
+                clips: kept.map(x => {
+                    const team = sides.get(String(x.clip._id)) || null;
+                    return { file: x.file, clipKey: proClipKey(x.clip), card: cardForClip(x.clip, team), team, wheel: (wheels && wheels.get(String(x.clip._id))) || null };
+                }),
                 title, out: outFile, workDir, format: pro.format, wheel: !!pro.wheel, strict: !!opts.strict, signal: job.abort.signal,
                 dropSources: !!opts.strict, // (strict never falls back to a plain join, so a clip's file can go once it is edited)
                 onProgress: (f, msg) => setCompileJob(jobId, { progress: Math.min(99, collectShare + 1 + Math.round(f * (98 - collectShare))), message: msg }),
@@ -5357,7 +5397,10 @@ app.get('/api/highlights/studio/:matchId', async (req, res) => {
             success: true,
             match: { matchId, title: ctx.title || '', tournament: ctx.tournament || '', result: ctx.result || '', venue: (rec && rec.venue) || '',
                 teams: { A: team(rec && rec.teamA, 'A'), B: team(rec && rec.teamB, 'B') } },
-            clips: clips.map(c => ({ ...serializeClip(c), keys: { striker: c.strikerKey || null, bowler: c.bowlerKey || null, fielder: c.fielderKey || null, dismissed: c.dismissedPlayerKey || null } }))
+            clips: clips.map(c => ({ ...serializeClip(c), keys: { striker: c.strikerKey || null, bowler: c.bowlerKey || null, fielder: c.fielderKey || null, dismissed: c.dismissedPlayerKey || null } })),
+            // the edit's own lengths (s, at 30 fps): the opening and the end card, for the timeline's estimate
+            // and how this server edits: its encoder, how many clips at once
+            edit: (() => { const e = getHighlightEditor(), f = e.cardFrames({ fps: 30 }); return { intro: f.intro / 30, outro: f.outro / 30, encoder: e.encoder, parallel: e.parallel }; })()
         });
     } catch (err) {
         console.log('Highlight studio load error:', err);
@@ -5522,6 +5565,122 @@ setInterval(() => {
         });
     } catch (e) { /* best effort */ }
 }, 60 * 60 * 1000);
+
+// 🖼️ The studio's thumbnails, kept for the match (any device can reopen
+// them). One per match · subject · design · shape: saving again replaces it.
+//   POST   /api/highlights/thumbs/:matchId?subject=&mode=&variation=&format=&name=&headline=
+//          body: the JPEG itself (Content-Type: image/jpeg), 1920x1080 or 1080x1920
+//   GET    /api/highlights/thumbs/:matchId            the list (no pictures)
+//   GET    /api/highlights/thumbs/file/:token.jpg     one picture (its token is its key)
+//   DELETE /api/highlights/thumbs/:matchId/:token
+const STUDIO_THUMB_MAX_BYTES = 6 * 1048576;
+// a JPEG's size from its frame header (SOF0-3) → { w, h } or null
+function jpegSize(buf) {
+    if (!buf || buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+    for (let i = 2; i + 9 < buf.length;) {
+        if (buf[i] !== 0xff) { i++; continue; }
+        const m = buf[i + 1], len = buf.readUInt16BE(i + 2);
+        if (m >= 0xc0 && m <= 0xc3) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+        i += 2 + len;
+    }
+    return null;
+}
+const thumbBytes = (b) => { if (!b) return null; if (Buffer.isBuffer(b)) return b; const raw = Buffer.from(b.buffer || []); return typeof b.length === 'function' ? raw.subarray(0, b.length()) : raw; };
+const thumbOut = (d) => ({ token: d.token, key: d.key, subject: d.subject, mode: d.mode, variation: d.variation, format: d.format, name: d.name, headline: d.headline || '',
+    width: d.width, height: d.height, bytes: d.bytes, storage: d.storage, createdAt: d.createdAt, updatedAt: d.updatedAt, url: `/api/highlights/thumbs/file/${d.token}.jpg` });
+app.post('/api/highlights/thumbs/:matchId', express.raw({ type: 'image/jpeg', limit: STUDIO_THUMB_MAX_BYTES }), async (req, res) => {
+    if (!highlightThumbsCollection) return res.status(503).json({ success: false, error: 'Thumbnails cannot be kept on the server right now' });
+    try {
+        const who = await studioAccess(req, res);
+        if (!who) return;
+        const matchId = safeMatchId(req.params.matchId);
+        if (!matchId || !(await studioCanOpenMatch(who, matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
+        const q = req.query || {};
+        const mode = q.mode === 'photo' ? 'photo' : q.mode === 'graphic' ? 'graphic' : null;
+        const variation = [1, 2, 3].includes(Number(q.variation)) ? Number(q.variation) : null;
+        const format = q.format === '9:16' ? '9:16' : q.format === '16:9' ? '16:9' : null;
+        const subject = String(q.subject || 'full').slice(0, 120);
+        if (!mode || !variation || !format) return res.status(400).json({ success: false, error: 'mode, variation and format required' });
+        const buf = Buffer.isBuffer(req.body) ? req.body : null;
+        const size = jpegSize(buf);
+        const want = format === '9:16' ? { w: 1080, h: 1920 } : { w: 1920, h: 1080 };
+        if (!size) return res.status(400).json({ success: false, error: 'Not a JPEG picture' });
+        if (size.w !== want.w || size.h !== want.h) return res.status(400).json({ success: false, error: `A ${format} thumbnail is ${want.w} x ${want.h} (this one is ${size.w} x ${size.h})` });
+        const key = [matchId, subject, mode, variation, format].join('|');
+        const old = await highlightThumbsCollection.findOne({ key });
+        const token = (old && old.token) || require('crypto').randomBytes(16).toString('hex');
+        const name = String(q.name || `AllSportsLive_${mode}_Variation${variation}_${format === '9:16' ? '9x16' : '16x9'}.jpg`).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 140);
+        const now = new Date();
+        const doc = { key, token, matchId, subject, mode, variation, format, name, headline: String(q.headline || '').slice(0, 60), width: size.w, height: size.h,
+            bytes: buf.length, ownerUid: who.uid, updatedAt: now, createdAt: (old && old.createdAt) || now };
+        if (r2Client && R2_BUCKET_NAME) {
+            const r2Key = `highlight-thumbs/${matchId}/${token}.jpg`;
+            await r2Client.send(new PutObjectCommand({ Bucket: R2_BUCKET_NAME, Key: r2Key, Body: buf, ContentLength: buf.length, ContentType: 'image/jpeg', CacheControl: 'no-cache' }));
+            Object.assign(doc, { storage: 'r2', r2Key, data: null });
+        } else {
+            const { Binary } = require('mongodb');
+            Object.assign(doc, { storage: 'db', r2Key: null, data: new Binary(buf) });
+        }
+        await highlightThumbsCollection.replaceOne({ key }, doc, { upsert: true });
+        res.json({ success: true, thumb: thumbOut(doc) });
+    } catch (err) {
+        console.log('Highlight thumbnail save error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not keep this thumbnail on the server' });
+    }
+});
+app.get('/api/highlights/thumbs/file/:file', async (req, res) => {
+    if (!highlightThumbsCollection) return res.status(404).end();
+    try {
+        const token = String(req.params.file || '').replace(/\.jpg$/i, '');
+        if (!/^[0-9a-f]{32}$/.test(token)) return res.status(404).end();
+        const d = await highlightThumbsCollection.findOne({ token });
+        if (!d) return res.status(404).end();
+        let body = null;
+        if (d.storage === 'r2' && r2Client && R2_BUCKET_NAME && d.r2Key) {
+            const obj = await r2Client.send(new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: d.r2Key }));
+            body = Buffer.from(await obj.Body.transformToByteArray());
+        } else body = thumbBytes(d.data);
+        if (!body) return res.status(404).end();
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'private, no-cache');
+        if (req.query.download) res.setHeader('Content-Disposition', `attachment; filename="${String(d.name).replace(/[^A-Za-z0-9_.-]/g, '_')}"`);
+        res.end(body);
+    } catch (err) {
+        console.log('Highlight thumbnail read error:', err.message || err);
+        res.status(500).end();
+    }
+});
+app.get('/api/highlights/thumbs/:matchId', async (req, res) => {
+    if (!highlightThumbsCollection) return res.json({ success: true, thumbs: [], unavailable: true });
+    try {
+        const who = await studioAccess(req, res);
+        if (!who) return;
+        const matchId = safeMatchId(req.params.matchId);
+        if (!matchId || !(await studioCanOpenMatch(who, matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
+        const list = await highlightThumbsCollection.find({ matchId }, { projection: { data: 0 } }).sort({ updatedAt: -1 }).limit(200).toArray();
+        res.json({ success: true, thumbs: list.map(thumbOut) });
+    } catch (err) {
+        console.log('Highlight thumbnails list error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not list the thumbnails' });
+    }
+});
+app.delete('/api/highlights/thumbs/:matchId/:token', async (req, res) => {
+    if (!highlightThumbsCollection) return res.status(503).json({ success: false });
+    try {
+        const who = await studioAccess(req, res);
+        if (!who) return;
+        const matchId = safeMatchId(req.params.matchId);
+        if (!matchId || !(await studioCanOpenMatch(who, matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
+        const d = await highlightThumbsCollection.findOne({ matchId, token: String(req.params.token) });
+        if (!d) return res.status(404).json({ success: false, error: 'Not found' });
+        if (d.storage === 'r2' && d.r2Key && r2Client && R2_BUCKET_NAME) { try { await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: d.r2Key })); } catch (e) { /* gone already */ } }
+        await highlightThumbsCollection.deleteOne({ key: d.key });
+        res.json({ success: true });
+    } catch (err) {
+        console.log('Highlight thumbnail delete error:', err.message || err);
+        res.status(500).json({ success: false, error: 'Could not delete this thumbnail' });
+    }
+});
 
 app.post('/api/highlights/compile/:jobId/cancel', async (req, res) => {
     const who = await studioAccess(req, res);

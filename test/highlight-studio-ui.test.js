@@ -126,8 +126,8 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   const ORDER = ['blue', 'yellow', 'red', 'green'];
   ok('↓ moves it back down', JSON.stringify(await tlOrder()) === JSON.stringify(ORDER.map(n => ids[n])));
   const summary = await page.evaluate(() => ['s-n', 's-six', 's-four', 's-wkt', 's-src', 's-est'].map(id => document.getElementById(id).textContent));
-  ok('the project: 4 clips — 2 sixes, 1 four, 1 wicket; 13 s of footage, ≈ 15 s of video (title card + clips cut to the grid + end card)',
-    JSON.stringify(summary) === JSON.stringify(['4', '2', '1', '1', '13s', '≈ 15s']), summary);
+  ok('the project: 4 clips — 2 sixes, 1 four, 1 wicket; 13 s of footage, ≈ 19 s of video (the 4.8 s opening + clips cut to the grid + the 3.2 s end card)',
+    JSON.stringify(summary) === JSON.stringify(['4', '2', '1', '1', '13s', '≈ 19s']), summary);
   ok('the strip: title card, the four clips, end card', await page.$$eval('#strip > div', els => els.map(e => e.className).join(',')) === 'in,SIX,WICKET,SIX,FOUR,out');
 
   console.log('\n=== Render ===');
@@ -158,8 +158,8 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   fs.writeFileSync(out, Buffer.from(dl.bytes));
   const info = probeFile(out);
   ok('the video downloads: an MP4 with picture and sound', dl.status === 200 && dl.type === 'video/mp4' && info.w === 1280 && info.audio, [dl.status, dl.type, info]);
-  const seg = 80 / 30;
-  const seen = ORDER.map((n, i) => colourAt(out, seg * (i + 1) + seg / 2, 1280, 720));
+  const seg = 80 / 30, intro = 144 / 30;   // each 3.2 s clip and the opening, in frames at 30 fps
+  const seen = ORDER.map((n, i) => colourAt(out, intro + seg * i + seg / 2, 1280, 720));
   ok('… with the clips in the timeline\'s order (blue, yellow, red, green)', JSON.stringify(seen) === JSON.stringify(ORDER), seen);
   ok('the project says it is ready; the render is in Recent renders', (await page.textContent('#s-status')) === 'Ready to download' && /Download/.test(await page.textContent('#recent')));
   await shot(page, 'studio-ready');
@@ -236,7 +236,21 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   await page.click('#panes button[data-p="thumbs"]');
   await page.waitForFunction(() => document.querySelectorAll('#saved .it').length >= 3);
   ok('after a reload: the saved thumbnails are still here (this device)', (await page.$$eval('#saved .it', els => els.length)) === 3);
+  ok('… and each is kept on the server too', (await page.$$eval('#saved .it .badge-srv', els => els.length)) === 3);
   ok('… and the project too (the timeline, the subject)', JSON.stringify(await tlOrder()) === JSON.stringify(ORDER.map(n => ids[n])) && (await page.$eval('#subject', s => s.value)) === `player:${F.pk('Harsh Mendon')}`);
+  await ctx.close();
+
+  // another device (a fresh browser: nothing stored locally): the server's copies
+  ({ ctx, page } = await newPage());
+  await ctx.addInitScript(() => { window.__studioToken = 'work-token'; });
+  await page.goto(URL0);
+  await page.waitForSelector('#wrap:not(.hidden)');
+  await page.click('#panes button[data-p="thumbs"]');
+  await page.waitForFunction(() => document.querySelectorAll('#saved .it').length >= 3);
+  ok('on another device: the three thumbnails, from the server', (await page.$$eval('#saved .it .badge-srv', els => els.length)) === 3 && (await page.$$eval('#saved .it .badge-dev', els => els.length)) === 0);
+  const [d2] = await Promise.all([page.waitForEvent('download'), page.click('#saved .it [data-dl]')]);
+  const b2 = fs.readFileSync(await d2.path());
+  ok('… and they download whole from there (a full-size JPEG, its own name)', /^AllSportsLive_.*_(16x9|9x16)\.jpg$/.test(d2.suggestedFilename()) && !!jpegSize(b2) && [1920, 1080].includes(jpegSize(b2).w), [d2.suggestedFilename(), jpegSize(b2)]);
   await ctx.close();
 
   console.log('\n=== A phone ===');
