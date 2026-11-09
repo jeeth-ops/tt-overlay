@@ -1,0 +1,131 @@
+/* =====================================================================
+   CRICKET PANEL MOTION — the interaction layer shared by Cricket Panel and
+   Cricket Panel3 (each loads it after its own <style>; nothing else of the
+   two panels is shared).
+
+   The rule of this file: it changes how things MOVE, never how they LOOK at
+   rest. No resting colour, size, radius, spacing, font or position is set
+   here — only transition timing, the opening/closing of overlays and
+   dropdowns, the press and release of buttons, a 1 px rise of Panel 1's
+   scoring keys under the mouse (as Panel 3's keys already do) and the
+   confirmation ring (an element of its own, see cricket-motion.js). Every
+   animated property is transform-family (scale / translate), opacity, or a
+   colour / shadow the panel itself already transitions — never width,
+   height, top or left. There is no continuous animation and no new blur. A
+   scoring button's click is never delayed: the press state is pure CSS and
+   starts with the pointer, the score updates in the same event as before.
+
+   Browsers without @starting-style / allow-discrete (older than Chrome 117,
+   Safari 17.4, Firefox 129) simply open and close overlays at once, exactly
+   as before.
+   ===================================================================== */
+:root{
+  --cm-out: cubic-bezier(.22, 1, .36, 1);      /* fast start, soft settle */
+  --cm-press: cubic-bezier(.3, 0, .5, 1);
+  --cm-spring: cubic-bezier(.34, 1.45, .64, 1); /* a release with the faintest overshoot */
+  --cm-t1: .07s;  /* press down */
+  --cm-t2: .18s;  /* hover, release, state change */
+  --cm-t3: .24s;  /* overlays */
+}
+
+/* ---- buttons: a softer, uniform release; an instant press -------------
+   Each panel's own `button{ transition: … }` is replaced for plain buttons
+   (same specificity, later rule) with the same cheap properties plus the
+   colours they change on hover/active, so a state change fades instead of
+   snapping. Buttons with their own class transitions keep their property
+   lists; only the release timing is made uniform. */
+button{
+  transition-property: transform, background-color, border-color, color, box-shadow, opacity;
+  transition-duration: var(--cm-t2);
+  transition-timing-function: var(--cm-out);
+}
+button:not(:disabled):active{
+  transition-duration: var(--cm-t1);
+  transition-timing-function: var(--cm-press);
+}
+
+/* ---- the scoring keys: a press you can feel, a release that springs ----
+   Every ball of the match is a tap here, so these get the most care: the
+   press lands in 60 ms (it starts with the pointer, before the click),
+   the release springs back with the faintest overshoot, and the hover
+   glow and the panel's own "hit" ring fade instead of snapping. Panel 1's
+   keys rise a pixel under the mouse, as Panel 3's already do. Their
+   resting look — face, colours, size, radius — is the panel's own. */
+.lc-key, #card-ball-outcome .balls-grid button, #card-ball-outcome .ev-btn{
+  transition: transform .32s var(--cm-spring), translate .32s var(--cm-spring), background .16s var(--cm-out), box-shadow .22s var(--cm-out),
+    border-color .16s var(--cm-out), filter .16s var(--cm-out), opacity .16s var(--cm-out), color .16s var(--cm-out);
+}
+.lc-key:not(:disabled):active, #card-ball-outcome .balls-grid button:not(:disabled):active, #card-ball-outcome .ev-btn:not(:disabled):active{
+  transition-duration: var(--cm-t1); transition-timing-function: var(--cm-press);
+}
+.lc-key:not(:disabled):hover{ translate: 0 -1px; }
+/* the confirmation ring cricket-motion.js sends out of a key once it has
+   scored (in the key's own colour; two for a FOUR or a SIX). It never
+   takes a click: the next tap goes straight to the key under it. */
+.cm-ring{
+  position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 95; pointer-events: none; box-sizing: border-box; opacity: 0;
+  border: 2px solid var(--cm-c, #ff7a00); box-shadow: 0 0 18px -3px var(--cm-c, #ff7a00), inset 0 0 14px -6px var(--cm-c, #ff7a00);
+  contain: strict;
+}
+
+/* ---- inputs, selects: focus and hover fade in ------------------------- */
+input[type=text], input[type=number], input[type=url], input[type=search], input[type=date], input[type=time], select, textarea{
+  transition-property: border-color, box-shadow, background-color, color;
+  transition-duration: var(--cm-t2);
+  transition-timing-function: var(--cm-out);
+}
+
+/* ---- toggles: the knob glides and settles ----------------------------- */
+.switch .slider, .switch .slider:before{
+  transition-property: transform, background-color, border-color, box-shadow;
+  transition-duration: .22s;
+  transition-timing-function: var(--cm-out);
+}
+
+/* ---- status dots: connected / disconnected fades, never blinks --------- */
+.dot{ transition: background-color .3s var(--cm-out), box-shadow .3s var(--cm-out); }
+
+/* ---- modals: open and close -------------------------------------------
+   The overlay fades in from nothing and the box rises a few pixels and
+   scales up from 97 %; closing reverses it. While it closes it lets every
+   click through (pointer-events), so the next scoring tap is never held up
+   by a modal that is fading away. `scale` / `translate` are their own
+   properties, so they never fight the panel's own `transform` on the box. */
+.wicket-modal-overlay, .tc-overlay, .ww-overlay{
+  opacity: 0;
+  transition: opacity var(--cm-t3) var(--cm-out), display var(--cm-t3) allow-discrete, overlay var(--cm-t3) allow-discrete;
+}
+.wicket-modal-overlay.show, .tc-overlay.show, .ww-overlay.show{ opacity: 1; }
+.wicket-modal-overlay:not(.show), .tc-overlay:not(.show), .ww-overlay:not(.show){ pointer-events: none; }
+@starting-style{
+  .wicket-modal-overlay.show, .tc-overlay.show, .ww-overlay.show{ opacity: 0; }
+}
+.wicket-modal-overlay > .wicket-modal, .tc-overlay > .tc-modal{
+  transition-property: transform, opacity, scale, translate;
+  transition-duration: var(--cm-t3);
+  transition-timing-function: var(--cm-out);
+}
+.wicket-modal-overlay:not(.show) > .wicket-modal, .tc-overlay:not(.show) > .tc-modal{ scale: .98; translate: 0 6px; }
+@starting-style{
+  .wicket-modal-overlay.show > .wicket-modal, .tc-overlay.show > .tc-modal{ scale: .97; translate: 0 8px; }
+}
+/* (the wagon wheel and team-card overlays keep their own opening animation) */
+
+/* ---- the searchable player dropdown: drops open from its field ---------- */
+.pro-dd-panel{ animation: cmDrop .16s var(--cm-out) backwards; transform-origin: top center; }
+@keyframes cmDrop{ from{ opacity: 0; translate: 0 -4px; scale: .985; } }
+.pro-dd-item{ transition: background-color .12s var(--cm-out); }
+
+/* (a number that changed, the ball just bowled, a key pressed from the
+   keyboard: cricket-motion.js plays those with Web Animations) */
+
+/* ---- reduced motion: state changes at once, nothing moves -------------- */
+@media (prefers-reduced-motion: reduce){
+  button, button:not(:disabled):active, .switch .slider, .switch .slider:before, .dot,
+  input, select, textarea, .pro-dd-item,
+  .lc-key, #card-ball-outcome .balls-grid button, #card-ball-outcome .ev-btn{ transition-duration: 0s !important; }
+  .lc-key:not(:disabled):hover{ translate: none; }
+  .cm-ring{ display: none !important; }
+  .wicket-modal-overlay, .tc-overlay, .ww-overlay, .wicket-modal-overlay > .wicket-modal, .tc-overlay > .tc-modal{ transition: none !important; }
+  .pro-dd-panel{ animation: none !important; }
+}

@@ -68,6 +68,13 @@ node test/cricket/team-roster-persistence-test.js # 💾 REAL server.js + the RE
                                                   # profile → every later match; an untouched default is never written; offline picks wait in
                                                   # an outbox (also across a refresh); "saved" only after the server says so
 node test/cricket/cricket-controls-ui-test.js    # Penalty / Retired Hurt / Overthrow / Super Over / mid-over bowler in BOTH panels
+NODE_PATH=$(npm root -g) node test/cricket/panel-motion-test.js  # 🎚️ the interaction layer (cricket-motion.css/.js) in BOTH panels, each on its own, in
+                                                  # Chromium: at rest every control keeps its box, colours, radius, font and shadow (vs the panel with
+                                                  # the layer off) at 1366 / 1440 / 1600 / 1920 and in the light theme, no sideways scroll; every modal
+                                                  # fades in shown and fades out letting clicks through (a scoring tap while one closes is scored);
+                                                  # rapid taps: every one a ball; a ring out of the scored key (two for 4 / 6), the keyboard's key dips;
+                                                  # the ball pops into "this over"; a changed number settles in (from above after an Undo), a re-render
+                                                  # plays nothing; the dropdown drops open; reduced motion; 300-ball session: listeners stay put
 node test/cricket/superover-noball-test.js       # tie -> Super Over -> result, and No-Ball scoring (tests 1-14): both panels, scorecard, overlay
 node test/cricket/undo-history-test.js           # ↩️ Undo in milliseconds, both panels: every Undo lands on the exact state before that action (runs, 4, 6,
                                                   # wide, no ball, byes, leg byes, overthrow, bowled, run out + runs, run out off a no ball, over end);
