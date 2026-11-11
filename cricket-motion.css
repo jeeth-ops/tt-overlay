@@ -23,6 +23,7 @@
   --cm-out: cubic-bezier(.22, 1, .36, 1);      /* fast start, soft settle */
   --cm-press: cubic-bezier(.3, 0, .5, 1);
   --cm-spring: cubic-bezier(.34, 1.45, .64, 1); /* a release with the faintest overshoot */
+  --cm-glide: cubic-bezier(.32, .72, 0, 1);      /* things that travel: a slide, a fold, a roll */
   --cm-t1: .07s;  /* press down */
   --cm-t2: .18s;  /* hover, release, state change */
   --cm-t3: .24s;  /* overlays */
@@ -119,13 +120,61 @@ input[type=text], input[type=number], input[type=url], input[type=search], input
 /* (a number that changed, the ball just bowled, a key pressed from the
    keyboard: cricket-motion.js plays those with Web Animations) */
 
+/* ---- the score's odometer: a digit that changed rolls. The new digit is
+   the element's real text; the old one is drawn by CSS (attr()), so the
+   score's text is always exactly what the panel wrote. */
+.cm-odo{ display: inline-block; height: var(--cm-h); overflow: hidden; vertical-align: top; }
+.cm-odo-c{ display: block; }
+.cm-odo-n{ display: block; height: var(--cm-h); }
+.cm-odo.up .cm-odo-c::before, .cm-odo.dn .cm-odo-c::after{ content: attr(data-o); display: block; height: var(--cm-h); }
+
+/* ---- the over's balls gathering at the end of the over (copies, never the pips) */
+.cm-gather{ position: fixed; inset: 0; z-index: 95; pointer-events: none; }
+
+/* ---- a button waiting on the server: spinner, then ✓ / ✕ (beside it, never in it) */
+.cm-spin{ position: fixed; z-index: 96; width: 16px; height: 16px; border-radius: 50%; box-sizing: border-box; pointer-events: none;
+  border: 2px solid rgba(255,255,255,.22); border-top-color: var(--accent, #ff7a00); background: var(--panel, #121826); box-shadow: 0 2px 6px rgba(0,0,0,.45);
+  animation: cmSpin .7s linear infinite; }
+@keyframes cmSpin{ to{ transform: rotate(360deg); } }
+.cm-done{ position: fixed; z-index: 96; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; pointer-events: none;
+  font: 800 11px/1 system-ui, sans-serif; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+.cm-done.ok{ background: #22c55e; }
+.cm-done.bad{ background: #ef4444; }
+
+/* ---- cards fold to their heading: a chevron shows on hover, and stays on a folded card */
+.card.cm-foldable > h2{ cursor: pointer; position: relative; user-select: none; }
+.card.cm-foldable > h2::after{ content: ''; position: absolute; right: 2px; top: 50%; width: 7px; height: 7px; margin-top: -6px; box-sizing: border-box;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; rotate: 45deg; opacity: 0; pointer-events: none;
+  transition: opacity .2s var(--cm-out), rotate .3s var(--cm-spring); }
+.card.cm-foldable > h2:hover::after{ opacity: .55; }
+.card.cm-folded > h2::after{ opacity: .7; rotate: -45deg; }
+.card.cm-folded > :not(h2){ display: none !important; }
+.card.cm-folded > h2{ margin-bottom: 0 !important; }
+
+/* ---- cards far off screen are not drawn until they come near (cricket-motion.js picks only safe ones) */
+.card.cm-cv{ content-visibility: auto; }
+
+/* ---- quick-nav: a line under the section in view, sliding as you scroll */
+.cm-qn-ind{ position: absolute; left: 0; bottom: 2px; width: 100px; height: 2px; border-radius: 2px; pointer-events: none; opacity: 0;
+  background: var(--cm-qn-c, var(--accent, #ff7a00)); transform-origin: 0 50%;
+  transition: transform .42s var(--cm-glide), opacity .25s var(--cm-out), background-color .3s var(--cm-out); }
+#quick-nav button.cm-qn-on{ color: var(--text); }
+
+/* ---- status pills change colour softly */
+.lc-chip, .bcg-air, #outbox-indicator, .pm-chip{ transition: background-color .3s var(--cm-out), border-color .3s var(--cm-out), color .3s var(--cm-out), box-shadow .3s var(--cm-out); }
+
+/* ---- the key-sound switch in the header */
+#cm-sound-btn{ min-width: 34px; }
+
 /* ---- reduced motion: state changes at once, nothing moves -------------- */
 @media (prefers-reduced-motion: reduce){
   button, button:not(:disabled):active, .switch .slider, .switch .slider:before, .dot,
   input, select, textarea, .pro-dd-item,
   .lc-key, #card-ball-outcome .balls-grid button, #card-ball-outcome .ev-btn{ transition-duration: 0s !important; }
   .lc-key:not(:disabled):hover{ translate: none; }
-  .cm-ring{ display: none !important; }
+  .cm-ring, .cm-gather{ display: none !important; }
+  .cm-qn-ind, .card.cm-foldable > h2::after, .lc-chip, .bcg-air, #outbox-indicator, .pm-chip{ transition: none !important; }
+  .cm-spin{ animation-duration: 1.6s; }
   .wicket-modal-overlay, .tc-overlay, .ww-overlay, .wicket-modal-overlay > .wicket-modal, .tc-overlay > .tc-modal{ transition: none !important; }
   .pro-dd-panel{ animation: none !important; }
 }
