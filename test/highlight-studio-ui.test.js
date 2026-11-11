@@ -41,7 +41,7 @@ process.env.HIGHLIGHT_PARALLEL = '2';
 const { chromium } = require('playwright');
 const { bootServer } = require('./server-boot.js');
 const F = require('./merge-fixtures.js');
-const { studioFixtures, colourAt, probeFile, MATCH } = require('./highlight-studio-fixtures.js');
+const { studioFixtures, colourAt, probeFile, MATCH, MATCH2 } = require('./highlight-studio-fixtures.js');
 const SHOTS = process.env.SHOTS || '';
 
 let pass = 0, fail = 0;
@@ -61,7 +61,7 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
 };
 
 (async () => {
-  const fx = await studioFixtures(TMP, { extra: 320 });
+  const fx = await studioFixtures(TMP, { extra: 320, tournament: true });
   const { ids } = fx;
   const { port } = await bootServer({ idTokens: fx.tokens, users: F.EMAIL_OF, seed: fx.seed });
   const URL0 = `http://127.0.0.1:${port}/highlight-studio?matchId=${MATCH}`;
@@ -242,6 +242,8 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   ok('with player photo: six stills from a clip of his, the sharpest first and picked', await page.$$eval('#frames .frame', els => els.findIndex(e => e.classList.contains('on'))) === 0);
   await page.waitForFunction(() => document.querySelectorAll('#vars .var').length === 3);
   ok('three designs, named', JSON.stringify(await page.$$eval('#vars .var b', els => els.map(e => e.textContent))) === JSON.stringify(['Variation 1 – Cinematic Player Poster', 'Variation 2 – Dynamic Action', 'Variation 3 – Premium Broadcast']));
+  // the shape in view is drawn at once, the other one a frame later
+  await page.waitForFunction(() => document.getElementById('pv-l').width === 960 && document.getElementById('pv-p').height === 960, null, { timeout: 5000 }).catch(() => {});
   const pv = await page.evaluate(() => [document.getElementById('pv-l'), document.getElementById('pv-p')].map(c => [c.width, c.height]));
   ok('both shapes previewed (16:9 and 9:16)', JSON.stringify(pv) === JSON.stringify([[960, 540], [540, 960]]), pv);
   // the shape switch: one at a time, crossfaded, never stretched
@@ -326,6 +328,55 @@ const jpegSize = (buf) => { // the frame size in a JPEG's SOF marker
   const [d2] = await Promise.all([page.waitForEvent('download'), page.click('#saved .it [data-dl]')]);
   const b2 = fs.readFileSync(await d2.path());
   ok('… and they download whole from there (a full-size JPEG, its own name)', /^AllSportsLive_.*_(16x9|9x16)\.jpg$/.test(d2.suggestedFilename()) && !!jpegSize(b2) && [1920, 1080].includes(jpegSize(b2).w), [d2.suggestedFilename(), jpegSize(b2)]);
+  await ctx.close();
+
+  console.log('\n=== The whole tournament: a player over every match of it ===');
+  ({ ctx, page } = await newPage());
+  await ctx.addInitScript(() => { window.__studioToken = 'work-token'; });
+  await page.goto(URL0);
+  await page.waitForSelector('#wrap:not(.hidden)');
+  ok('a match of a tournament offers the whole tournament (this match chosen)', await page.isVisible('#scope-seg') && /Whole tournament · 2 matches/.test(await page.textContent('#scope-t')) && await page.$eval('#scope-seg [data-v="match"]', b => b.classList.contains('on')));
+  await page.click('#scope-t');
+  await page.waitForURL(/scope=tournament/);
+  await page.waitForSelector('#wrap:not(.hidden)');
+  await page.waitForFunction(() => document.querySelectorAll('#lib .clip').length > 0);
+  const ttotal = total + 3;
+  ok('the whole tournament: every match\'s clips in the library (this match\'s and the semi-final\'s), the tournament at the top', (await page.textContent('#lib-count')).includes(`${ttotal} of ${ttotal}`) && /MCA President Cup 2026 · whole tournament/.test(await page.textContent('#m-title')) && await page.$eval('#scope-t', b => b.classList.contains('on')), [await page.textContent('#lib-count'), await page.textContent('#m-title')]);
+  await page.selectOption('#f-match', MATCH2);
+  ok('… a match filter: the semi-final\'s three clips, each naming its match', (await page.textContent('#lib-count')).startsWith('3 of') && await page.$$eval('#lib .clip .l3', els => els.length === 3 && els.every(e => /GSC vs SPG · Semi-final/.test(e.textContent))), await page.textContent('#lib-count'));
+  await page.click('#lib .clip:has(.ob:text-is("4.1")) .meta');                 // his SIX in the semi-final (green)
+  await page.selectOption('#f-match', '');
+  await search('5.1');
+  await page.waitForFunction(() => [...document.querySelectorAll('#lib .clip .ob')].some(x => x.textContent === '5.1'));
+  await page.click('#lib .clip:has(.ob:text-is("5.1")) .meta');                 // his SIX in the final (blue)
+  await search('');
+  ok('two SIXES of his, from two matches: the video is about him, in the order picked', (await page.$eval('#subject', x => x.value)) === `player:${F.pk('Harsh Mendon')}` && JSON.stringify(await tlOrder()) === JSON.stringify([ids['t2-six'], ids.blue]), await tlOrder());
+  await nav(page, 'intro');
+  await page.waitForFunction(() => /94/.test(document.querySelector('#io-card').textContent), null, { timeout: 30000 });
+  ok('his title card: the tournament, his figures over both matches (94 off 54 balls), "2 MATCHES"', /MCA President Cup 2026/.test(await page.textContent('#io-card .k')) && /94/.test(await page.textContent('#io-card .sts')) && /54 BALLS/.test(await page.textContent('#io-card .sts')) && /2 MATCHES/.test(await page.textContent('#io-card .ln')),
+    [await page.textContent('#io-card .k'), await page.textContent('#io-card .sts'), await page.textContent('#io-card .ln')]);
+  await nav(page, 'thumbs');
+  await page.waitForFunction(() => [...document.querySelectorAll('#hl-pick option')].some(o => o.textContent === '94 OFF 54'), null, { timeout: 30000 }).catch(() => {});
+  ok('… the thumbnails say the same ("94 OFF 54" among the headlines)', (await page.$$eval('#hl-pick option', o => o.map(x => x.textContent))).includes('94 OFF 54'), await page.$$eval('#hl-pick option', o => o.map(x => x.textContent)));
+  await nav(page, 'export');
+  await page.click('#render');
+  await page.waitForSelector('#dash:not(.hidden)');
+  for(const end = Date.now() + 180000; Date.now() < end;){ if(await page.$('#d-result .okbox')) break; await wait(200); }
+  const thref = await page.getAttribute('#d-result a.btn.primary', 'href');
+  const tdl = await page.evaluate(async (h) => { const r = await fetch(h); const b = await r.arrayBuffer(); return { status: r.status, bytes: Array.from(new Uint8Array(b)) }; }, thref);
+  const tout = path.join(TMP, 'studio-tournament.mp4');
+  fs.writeFileSync(tout, Buffer.from(tdl.bytes));
+  const tseen = [0, 1].map(i => colourAt(tout, 144 / 30 + (80 / 30) * i + 40 / 30, 1280, 720));
+  ok('the tournament video: his SIX from the semi-final, then his SIX from the final', tdl.status === 200 && JSON.stringify(tseen) === JSON.stringify(['green', 'blue']), tseen);
+  ok('… named for the tournament', /AllSportsLive_HarshMendon_Tournament_Highlights/.test(thref), thref);
+  const projs = await page.evaluate((m) => [localStorage.getItem(`asl-studio:${m}:tournament`), localStorage.getItem(`asl-studio:${m}`)].map(x => JSON.parse(x || 'null')), MATCH);
+  ok('the tournament is a project of its own (the match\'s own project is not touched)', !!projs[0] && projs[0].sel.length === 2 && (!projs[1] || projs[1].sel.length === 0), projs.map(p => p && p.sel));
+  await nav(page, 'clips');
+  await page.click('#scope-seg [data-v="match"]');
+  await page.waitForURL((u) => !/scope=tournament/.test(String(u)));
+  await page.waitForSelector('#wrap:not(.hidden)');
+  await page.waitForFunction(() => document.querySelectorAll('#lib .clip').length > 0);
+  ok('… and back to this match: its own clips again, its own (empty) timeline', (await page.textContent('#lib-count')).includes(`${total} of ${total}`) && !(await page.isVisible('#f-match')) && (await tlOrder()).length === 0, [await page.textContent('#lib-count'), await tlOrder()]);
   await ctx.close();
 
   console.log('\n=== Big projects, panels, memory (1366 x 768) ===');

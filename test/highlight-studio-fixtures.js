@@ -17,6 +17,8 @@ const ff = (args) => spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error'
 
 const COLOURS = { red: 'ff2020', green: '20d040', blue: '2050ff', yellow: 'ffe020' };
 const MATCH = 'm-studio-1', PRIVATE_MATCH = 'm-private-1';
+// (opts.tournament) a second match of the same tournament, and a single match
+const MATCH2 = 'm-studio-2', SINGLE_MATCH = 'm-single-1';
 
 async function studioFixtures(TMP, opts) {
   opts = opts || {};
@@ -76,6 +78,14 @@ async function studioFixtures(TMP, opts) {
   }
   const elsewhere = Object.assign(clipDoc('red-elsewhere', 4, 4, 'SIX'), { matchId: 'another-match' });
   clips.push(elsewhere);
+  if (opts.tournament) {
+    // the semi-final of the same tournament: Harsh Mendon's SIX (green) and FOUR (yellow), and another batter's SIX (blue)
+    clips.push(clipDoc('t2-six', 4, 1, 'SIX', { matchId: MATCH2, clipId: 'clip-t2-six', r2Url: `${base}green.mp4`, r2PosterUrl: `${base}green.jpg` }));
+    clips.push(clipDoc('t2-four', 6, 3, 'FOUR', { matchId: MATCH2, clipId: 'clip-t2-four', r2Url: `${base}yellow.mp4`, r2PosterUrl: `${base}yellow.jpg` }));
+    clips.push(clipDoc('t2-sai', 8, 2, 'SIX', { matchId: MATCH2, clipId: 'clip-t2-sai', battingTeam: 'B', strikerName: 'Sai Kumar', strikerKey: F.pk('Sai Kumar'), bowlerName: 'Harsh Mendon', bowlerKey: F.pk('Harsh Mendon'), r2Url: `${base}blue.mp4`, r2PosterUrl: `${base}blue.jpg` }));
+    // a match that is not part of any tournament
+    clips.push(clipDoc('single-six', 2, 2, 'SIX', { matchId: SINGLE_MATCH, clipId: 'clip-single-six' }));
+  }
 
   async function seed(m) {
     const c = F.collections(m);
@@ -87,6 +97,14 @@ async function studioFixtures(TMP, opts) {
       bowlingCard: { A: [], B: [{ name: 'Yogesh Pawar', overs: '4', balls: 0, runs: 31, wickets: 1 }] },
       scoreA: { runs: 180, wickets: 4, overs: '20' }, scoreB: { runs: 150, wickets: 9, overs: '20' }, matchResultText: 'GSC won by 30 runs' });
     await c.records.insertOne({ matchId: PRIVATE_MATCH, roomId: PRIVATE_MATCH, ownerUid: F.USERS.owner.uid, leagueKey: 'mine', matchTitle: 'Private', teamA: { name: 'P1' }, teamB: { name: 'P2' } });
+    if (opts.tournament) {
+      await c.records.insertOne({ matchId: MATCH2, roomId: MATCH2, ownerUid: F.USERS.work.uid, leagueKey: 'mca', matchTitle: 'Semi-final', venue: 'Oval Maidan', savedAt: new Date('2026-11-05T10:00:00Z'),
+        teamA: { name: 'Gymkhana Sports Club', short: 'GSC', color: '#1e40af', logoUrl: LOGO }, teamB: { name: 'Shivaji Park Gymkhana', short: 'SPG', color: '#15803d', logoUrl: '' },
+        battingCard: { A: [{ name: 'Harsh Mendon', runs: 30, balls: 20, fours: 1, sixes: 3 }], B: [{ name: 'Sai Kumar', runs: 22, balls: 18, fours: 2, sixes: 1 }] },
+        bowlingCard: { A: [{ name: 'Harsh Mendon', overs: '2', balls: 0, runs: 14, wickets: 1 }], B: [] },
+        scoreA: { runs: 160, wickets: 6, overs: '20' }, scoreB: { runs: 140, wickets: 8, overs: '20' }, matchResultText: 'GSC won by 20 runs' });
+      await c.records.insertOne({ matchId: SINGLE_MATCH, roomId: SINGLE_MATCH, ownerUid: F.USERS.work.uid, leagueKey: '__single_matches__', matchTitle: 'Friendly', teamA: { name: 'X XI' }, teamB: { name: 'Y XI' } });
+    }
     await c.panelStates.insertOne({ matchId: MATCH, state: { teamA: { name: 'Gymkhana Sports Club', logoUrl: LOGO, logoStyle: 'circle', logoBg: '#ffd700' }, teamB: { name: 'DY Patil', logoUrl: '' } } });
     for (const d of clips) await c.clips.insertOne(d);
   }
@@ -114,4 +132,4 @@ function probeFile(file) {
   return { duration: d ? (+d[1]) * 3600 + (+d[2]) * 60 + (+d[3]) : 0, w: v ? +v[1] : 0, h: v ? +v[2] : 0, audio: /Audio:/.test(e) };
 }
 
-module.exports = { studioFixtures, colourAt, probeFile, MATCH, PRIVATE_MATCH, COLOURS };
+module.exports = { studioFixtures, colourAt, probeFile, MATCH, PRIVATE_MATCH, MATCH2, SINGLE_MATCH, COLOURS };

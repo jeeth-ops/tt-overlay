@@ -5256,7 +5256,7 @@ async function startStudioCompile(req, res) {
     if (r.error) return res.status(400).json({ success: false, error: r.error, missing: r.missing || [] });
     if (!(await studioCanOpenMatch(who, r.matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
     const subject = studioSubject(body), o = proOptionsFrom(body);
-    const sig = require('crypto').createHash('sha1').update(JSON.stringify({ m: r.matchId, ids: body.clipIds, subject, o })).digest('hex');
+    const sig = require('crypto').createHash('sha1').update(JSON.stringify({ m: r.matchId, t: !!r.tour, ids: body.clipIds, subject, o })).digest('hex');
     for (const [id, j] of compileJobs.entries()) {
         if (j.studioSig === sig && !['ready', 'error', 'cancelled'].includes(j.status)) return res.json({ success: true, jobId: id, existing: true });
     }
@@ -5267,7 +5267,7 @@ async function startStudioCompile(req, res) {
     const jobId = newCompileJobId();
     compileJobs.set(jobId, { status: 'queued', stage: 'prepare', progress: 0, message: 'Preparing clips…', matchId: r.matchId, createdAt: Date.now(), startedAt: Date.now(),
         included: 0, skipped: 0, total: r.clips.length, studio: true, keep: true, studioSig: sig, stages: STUDIO_STAGES, ownerUid: who.uid });
-    runCompileJob(jobId, r.clips, { makeTitle: (clips) => proTitleForMatchCompile(subject, r.matchId, clips), ...o },
+    runCompileJob(jobId, r.clips, { makeTitle: (clips) => studioTitle(subject, r, clips), ...o },
         { keepOrder: true, strict: true, maxPro: HIGHLIGHT_STUDIO_MAX_CLIPS }).catch(err => {
         console.log(`Studio job ${jobId} crashed:`, err.message || err);
         setCompileJob(jobId, { status: 'error', error: 'Something went wrong making this video — try again.' });
@@ -5376,6 +5376,35 @@ async function studioCanOpenMatch(decoded, matchId) {
     return !isPrivateCreatorEmail(await getVerifiedEmailForUid(rec.ownerUid));
 }
 
+// The tournament a studio match is part of — its creator's league (never the
+// "single matches" list) — and every saved match of it in the order they
+// were saved, each with the key its clips carry (roomId, else matchId).
+// → { name, matches, keys } | null
+async function studioTournamentOf(matchKey) {
+    if (!matchRecordsCollection || !leaguesCollection || !matchKey) return null;
+    const rec = await matchRecordsCollection.findOne({ $or: [{ roomId: matchKey }, { matchId: matchKey }] }, { projection: { ownerUid: 1, leagueKey: 1 } });
+    if (!rec || !rec.ownerUid || !rec.leagueKey || rec.leagueKey === SINGLE_MATCHES_LEAGUE_KEY || rec.leagueKey === leagueKeyFor(SINGLE_MATCHES_LEAGUE_KEY)) return null;
+    const lg = await leaguesCollection.findOne({ ownerUid: rec.ownerUid, leagueKey: rec.leagueKey }, { projection: { displayName: 1 } });
+    if (!lg) return null;
+    // the league's matches as getLeagueMatches() lists them, with only what the
+    // studio reads (the scorecards, never the innings archive)
+    const all = await matchRecordsCollection.find({ ownerUid: rec.ownerUid, leagueKey: rec.leagueKey },
+        { projection: { roomId: 1, matchId: 1, teamA: 1, teamB: 1, matchTitle: 1, matchResultText: 1, venue: 1, battingCard: 1, bowlingCard: 1, scoreA: 1, scoreB: 1, savedAt: 1 } })
+        .sort({ savedAt: 1 }).toArray();
+    const seen = new Set(), matches = [];
+    for (const m of all) {
+        const key = m.roomId || m.matchId;
+        if (!key || seen.has(key)) continue;
+        seen.add(key); matches.push(m);
+    }
+    return { name: lg.displayName || '', matches, keys: matches.map(m => m.roomId || m.matchId) };
+}
+// A tournament's match as the studio lists it: "GSC vs DYP · Final".
+function studioMatchLabel(m) {
+    const sh = (t) => (t && (t.short || t.name)) || '';
+    return [proVs(sh(m.teamA), sh(m.teamB)), m.matchTitle].filter(Boolean).join(' · ') || 'Match';
+}
+
 app.get('/api/highlights/studio/:matchId', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
     const matchId = safeMatchId(req.params.matchId);
@@ -5384,8 +5413,18 @@ app.get('/api/highlights/studio/:matchId', async (req, res) => {
         const who = await studioAccess(req, res);
         if (!who) return;
         if (!(await studioCanOpenMatch(who, matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
-        const clips = await clipsCollection.find({ matchId, ...HIGHLIGHT_VISIBLE }).sort({ innings: 1, over: 1, ballInOver: 1, _id: 1 }).limit(2000).toArray();
-        await backfillClipInnings(matchId, clips);
+        // ?scope=tournament: every match of this match's tournament — each
+        // player's clips from all of them, in the order the matches were played
+        const tour = await studioTournamentOf(matchId);
+        const wholeTournament = req.query.scope === 'tournament';
+        if (wholeTournament && !tour) return res.status(400).json({ success: false, error: 'This match is not part of a tournament' });
+        const keys = wholeTournament ? tour.keys : [matchId];
+        const clips = await clipsCollection.find({ matchId: { $in: keys }, ...HIGHLIGHT_VISIBLE }).sort({ innings: 1, over: 1, ballInOver: 1, _id: 1 }).limit(wholeTournament ? 6000 : 2000).toArray();
+        for (const key of keys) { const mine = clips.filter(c => c.matchId === key); if (mine.length) await backfillClipInnings(key, mine); }
+        if (wholeTournament) {
+            const order = new Map(keys.map((k, i) => [k, i]));
+            clips.sort((a, b) => (order.get(a.matchId) - order.get(b.matchId)) || ((a.innings || 1) - (b.innings || 1)) || ((a.over || 0) - (b.over || 0)) || ((a.ballInOver || 0) - (b.ballInOver || 0)) || String(a._id).localeCompare(String(b._id)));
+        }
         const ctx = await proMatchContext(matchId);
         const rec = ctx.rec || null;
         // how each team shows its logo (Teams in the panel: Sticker / Circle and
@@ -5406,7 +5445,27 @@ app.get('/api/highlights/studio/:matchId', async (req, res) => {
             success: true,
             match: { matchId, title: ctx.title || '', tournament: ctx.tournament || '', result: ctx.result || '', venue: (rec && rec.venue) || '',
                 teams: { A: team(rec && rec.teamA, 'A'), B: team(rec && rec.teamB, 'B') } },
-            clips: clips.map(c => ({ ...serializeClip(c), keys: { striker: c.strikerKey || null, bowler: c.bowlerKey || null, fielder: c.fielderKey || null, dismissed: c.dismissedPlayerKey || null } })),
+            // which clips: this match's, or (scope=tournament) the whole tournament's
+            scope: wholeTournament ? 'tournament' : 'match',
+            // the tournament this match is part of (null for a single match): its
+            // matches, in order, and every team in it with its colour and badge
+            tournament: tour ? (() => {
+                const teams = new Map();
+                tour.matches.forEach(m => [m.teamA, m.teamB].forEach(t => { const T = proTeam(t); if (T && !teams.has(T.name)) teams.set(T.name, T); }));
+                return { name: tour.name, matches: tour.matches.map((m, i) => ({ key: tour.keys[i], label: studioMatchLabel(m), title: m.matchTitle || '', result: m.matchResultText || '', venue: m.venue || '',
+                    teamA: (proTeam(m.teamA) || {}).name || '', teamB: (proTeam(m.teamB) || {}).name || '' })), teams: [...teams.values()] };
+            })() : null,
+            clips: clips.map(c => {
+                const out = { ...serializeClip(c), keys: { striker: c.strikerKey || null, bowler: c.bowlerKey || null, fielder: c.fielderKey || null, dismissed: c.dismissedPlayerKey || null } };
+                if (wholeTournament) {
+                    // the clip's own match and its batting side's team (A and B are that match's)
+                    const m = tour.matches[tour.keys.indexOf(c.matchId)];
+                    const T = m && (c.battingTeam === 'A' || c.battingTeam === 'B') ? proTeam(m['team' + c.battingTeam]) : null;
+                    out.matchLabel = m ? studioMatchLabel(m) : '';
+                    out.team = T ? { name: T.name, short: T.short, color: T.color } : null;
+                }
+                return out;
+            }),
             // the edit's own lengths (s, at 30 fps): the opening and the end card, for the timeline's estimate
             // and how this server edits: its encoder, how many clips at once
             edit: (() => { const e = getHighlightEditor(), f = e.cardFrames({ fps: 30 }); return { intro: f.intro / 30, outro: f.outro / 30, encoder: e.encoder, parallel: e.parallel }; })()
@@ -5429,11 +5488,18 @@ async function studioClips(body) {
     const { ObjectId } = require('mongodb');
     const oids = [];
     for (const id of ids) { if (!ObjectId.isValid(id)) return { error: `Unknown clip ${id}` }; oids.push(new ObjectId(id)); }
-    const found = await clipsCollection.find({ _id: { $in: oids }, matchId, ...HIGHLIGHT_VISIBLE }).toArray();
+    // scope 'tournament': a clip of any match of this match's tournament
+    let keys = [matchId], tour = null;
+    if (String(body.scope || '') === 'tournament') {
+        tour = await studioTournamentOf(matchId);
+        if (!tour) return { error: 'This match is not part of a tournament' };
+        keys = tour.keys;
+    }
+    const found = await clipsCollection.find({ _id: { $in: oids }, matchId: { $in: keys }, ...HIGHLIGHT_VISIBLE }).toArray();
     const byId = new Map(found.map(c => [String(c._id), c]));
     const missing = ids.filter(id => !byId.has(id));
-    if (missing.length) return { error: `${missing.length} of the selected clips are not this match's highlights any more`, missing };
-    return { matchId, clips: ids.map(id => byId.get(id)) };
+    if (missing.length) return { error: `${missing.length} of the selected clips are not this ${tour ? 'tournament' : 'match'}'s highlights any more`, missing };
+    return { matchId, clips: ids.map(id => byId.get(id)), tour };
 }
 // What the title card / thumbnails are about: a player (and which of their
 // clips), a team, or the whole match — the same subject shapes as the
@@ -5441,11 +5507,12 @@ async function studioClips(body) {
 function studioSubject(body) {
     const s = (body && body.subject) || {};
     const type = ['player', 'team', 'sixes', 'fours', 'wickets', 'full'].includes(String(s.type)) ? String(s.type) : 'full';
-    return { type, playerKey: s.playerKey || '', category: PLAYER_HIGHLIGHT_CATEGORIES.includes(String(s.category || '')) ? String(s.category) : '', team: String(s.team || '').toUpperCase() };
+    return { type, playerKey: s.playerKey || '', category: PLAYER_HIGHLIGHT_CATEGORIES.includes(String(s.category || '')) ? String(s.category) : '', team: String(s.team || '').toUpperCase(),
+        teamName: String(s.teamName || '').trim().slice(0, 80) };
 }
 // A headline for the thumbnails from what the clips really are (never a
 // claim the clips do not show) — the operator can change it.
-function studioHeadline(subject, clips) {
+function studioHeadline(subject, clips, tournament) {
     const n = { SIX: 0, FOUR: 0, WICKET: 0 };
     clips.forEach(c => { const e = String(c.eventType || '').toUpperCase(); if (e in n) n[e]++; });
     const only = (k) => Object.keys(n).every(x => x === k ? n[x] > 0 : n[x] === 0);
@@ -5456,7 +5523,45 @@ function studioHeadline(subject, clips) {
     if (n.SIX && n.FOUR && !n.WICKET) return 'SIXES & FOURS';
     if (subject.type === 'player') return subject.category === 'wickets' ? 'BOWLING HIGHLIGHTS' : 'BATTING HIGHLIGHTS';
     if (subject.type === 'team') return 'TEAM HIGHLIGHTS';
-    return 'MATCH HIGHLIGHTS';
+    return tournament ? 'TOURNAMENT HIGHLIGHTS' : 'MATCH HIGHLIGHTS';
+}
+// The title card of a studio video over a whole tournament: the player's
+// (or the team's, or the tournament's) figures over every match of it, from
+// the saved scorecards — never one match's.
+function proTitleForStudioTournament(subject, tour, clips) {
+    const kicker = tour.name || 'TOURNAMENT HIGHLIGHTS', meta = proCountsLine(clips);
+    const nm = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    if (subject.type === 'player') {
+        const pk = playerKey(subject.playerKey);
+        const fig = proPlayerFigures(tour.matches, pk);
+        const opp = [...new Set(tour.matches.map(m => opponentLabelForPlayer(m, pk)).filter(Boolean))];
+        const line = [nm(fig.matches, 'MATCH', 'MATCHES'), opp.length && opp.length <= 4 ? 'vs ' + opp.join(', ') : ''].filter(Boolean).join('  ·  ');
+        return { kicker, line, ...proSplitName(proPlayerName(clips, pk) || 'PLAYER'), pill: subject.category ? PRO_PILL[subject.category] || 'TOURNAMENT HIGHLIGHTS' : 'TOURNAMENT HIGHLIGHTS', meta,
+            stats: proStatCells(fig, subject.category), team: proTeam(fig.team), kind: PRO_KIND[subject.category] || 'BRAND', venue: '', matches: fig.matches };
+    }
+    if (subject.type === 'team' && subject.teamName) {
+        const tn = subject.teamName, isIt = (t) => !!t && (t.name === tn || t.short === tn);
+        let runs = 0, sixes = 0, fours = 0, team = null, n = 0;
+        tour.matches.forEach(m => {
+            const side = isIt(m.teamA) ? 'A' : isIt(m.teamB) ? 'B' : null;
+            if (!side) return;
+            n++; team = m['team' + side];
+            runs += (m['score' + side] && m['score' + side].runs) || 0;
+            ((m.battingCard && m.battingCard[side]) || []).forEach(b => { sixes += (b && b.sixes) || 0; fours += (b && b.fours) || 0; });
+        });
+        return { kicker, line: nm(n, 'MATCH', 'MATCHES'), title: tn, pill: 'TEAM HIGHLIGHTS', meta,
+            stats: n ? [{ value: String(n), label: n === 1 ? 'MATCH' : 'MATCHES' }, { value: String(runs), label: 'RUNS' }, { value: String(sixes), label: 'SIXES' }, { value: String(fours), label: 'FOURS' }] : [],
+            team: proTeam(team), kind: 'BRAND', venue: '', matches: n };
+    }
+    let sixes = 0, fours = 0;
+    tour.matches.forEach(m => ['A', 'B'].forEach(k => ((m.battingCard && m.battingCard[k]) || []).forEach(b => { sixes += (b && b.sixes) || 0; fours += (b && b.fours) || 0; })));
+    const n = tour.matches.length;
+    return { kicker: 'TOURNAMENT HIGHLIGHTS', line: nm(n, 'MATCH', 'MATCHES'), title: tour.name || 'TOURNAMENT', pill: 'TOURNAMENT HIGHLIGHTS', meta,
+        stats: [{ value: String(n), label: n === 1 ? 'MATCH' : 'MATCHES' }, { value: String(sixes), label: 'SIXES' }, { value: String(fours), label: 'FOURS' }], teams: [], kind: 'BRAND', venue: '', matches: n };
+}
+// The title card of a studio video: one match's, or the whole tournament's.
+function studioTitle(subject, r, clips) {
+    return r.tour ? proTitleForStudioTournament(subject, r.tour, clips) : proTitleForMatchCompile(subject, r.matchId, clips);
 }
 app.post('/api/highlights/title', async (req, res) => {
     if (!clipsCollection) return res.status(503).json({ success: false, error: 'Database not configured' });
@@ -5468,10 +5573,11 @@ app.post('/api/highlights/title', async (req, res) => {
         if (r.error) return res.status(400).json({ success: false, error: r.error, missing: r.missing || [] });
         if (!(await studioCanOpenMatch(who, r.matchId))) return res.status(404).json({ success: false, error: 'Match not found' });
         const subject = studioSubject(body);
-        const title = await proTitleForMatchCompile(subject, r.matchId, r.clips);
+        const title = await studioTitle(subject, r, r.clips);
         const n = { SIX: 0, FOUR: 0, WICKET: 0, CLIP: 0 };
         r.clips.forEach(c => { const e = String(c.eventType || '').toUpperCase(); n[e in n ? e : 'CLIP']++; });
-        res.json({ success: true, title, counts: { sixes: n.SIX, fours: n.FOUR, wickets: n.WICKET, other: n.CLIP, total: r.clips.length }, headline: studioHeadline(subject, r.clips) });
+        res.json({ success: true, title, counts: { sixes: n.SIX, fours: n.FOUR, wickets: n.WICKET, other: n.CLIP, total: r.clips.length }, headline: studioHeadline(subject, r.clips, !!r.tour),
+            scope: r.tour ? 'tournament' : 'match' });
     } catch (err) {
         console.log('Highlight title error:', err);
         res.status(500).json({ success: false, error: 'Could not read the match for the title' });

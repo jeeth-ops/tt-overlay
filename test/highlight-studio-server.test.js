@@ -30,7 +30,7 @@ process.env.TMPDIR = TMP;
 process.env.HIGHLIGHT_PARALLEL = '2';
 const { bootServer, request } = require('./server-boot.js');
 const F = require('./merge-fixtures.js');
-const { studioFixtures, colourAt, probeFile, MATCH, PRIVATE_MATCH } = require('./highlight-studio-fixtures.js');
+const { studioFixtures, colourAt, probeFile, MATCH, PRIVATE_MATCH, MATCH2, SINGLE_MATCH } = require('./highlight-studio-fixtures.js');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
 let pass = 0, fail = 0;
@@ -55,7 +55,7 @@ const ffmpegs = () => ffmpegList().length;
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 (async () => {
-  const fx = await studioFixtures(TMP);
+  const fx = await studioFixtures(TMP, { tournament: true });
   const { ids, served, clipServer } = fx;
   const { port } = await bootServer({ idTokens: fx.tokens, users: F.EMAIL_OF, seed: fx.seed });
   const LOGO = fx.LOGO;
@@ -228,6 +228,49 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const after = await download(port, `/api/highlights/thumbs/file/${tok}.jpg`);
   const remaining = await api('GET', `/api/highlights/thumbs/${MATCH}`, null, AUTH);
   ok('deleted: gone from the list and its address', tl.status === 200 && after.status === 404 && remaining.json.thumbs.length === 1, [tl.status, after.status, remaining.json.thumbs.length]);
+
+  console.log('\n=== The whole tournament: a player over every match of it ===');
+  r = await api('GET', `/api/highlights/studio/${MATCH}`, null, AUTH);
+  ok('the match on its own: its own clips only, and the tournament it is part of (both matches, in order)', r.status === 200 && r.json.scope === 'match' && r.json.clips.every(c => c.matchId === MATCH) && r.json.tournament && r.json.tournament.name === 'MCA President Cup 2026'
+    && JSON.stringify(r.json.tournament.matches.map(m => m.key)) === JSON.stringify([MATCH, MATCH2]), r.json.tournament);
+  const tt = await api('GET', `/api/highlights/studio/${MATCH}?scope=tournament`, null, AUTH);
+  const tclips = tt.json.clips || [];
+  ok('scope=tournament: every match\'s clips — this match\'s, then the semi-final\'s', tt.status === 200 && tt.json.scope === 'tournament' && tclips.some(c => c.clipId === ids.blue) && tclips.some(c => c.clipId === ids['t2-six'])
+    && !tclips.some(c => c.matchId !== MATCH && c.matchId !== MATCH2) && tclips.findIndex(c => c.matchId === MATCH2) > tclips.map(c => c.matchId).lastIndexOf(MATCH), tclips.map(c => c.matchId).slice(-5));
+  const t2 = tclips.find(c => c.clipId === ids['t2-six']);
+  ok('… each clip names its match and its batting side\'s team (the semi-final\'s A is GSC)', t2 && t2.matchLabel === 'GSC vs SPG · Semi-final' && t2.team && t2.team.name === 'Gymkhana Sports Club', t2);
+  ok('… and every team of the tournament, with its colour and badge', JSON.stringify(tt.json.tournament.teams.map(x => x.short)) === JSON.stringify(['GSC', 'DYP', 'SPG']) && tt.json.tournament.teams[0].logo === LOGO, tt.json.tournament.teams.map(x => x.short));
+  r = await api('GET', `/api/highlights/studio/${SINGLE_MATCH}?scope=tournament`, null, AUTH);
+  const single = await api('GET', `/api/highlights/studio/${SINGLE_MATCH}`, null, AUTH);
+  ok('a single match: no tournament to take clips from', r.status === 400 && single.status === 200 && single.json.tournament === null, [r.status, r.json.error, single.json.tournament]);
+  const HARSH = F.pk('Harsh Mendon');
+  r = await api('POST', '/api/highlights/title', { matchId: MATCH, scope: 'tournament', clipIds: [ids['t2-six'], ids.blue, ids['t2-four']], subject: { type: 'player', playerKey: HARSH, category: 'boundaries' } }, AUTH);
+  let T = (r.json && r.json.title) || {};
+  ok('his title card over the tournament: both matches\' figures added up (64 off 34 + 30 off 20 = 94 off 54; 5 sixes, 6 fours)', r.status === 200 && r.json.scope === 'tournament' && T.first === 'Harsh' && T.title === 'Mendon' && T.kicker === 'MCA President Cup 2026'
+    && JSON.stringify(T.stats) === JSON.stringify([{ value: '94', label: 'RUNS', sub: '54 BALLS' }, { value: '5', label: 'SIXES' }, { value: '6', label: 'FOURS' }, { value: '174.1', label: 'STRIKE RATE' }]), T);
+  ok('… the matches he played, and against whom', T.line === '2 MATCHES  ·  vs DYP, SPG' && T.matches === 2, T.line);
+  r = await api('POST', '/api/highlights/title', { matchId: MATCH, scope: 'tournament', clipIds: [ids.blue, ids['t2-sai']], subject: { type: 'player', playerKey: HARSH, category: 'all' } }, AUTH);
+  T = (r.json && r.json.title) || {};
+  ok('… batting and bowling: his semi-final wicket counts too (1 for 14 off 2 overs)', JSON.stringify(T.stats) === JSON.stringify([{ value: '94', label: 'RUNS', sub: '54 BALLS' }, { value: '5', label: 'SIXES' }, { value: '1', label: 'WICKET', sub: '14 RUNS' }, { value: '2.0', label: 'OVERS' }]), T.stats);
+  r = await api('POST', '/api/highlights/title', { matchId: MATCH, scope: 'tournament', clipIds: [ids.blue, ids['t2-six']], subject: { type: 'team', teamName: 'Gymkhana Sports Club' } }, AUTH);
+  T = (r.json && r.json.title) || {};
+  ok('a team over the tournament: its matches, runs, sixes, fours (from the scorecards)', T.title === 'Gymkhana Sports Club' && JSON.stringify(T.stats) === JSON.stringify([{ value: '2', label: 'MATCHES' }, { value: '340', label: 'RUNS' }, { value: '5', label: 'SIXES' }, { value: '6', label: 'FOURS' }]) && T.team && T.team.short === 'GSC', T);
+  r = await api('POST', '/api/highlights/title', { matchId: MATCH, scope: 'tournament', clipIds: [ids.blue, ids['t2-six']], subject: { type: 'full' } }, AUTH);
+  T = (r.json && r.json.title) || {};
+  ok('the whole tournament: its name, its matches, every six and four of it', T.title === 'MCA President Cup 2026' && JSON.stringify(T.stats) === JSON.stringify([{ value: '2', label: 'MATCHES' }, { value: '6', label: 'SIXES' }, { value: '9', label: 'FOURS' }]) && Array.isArray(T.teams) && !T.teams.length, T);
+  r = await api('POST', '/api/highlights/title', { matchId: MATCH, clipIds: [ids.blue, ids['t2-six']], subject: { type: 'full' } }, AUTH);
+  const r4 = await api('POST', '/api/highlights/title', { matchId: MATCH, scope: 'tournament', clipIds: [ids.blue, ids['red-elsewhere']], subject: { type: 'full' } }, AUTH);
+  ok('one match\'s video still takes only its clips; a tournament\'s, only its matches\' (never another\'s)', r.status === 400 && /not this match/.test(r.json.error) && r4.status === 400 && /not this tournament/.test(r4.json.error) && JSON.stringify(r4.json.missing) === JSON.stringify([ids['red-elsewhere']]), [r.json, r4.json]);
+  const torder = ['t2-six', 'blue', 't2-four'];
+  r = await api('POST', '/api/highlights/compile', { matchId: MATCH, scope: 'tournament', type: 'custom', clipIds: torder.map(n => ids[n]), subject: { type: 'player', playerKey: HARSH, category: 'boundaries' }, format: '16:9' }, AUTH);
+  ok('a tournament video starts', r.status === 200 && !!r.json.jobId, r.json);
+  for(let i = 0; i < 1800; i++){ st = (await api('GET', `/api/highlights/compile/${r.json.jobId}/status`)).json; if(['ready', 'error'].includes(st.status)) break; await wait(100); }
+  ok('… ready, every clip in', st.status === 'ready' && st.included === 3, st);
+  const tdl = await download(port, `/api/highlights/compile/${r.json.jobId}/download`);
+  const tout = path.join(TMP, 'tournament.mp4');
+  fs.writeFileSync(tout, tdl.body);
+  const tseen = torder.map((n, i) => colourAt(tout, m.edit.intro + (80 / 30) * i + 40 / 30, 1280, 720));
+  ok('… the semi-final\'s SIX, then the final\'s SIX, then the semi-final\'s FOUR — in the operator\'s order, across the two matches', JSON.stringify(tseen) === JSON.stringify(['green', 'blue', 'yellow']), tseen);
 
   console.log('\n=== The scorecard\'s own downloads, unchanged ===');
   r = await api('POST', '/api/highlights/compile', { matchId: MATCH, type: 'full' });

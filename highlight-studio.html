@@ -248,6 +248,11 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 /* ---- clip library */
 .lib-bar { display: grid; gap: var(--s-3); margin-bottom: var(--s-3); }
 .lib-filters { display: grid; grid-template-columns: minmax(200px, 1.6fr) repeat(3, minmax(120px, 1fr)); gap: var(--s-2); }
+.lib-filters.t5 { grid-template-columns: minmax(180px, 1.4fr) repeat(4, minmax(110px, 1fr)); }
+.ov-tour { display: grid; gap: 6px; }
+.ov-tour b { font: 700 26px/1.05 var(--display); letter-spacing: 0.03em; }
+.ov-tour .teams { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.ov-tour .teams .tl-logo { width: 34px; height: 34px; }
 @container (max-width: 760px) { .lib-filters { grid-template-columns: 1fr 1fr; } .lib-filters .search { grid-column: 1 / -1; } }
 .sel-count { font: 700 22px/1 var(--display); color: var(--accent); font-variant-numeric: tabular-nums; min-width: 1ch; }
 .lib { position: relative; flex: 1; min-height: 200px; overflow-y: auto; border-radius: var(--r-lg); background: rgba(0,0,0,0.18); border: 1px solid var(--stroke-1); contain: strict; }
@@ -699,12 +704,14 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
     <section class="sec fill" data-sec="clips" aria-label="Clip Library">
       <div class="sec-h">
         <div><h2>Clip Library <span class="tiny" id="lib-count"></span></h2><p>Click to add a clip to the timeline · Shift-click for a range · drag a clip onto the sequence below to place it.</p></div>
-        <div class="acts"><span class="sel-count" id="sel-count">0</span><span class="muted" style="font-size:12.5px">selected</span>
+        <div class="acts"><div class="seg hidden" id="scope-seg" role="tablist" aria-label="Which clips: this match, or every match of the tournament"><button data-v="match" title="This match's clips">This match</button><button data-v="tournament" id="scope-t" title="Every match of this tournament: a player's clips and figures from all of them">Whole tournament</button></div>
+          <span class="sel-count" id="sel-count">0</span><span class="muted" style="font-size:12.5px">selected</span>
           <button class="btn small" id="sel-all">Select all shown</button><button class="btn small ghost" id="sel-none">Clear</button></div>
       </div>
       <div class="lib-bar">
         <div class="lib-filters">
           <label class="search"><svg class="ic"><use href="#i-search"/></svg><span class="sr">Search</span><input class="input" id="f-q" type="search" placeholder="Search a player, an over (12.3), a dismissal…" autocomplete="off"></label>
+          <select class="input hidden" id="f-match" title="Match" aria-label="Match"><option value="">All matches</option></select>
           <select class="input" id="f-team" title="Batting team" aria-label="Batting team"><option value="">All teams</option></select>
           <select class="input" id="f-player" title="Player" aria-label="Player"><option value="">All players</option></select>
           <select class="input" id="f-inn" title="Innings" aria-label="Innings"><option value="">All innings</option></select>
@@ -971,6 +978,10 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const qs = new URLSearchParams(location.search);
 const MATCH_ID = qs.get('matchId') || qs.get('match') || '';
+// 'tournament': every match of this match's tournament — a player's clips and figures from all of them
+const SCOPE = qs.get('scope') === 'tournament' ? 'tournament' : 'match';
+const TOURNEY = () => S.scope === 'tournament';
+function studioUrl(scope) { const u = new URL(location.href); if (scope === 'tournament') u.searchParams.set('scope', 'tournament'); else u.searchParams.delete('scope'); return u.pathname + u.search + u.hash; }
 const EV_NAME = { SIX: 'SIX', FOUR: 'FOUR', WICKET: 'WICKET', CLIP: 'CLIP' };
 const evk = (c) => c.eventType in EV_NAME ? c.eventType : 'CLIP';
 const fmtDur = (s) => { if (!(s > 0)) return '—'; s = Math.round(s); const m = Math.floor(s / 60), r = s % 60; return m ? `${m}m ${String(r).padStart(2, '0')}s` : `${r}s`; };
@@ -1072,13 +1083,13 @@ $('gate-signin').onclick = () => {
 /* --------------------------------------------------------------- state */
 const S = {
   match: null, clips: [], byId: new Map(), filtered: [], sel: [], selSet: new Set(), lastClick: null, focus: null, cursor: -1,
-  f: { q: '', ev: '', team: '', player: '', inn: '' },
+  f: { q: '', ev: '', team: '', player: '', inn: '', match: '' }, scope: SCOPE, tournament: null,
   subject: 'full', subjectAuto: true, figs: 'all', format: '16:9', wheel: false,
   job: null, poll: null, seen: null, recent: [], starting: false,
   title: null, titleSig: '', sec: 'clips',
   th: { mode: 'photo', variation: 1, seed: 1, headline: '', custom: '', frameClip: '', frames: [], frameIdx: 0, photo: null, upload: false, fx: 0.5, fy: 0.45, fz: 1, auto: null }
 };
-const KEY = `asl-studio:${MATCH_ID}`;
+const KEY = `asl-studio:${MATCH_ID}${SCOPE === 'tournament' ? ':tournament' : ''}`;   // (a tournament video is a project of its own)
 let savedOk = true;
 function save() {
   try {
@@ -1140,7 +1151,7 @@ function go(sec, opts) {
   document.querySelectorAll('.nav').forEach(b => { if (b.dataset.sec === sec) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const ctx = CTX[sec];
   document.querySelectorAll('.ictx').forEach(x => x.classList.toggle('on', x.dataset.ctx === ctx));
-  $('insp-title').textContent = CTX_TITLE[ctx] || 'Inspector';
+  $('insp-title').textContent = ctx === 'teams' && TOURNEY() ? 'Tournament' : CTX_TITLE[ctx] || 'Inspector';
   moveInd();
   if (!opts.keepHash) try { history.replaceState(null, '', '#' + sec); } catch (e) { /* file:// */ }
   // what each section needs when it is shown (a hidden list cannot measure itself)
@@ -1174,7 +1185,8 @@ function toggleInsp(on) {
 /* ---------------------------------------------------------------- boot */
 async function boot() {
   if (!MATCH_ID) { showGate('No match chosen', 'Open the studio from a match scorecard (Download Highlights → Highlight Studio).', false); return; }
-  const r = await api(`/api/highlights/studio/${encodeURIComponent(MATCH_ID)}`);
+  const r = await api(`/api/highlights/studio/${encodeURIComponent(MATCH_ID)}${SCOPE === 'tournament' ? '?scope=tournament' : ''}`);
+  if (SCOPE === 'tournament' && r.status === 400) { location.replace(studioUrl('match')); return; }   // (a single match: no tournament to take clips from)
   if (r.status === 401) { showGate('Sign in', r.json.error || 'Sign in to use the Highlight Studio.', !!auth); return; }
   if (r.status === 403) { showGate('Not for this account', r.json.error || 'This account cannot use the Highlight Studio.', !!auth); return; }
   if (r.status !== 200 || !r.json.success) { showGate('Could not open this match', r.json.error || 'Try again in a moment.', false); return; }
@@ -1182,6 +1194,8 @@ async function boot() {
   ['hdr-preview', 'hdr-export', 'insp-toggle', 'side-toggle', 'save-state'].forEach(id => $(id).classList.remove('hidden'));
   try { if (auth && auth.currentUser) $('who').textContent = auth.currentUser.email; } catch (e) { /* none */ }
   S.match = r.json.match;
+  S.tournament = r.json.tournament || null;
+  S.scope = r.json.scope === 'tournament' && S.tournament ? 'tournament' : 'match';
   if (r.json.edit && r.json.edit.intro > 0) { INTRO = r.json.edit.intro; OUTRO = r.json.edit.outro; }
   if (r.json.edit && r.json.edit.encoder) {
     const e = r.json.edit;
@@ -1192,9 +1206,22 @@ async function boot() {
   S.byId = new Map(S.clips.map(c => [c.clipId, c]));
   const t = S.match.teams || {};
   const A = t.A ? (t.A.short || t.A.name) : 'Team A', B = t.B ? (t.B.short || t.B.name) : 'Team B';
-  $('m-title').textContent = `${A} vs ${B}${S.match.title ? ' · ' + S.match.title : ''}`;
-  $('m-sub').textContent = [S.match.tournament, S.match.venue, S.match.result].filter(Boolean).join(' · ');
-  document.title = `${A} vs ${B} · Highlight Studio`;
+  if (TOURNEY()) {
+    const n = S.tournament.matches.length;
+    $('m-title').textContent = `${S.tournament.name || 'Tournament'} · whole tournament`;
+    $('m-sub').textContent = `${n} match${n === 1 ? '' : 'es'} · ${S.tournament.teams.length} teams · ${S.clips.length} clips`;
+    document.title = `${S.tournament.name || 'Tournament'} · Highlight Studio`;
+  } else {
+    $('m-title').textContent = `${A} vs ${B}${S.match.title ? ' · ' + S.match.title : ''}`;
+    $('m-sub').textContent = [S.match.tournament, S.match.venue, S.match.result].filter(Boolean).join(' · ');
+    document.title = `${A} vs ${B} · Highlight Studio`;
+  }
+  // this match, or the whole tournament (a project each)
+  if (S.tournament && S.tournament.matches.length > 1 || TOURNEY()) {
+    $('scope-seg').classList.remove('hidden');
+    $('scope-t').textContent = `Whole tournament · ${S.tournament.matches.length} matches`;
+    [...$('scope-seg').querySelectorAll('button')].forEach(b => { b.classList.toggle('on', b.dataset.v === S.scope); b.setAttribute('aria-selected', String(b.dataset.v === S.scope)); });
+  }
   restore();
   const wide = innerWidth >= 1500;
   setCompact(UI.compact == null ? !wide : !!UI.compact);
@@ -1228,8 +1255,19 @@ function buildFilters() {
   const dot = { SIX: 'var(--six)', FOUR: 'var(--four)', WICKET: 'var(--wkt)', CLIP: 'var(--other)' };
   $('f-ev').innerHTML = [['', 'All'], ['SIX', 'Sixes'], ['FOUR', 'Fours'], ['WICKET', 'Wickets'], ['CLIP', 'Other']].map(([v, l]) => `<button class="chip${S.f.ev === v ? ' on' : ''}" data-v="${v}" aria-pressed="${S.f.ev === v}">${v ? `<i class="dot" style="background:${dot[v]}"></i>` : ''}${l}<span class="c">${n[v] || 0}</span></button>`).join('');
   const t = S.match.teams || {};
-  const teams = [...new Set(S.clips.map(c => c.battingTeam).filter(Boolean))];
-  $('f-team').innerHTML = '<option value="">All teams</option>' + teams.map(k => `<option value="${esc(k)}">${esc(((t[k] && (t[k].short || t[k].name)) || 'Team ' + k))} batting</option>`).join('');
+  if (TOURNEY()) {
+    // a tournament's teams by name (each match has its own A and B)
+    const teams = new Map();
+    S.clips.forEach(c => { if (c.team && c.team.name) teams.set(c.team.name, c.team.short || c.team.name); });
+    $('f-team').innerHTML = '<option value="">All teams</option>' + [...teams.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([name, sh]) => `<option value="name:${esc(name)}">${esc(sh)} batting</option>`).join('');
+    const per = new Map(); S.clips.forEach(c => per.set(c.matchId, (per.get(c.matchId) || 0) + 1));
+    $('f-match').innerHTML = '<option value="">All matches</option>' + S.tournament.matches.filter(m => per.get(m.key)).map((m, i) => `<option value="${esc(m.key)}">${esc(m.label)} (${per.get(m.key)})</option>`).join('');
+    $('f-match').classList.remove('hidden');
+    $('f-match').parentElement.classList.add('t5');
+  } else {
+    const teams = [...new Set(S.clips.map(c => c.battingTeam).filter(Boolean))];
+    $('f-team').innerHTML = '<option value="">All teams</option>' + teams.map(k => `<option value="${esc(k)}">${esc(((t[k] && (t[k].short || t[k].name)) || 'Team ' + k))} batting</option>`).join('');
+  }
   const players = new Map();
   S.clips.forEach(c => {
     const add = (name, key) => { if (name && key) { const p = players.get(key) || { name, n: 0 }; p.n++; players.set(key, p); } };
@@ -1244,11 +1282,12 @@ function applyFilters() {
   const q = S.f.q.trim().toLowerCase();
   S.filtered = S.clips.filter(c => {
     if (S.f.ev && evk(c) !== S.f.ev) return false;
-    if (S.f.team && c.battingTeam !== S.f.team) return false;
+    if (S.f.team && (S.f.team.startsWith('name:') ? !(c.team && c.team.name === S.f.team.slice(5)) : c.battingTeam !== S.f.team)) return false;
+    if (S.f.match && c.matchId !== S.f.match) return false;
     if (S.f.inn && String(c.innings || 1) !== S.f.inn) return false;
     if (S.f.player) { const k = c.keys || {}; if (![k.striker, k.bowler, k.fielder, k.dismissed].includes(S.f.player)) return false; }
     if (q) {
-      const hay = [c.striker, c.bowler, c.fielder, c.nonStriker, c.dismissedPlayer, c.dismissalType, c.outcome, c.eventType, `${c.over}.${c.ballInOver}`].filter(Boolean).join(' ').toLowerCase();
+      const hay = [c.striker, c.bowler, c.fielder, c.nonStriker, c.dismissedPlayer, c.dismissalType, c.outcome, c.eventType, `${c.over}.${c.ballInOver}`, c.matchLabel].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -1277,7 +1316,7 @@ function paintLib(force) {
     el.innerHTML = `<div class="box"></div>
       <div class="poster">${c.posterUrl ? `<img loading="lazy" decoding="async" alt="" src="${esc(c.posterUrl)}">` : ''}<button class="play" data-play="${esc(c.clipId)}" title="Preview" aria-label="Preview this clip"></button>${c.duration ? `<span class="dur">${Math.round(c.duration)}s</span>` : ''}</div>
       <div class="meta"><div class="l1"><span class="ev ${esc(evk(c))}">${esc(c.eventType === 'CLIP' ? (c.outcome || 'CLIP') : c.eventType)}</span><span class="ob">${obOf(c)}</span><span class="num">#${c.n}${c.innings ? ` · inn ${c.innings}` : ''}</span></div>
-      <div class="l2">${esc(clipLine(c))}</div><div class="l3">${c.bowler ? 'b ' + esc(c.bowler) : ''}${c.ready ? '' : ' · uploading…'}</div></div>
+      <div class="l2">${esc(clipLine(c))}</div><div class="l3">${[c.bowler ? 'b ' + esc(c.bowler) : '', c.matchLabel ? esc(c.matchLabel) : ''].filter(Boolean).join(' · ')}${c.ready ? '' : ' · uploading…'}</div></div>
       <div class="order">${pos >= 0 ? pos + 1 : ''}</div>`;
     sp.appendChild(el);
     libRows.set(i, el);
@@ -1344,7 +1383,7 @@ function tlRow(c) {
   const li = document.createElement('li');
   li.dataset.id = c.clipId;
   li.innerHTML = `<span class="grip" data-grip title="Drag to reorder">${icon('grip')}</span><span class="pos"></span><span class="th">${c.posterUrl ? `<img loading="lazy" decoding="async" alt="" src="${esc(c.posterUrl)}">` : ''}</span><span class="ev ${esc(evk(c))}">${esc(c.eventType === 'CLIP' ? 'CLIP' : c.eventType)}</span>
-    <span class="who">${esc(clipLine(c))} <small>· ${obOf(c)}${c.duration ? ` · ${Math.round(c.duration)}s` : ''}</small></span><span class="at"></span>
+    <span class="who">${esc(clipLine(c))} <small>· ${obOf(c)}${c.duration ? ` · ${Math.round(c.duration)}s` : ''}${c.matchLabel ? ' · ' + esc(c.matchLabel) : ''}</small></span><span class="at"></span>
     <span class="acts"><button data-up title="Earlier" aria-label="Earlier">${icon('up')}</button><button data-down title="Later" aria-label="Later">${icon('down')}</button><button data-rm title="Remove" aria-label="Remove">${icon('x')}</button></span>`;
   return li;
 }
@@ -1634,6 +1673,7 @@ function logoHtml(T, cls) {
   return `<span class="tl-logo ${cls || ''}${sticker ? ' sticker' : ''}" style="--c:${esc(T.color || 'var(--stroke-2)')};${T.logo && !sticker ? `background:${esc(T.logoBg || '#fff')}` : ''}">${T.logo ? `<img alt="" src="${esc(T.logo)}">` : esc((T.short || T.name || '?').slice(0, 3))}</span>`;
 }
 function paintTeams() {
+  if (TOURNEY()) return paintTournament();
   const t = S.match.teams || {}, list = ['A', 'B'].map(k => t[k] && Object.assign({ k }, t[k])).filter(Boolean);
   $('g-teams').innerHTML = list.length ? list.map(T => `<div class="team-card">${logoHtml(T)}<div style="min-width:0"><b>${esc(T.name || T.short)}</b><span class="tiny">${esc(T.short || '')}${T.color ? ` · <span class="swatch" style="background:${esc(T.color)}"></span> ${esc(T.color)}` : ''} · logo ${T.logo ? (T.logoStyle === 'circle' ? 'in a circle' : 'as a sticker') : 'none set'}</span></div></div>`).join('') : '<div class="tiny">The scorecard has no teams for this match.</div>';
   $('i-teams').innerHTML = list.map(T => `<div class="team-row">${logoHtml(T)}<div style="min-width:0"><b>${esc(T.name || T.short)}</b><span>${esc(T.short || '')} · ${S.clips.filter(c => c.battingTeam === T.k).length} clips batting</span></div></div>`).join('') + `<dl class="kv" style="margin-top:4px">${S.match.tournament ? `<dt>Tournament</dt><dd>${esc(S.match.tournament)}</dd>` : ''}${S.match.venue ? `<dt>Venue</dt><dd>${esc(S.match.venue)}</dd>` : ''}${S.match.result ? `<dt>Result</dt><dd>${esc(S.match.result)}</dd>` : ''}</dl>`;
@@ -1643,6 +1683,19 @@ function paintTeams() {
     <div class="ov-team b">${logoHtml(B)}<div><b>${esc(B ? B.short || B.name : 'Team B')}</b><span>${esc(B ? B.name : '')}</span></div></div>`;
   const n = counts(S.clips);
   $('ov-avail').textContent = `${S.clips.length} clips · ${S.clips.filter(c => !c.ready).length} still uploading`;
+  $('ov-match').innerHTML = `<div class="stat"><b>${S.clips.length}</b><span>All clips</span></div><div class="stat six"><b>${n.SIX}</b><span>Sixes</span></div><div class="stat four"><b>${n.FOUR}</b><span>Fours</span></div><div class="stat wkt"><b>${n.WICKET}</b><span>Wickets</span></div>`;
+}
+// The whole tournament: its name, its matches and every team in it
+function paintTournament() {
+  const T = S.tournament, teams = T.teams || [];
+  const byTeam = (name) => S.clips.filter(c => c.team && c.team.name === name).length;
+  $('g-teams').innerHTML = teams.length ? teams.map(x => `<div class="team-card">${logoHtml(x)}<div style="min-width:0"><b>${esc(x.name || x.short)}</b><span class="tiny">${esc(x.short || '')}${x.color ? ` · <span class="swatch" style="background:${esc(x.color)}"></span> ${esc(x.color)}` : ''} · logo ${x.logo ? 'set' : 'none set'}</span></div></div>`).join('') : '<div class="tiny">The scorecards have no teams.</div>';
+  $('i-teams').innerHTML = teams.map(x => `<div class="team-row">${logoHtml(x)}<div style="min-width:0"><b>${esc(x.name || x.short)}</b><span>${esc(x.short || '')} · ${byTeam(x.name)} clip${byTeam(x.name) === 1 ? '' : 's'} batting</span></div></div>`).join('') +
+    `<dl class="kv" style="margin-top:4px"><dt>Tournament</dt><dd>${esc(T.name || '—')}</dd><dt>Matches</dt><dd>${T.matches.length}</dd></dl>`;
+  $('ov-hero').innerHTML = `<div></div><div class="ov-mid ov-tour"><div class="vs">WHOLE TOURNAMENT</div><b>${esc(T.name || 'Tournament')}</b><div class="t">${T.matches.length} match${T.matches.length === 1 ? '' : 'es'}: ${esc(T.matches.map(m => m.label).join(' · '))}</div>
+    <div class="teams" style="justify-content:center">${teams.map(x => logoHtml(x)).join('')}</div></div><div></div>`;
+  const n = counts(S.clips);
+  $('ov-avail').textContent = `${S.clips.length} clips from ${T.matches.length} matches · ${S.clips.filter(c => !c.ready).length} still uploading`;
   $('ov-match').innerHTML = `<div class="stat"><b>${S.clips.length}</b><span>All clips</span></div><div class="stat six"><b>${n.SIX}</b><span>Sixes</span></div><div class="stat four"><b>${n.FOUR}</b><span>Fours</span></div><div class="stat wkt"><b>${n.WICKET}</b><span>Wickets</span></div>`;
 }
 function paintOverview() {
@@ -1670,7 +1723,7 @@ function setFocus(id, quiet) {
 function paintInspector() {
   const c = S.focus && S.byId.get(S.focus), box = $('i-clip');
   if (!c) { box.innerHTML = `<div class="card tight"><div class="empty" style="padding:24px 8px"><b>No clip in focus</b>Click a clip to see its details here.</div></div>`; return; }
-  const t = (S.match.teams || {})[c.battingTeam];
+  const t = TOURNEY() ? c.team : (S.match.teams || {})[c.battingTeam];
   const pos = S.sel.indexOf(c.clipId);
   let at = '';
   if (pos >= 0) { let s = INTRO; for (let i = 0; i < pos; i++) { const x = S.byId.get(S.sel[i]); if (x) s += secOf(x); } at = `${fmtClock(s)} – ${fmtClock(s + secOf(c))}`; }
@@ -1684,6 +1737,7 @@ function paintInspector() {
       ${c.eventType === 'WICKET' ? `<dt>Out</dt><dd>${esc(c.dismissedPlayer || '')} ${esc(c.dismissalType || '')}${c.fielder ? ' · ' + esc(c.fielder) : ''}</dd>` : ''}
       ${c.runs != null && c.eventType !== 'WICKET' ? `<dt>Runs</dt><dd>${c.runs}</dd>` : ''}
       <dt>Batting</dt><dd>${t ? `<span class="swatch" style="background:${esc(t.color || '#333')}"></span> ${esc(t.short || t.name)}` : '—'}</dd>
+      ${c.matchLabel ? `<dt>Match</dt><dd>${esc(c.matchLabel)}</dd>` : ''}
       <dt>Length</dt><dd>${c.duration ? Math.round(c.duration * 10) / 10 + ' s' : '—'}${c.duration ? ` <span class="tiny">(${gridSec(c.duration).toFixed(1)} s in the video)</span>` : ''}</dd>
       <dt>In the video</dt><dd>${pos >= 0 ? `#${pos + 1} · ${at}` : 'Not in the timeline'}</dd>
     </dl></div>
@@ -1704,8 +1758,9 @@ function buildSubject() {
     if (c.bowler && k.bowler && !players.has(k.bowler)) players.set(k.bowler, c.bowler);
     if (c.dismissedPlayer && k.dismissed && !players.has(k.dismissed)) players.set(k.dismissed, c.dismissedPlayer);
   });
-  $('subject').innerHTML = `<option value="full">The whole match</option>` +
-    ['A', 'B'].filter(k => t[k]).map(k => `<option value="team:${k}">${esc(t[k].name || t[k].short)}</option>`).join('') +
+  $('subject').innerHTML = (TOURNEY()
+    ? `<option value="full">The whole tournament</option>` + (S.tournament.teams || []).map(x => `<option value="team:${esc(x.name)}">${esc(x.name)}</option>`).join('')
+    : `<option value="full">The whole match</option>` + ['A', 'B'].filter(k => t[k]).map(k => `<option value="team:${k}">${esc(t[k].name || t[k].short)}</option>`).join('')) +
     [...players.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([k, n]) => `<option value="player:${esc(k)}">${esc(n)}</option>`).join('');
   if (![...$('subject').options].some(o => o.value === S.subject)) S.subject = 'full';
   $('subject').value = S.subject;
@@ -1715,7 +1770,7 @@ function buildSubject() {
 }
 function subjectBody() {
   if (S.subject.startsWith('player:')) return { type: 'player', playerKey: S.subject.slice(7), category: S.figs };
-  if (S.subject.startsWith('team:')) return { type: 'team', team: S.subject.slice(5) };
+  if (S.subject.startsWith('team:')) return TOURNEY() ? { type: 'team', teamName: S.subject.slice(5) } : { type: 'team', team: S.subject.slice(5) };
   return { type: 'full' };
 }
 function syncExportControls() {
@@ -1751,7 +1806,7 @@ async function startRender() {
   S.starting = true;
   const btn = $('render'); btn.disabled = true; btn.classList.add('busy'); btn.querySelector('.lb').textContent = 'Starting…';
   let r;
-  try { r = await api('/api/highlights/compile', { body: { type: 'custom', matchId: MATCH_ID, clipIds: ids, subject: subjectBody(), format: S.format, wheel: !!S.wheel } }); }
+  try { r = await api('/api/highlights/compile', { body: { type: 'custom', matchId: MATCH_ID, scope: S.scope, clipIds: ids, subject: subjectBody(), format: S.format, wheel: !!S.wheel } }); }
   catch (e) { r = { status: 0, json: { error: 'Could not reach the server — check the connection' } }; }
   S.starting = false; btn.classList.remove('busy');
   if (r.status !== 200 || !r.json.success) {
@@ -1877,7 +1932,7 @@ function offerRemove(missing, msg) {
 function downloadName() {
   const t = S.title && S.title.title;
   const who = t ? [t.first, t.title].filter(Boolean).join(' ') : 'Highlights';
-  return `AllSportsLive_${who.replace(/[^A-Za-z0-9]+/g, '')}_Highlights${S.format === '9:16' ? '_9x16' : ''}`;
+  return `AllSportsLive_${who.replace(/[^A-Za-z0-9]+/g, '')}${TOURNEY() ? '_Tournament' : ''}_Highlights${S.format === '9:16' ? '_9x16' : ''}`;
 }
 async function cancelRender() {
   if (!S.job) return;
@@ -1905,7 +1960,7 @@ function refreshTitle() {
   titleTimer = setTimeout(async () => {
     const ids = S.sel.length ? S.sel.slice() : S.clips.filter(c => c.ready).slice(0, 400).map(c => c.clipId);
     if (!ids.length) { S.title = null; paintThumbs(); return; }
-    const body = { matchId: MATCH_ID, clipIds: ids, subject: subjectBody() };
+    const body = { matchId: MATCH_ID, scope: S.scope, clipIds: ids, subject: subjectBody() };
     const sig = JSON.stringify(body);
     if (sig === S.titleSig && S.title) return;
     const r = await api('/api/highlights/title', { body });
@@ -1922,6 +1977,14 @@ function refreshTitle() {
 /* --------------------------------------------------------- thumbnails */
 let logoP = {};
 async function thumbTeams() {
+  if (TOURNEY()) {   // (every team of the tournament: the badges are drawn when a design needs one)
+    for (const T of (S.tournament.teams || [])) {
+      const key = `${T.logo ? T.logo.length : 0}`;
+      if (!logoP[T.name] || logoP[T.name].key !== key) logoP[T.name] = { key, p: T.logo ? HighlightThumbs.prepareLogo(T.logo, 'sticker', '#ffffff') : Promise.resolve(null) };
+      T._logo = await logoP[T.name].p;
+    }
+    return;
+  }
   const t = S.match.teams || {};
   for (const k of ['A', 'B']) {
     const T = t[k]; if (!T) continue;
@@ -1932,17 +1995,25 @@ async function thumbTeams() {
 }
 function teamFor(name) {
   const t = S.match.teams || {};
-  const hit = ['A', 'B'].map(k => t[k]).filter(Boolean).find(T => T.name === name || T.short === name);
+  const hit = (TOURNEY() ? (S.tournament.teams || []) : ['A', 'B'].map(k => t[k]).filter(Boolean)).find(T => T.name === name || T.short === name);
   return hit ? { name: hit.name, short: hit.short, color: hit.color, logo: hit._logo || null } : null;
 }
 function thumbData() {
   if (!S.title) return null;
   const T = S.title.title || {}, t = S.match.teams || {}, sb = subjectBody();
   let teams = [];
-  if (sb.type === 'full') teams = ['A', 'B'].map(k => t[k]).filter(Boolean).map(x => ({ name: x.name, short: x.short, color: x.color, logo: x._logo || null }));
-  else if (sb.type === 'team') { const x = t[sb.team]; if (x) teams = [{ name: x.name, short: x.short, color: x.color, logo: x._logo || null }]; }
+  const tourney = TOURNEY();
+  if (sb.type === 'full') teams = tourney ? [] : ['A', 'B'].map(k => t[k]).filter(Boolean).map(x => ({ name: x.name, short: x.short, color: x.color, logo: x._logo || null }));
+  else if (sb.type === 'team') { const x = tourney ? teamFor(sb.teamName) : t[sb.team]; if (x) teams = [{ name: x.name, short: x.short, color: x.color, logo: x._logo || x.logo || null }]; }
   else if (T.team) { const x = teamFor(T.team.name) || { name: T.team.name, short: T.team.short, color: T.team.color, logo: null }; teams = [x]; }
   const vs = t.A && t.B ? `${t.A.short || t.A.name} vs ${t.B.short || t.B.name}` : '';
+  if (tourney) return {
+    // a whole tournament: its figures and its line come from the server (every match of it)
+    subject: sb.type === 'player' ? 'player' : 'team',
+    first: T.first || '', last: T.title || '', headline: (S.th.custom || S.th.headline || S.title.headline || '').toUpperCase(),
+    kicker: T.kicker || 'TOURNAMENT HIGHLIGHTS', line: T.line || '', venue: '',
+    stats: T.stats || [], kind: T.kind || 'BRAND', teams, counts: S.title.counts || {}
+  };
   return {
     subject: sb.type === 'player' ? 'player' : sb.type === 'full' ? 'match' : 'team',
     first: T.first || '', last: T.title || '', headline: (S.th.custom || S.th.headline || S.title.headline || '').toUpperCase(),
@@ -2068,6 +2139,8 @@ function showShape(v) {
   $('pv-l').classList.toggle('off', UI.view !== '16:9'); $('pv-p').classList.toggle('off', UI.view !== '9:16');
   $('qa-l').classList.toggle('hidden', UI.view !== '16:9'); $('qa-p').classList.toggle('hidden', UI.view !== '9:16');
 }
+// a tournament's thumbnails are kept apart from the match's own
+const thumbSubject = () => (TOURNEY() ? 'tournament:' : '') + S.subject;
 async function downloadThumb(format) {
   const d = thumbData(); if (!d) return;
   const H = HighlightThumbs;
@@ -2078,10 +2151,10 @@ async function downloadThumb(format) {
   const name = H.fileName(d, S.th.mode, S.th.variation, format);
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  await DB.put('thumbs', { key: `${KEY}|${S.subject}|${S.th.mode}|${S.th.variation}|${format}`, matchId: MATCH_ID, subject: S.subject, mode: S.th.mode, variation: S.th.variation, format, name, blob,
+  await DB.put('thumbs', { key: `${KEY}|${S.subject}|${S.th.mode}|${S.th.variation}|${format}`, matchId: MATCH_ID, subject: thumbSubject(), mode: S.th.mode, variation: S.th.variation, format, name, blob,
     width: r.meta.width, height: r.meta.height, headline: d.headline, at: Date.now() });
   // and on the server, so it can be reopened on any device
-  const q = new URLSearchParams({ subject: S.subject, mode: S.th.mode, variation: String(S.th.variation), format, name, headline: d.headline || '' }).toString();
+  const q = new URLSearchParams({ subject: thumbSubject(), mode: S.th.mode, variation: String(S.th.variation), format, name, headline: d.headline || '' }).toString();
   let kept = null;
   try {
     const res = await fetch(`/api/highlights/thumbs/${encodeURIComponent(MATCH_ID)}?${q}`, { method: 'POST', headers: Object.assign({ 'Content-Type': 'image/jpeg' }, await authHeaders()), body: blob });
@@ -2094,9 +2167,10 @@ async function downloadThumb(format) {
 // What is kept: this device's copies (IndexedDB) and the server's (any
 // device), one entry per subject · design · shape.
 async function loadSaved() {
-  const local = ((await DB.all('thumbs')) || []).filter(x => x.matchId === MATCH_ID);
+  const mine = (subject) => String(subject || '').startsWith('tournament:') === TOURNEY();
+  const local = ((await DB.all('thumbs')) || []).filter(x => x.matchId === MATCH_ID && mine(x.subject));
   let server = [];
-  try { const r = await api(`/api/highlights/thumbs/${encodeURIComponent(MATCH_ID)}`); if (r.status === 200 && r.json.success) server = r.json.thumbs || []; } catch (e) { server = []; }
+  try { const r = await api(`/api/highlights/thumbs/${encodeURIComponent(MATCH_ID)}`); if (r.status === 200 && r.json.success) server = (r.json.thumbs || []).filter(x => mine(x.subject)); } catch (e) { server = []; }
   const items = new Map();
   local.forEach(x => items.set(`${x.subject}|${x.mode}|${x.variation}|${x.format}`, { local: x, server: null, name: x.name, at: x.at, w: x.width, h: x.height }));
   server.forEach(t => {
@@ -2302,6 +2376,9 @@ function bindAll() {
   $('f-team').onchange = (e) => { S.f.team = e.target.value; applyFilters(); };
   $('f-player').onchange = (e) => { S.f.player = e.target.value; applyFilters(); };
   $('f-inn').onchange = (e) => { S.f.inn = e.target.value; applyFilters(); };
+  $('f-match').onchange = (e) => { S.f.match = e.target.value; applyFilters(); };
+  // this match ⇄ the whole tournament: a project each (the page opens the other one)
+  $('scope-seg').onclick = (e) => { const b = e.target.closest('button'); if (b && b.dataset.v !== S.scope) location.href = studioUrl(b.dataset.v); };
   let raf = 0;
   $('lib').addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paintLib(false); }); }, { passive: true });
   $('lib').addEventListener('click', (e) => {
