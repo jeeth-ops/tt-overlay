@@ -797,6 +797,8 @@ app.use('/api/league/:name/info', express.json({ limit: '3mb' }));
 app.use('/api/scorecard-import', express.json({ limit: '2mb' }));
 // 🏐 Volleyball: a team or tournament carries its logo (see volleyball-server.js).
 app.use('/api/volleyball', express.json({ limit: '2mb' }));
+// 🎾 Tennis: a player's portrait or a tournament logo (see tennis-server.js).
+app.use('/api/tennis', express.json({ limit: '2mb' }));
 app.use(express.json());
 
 // 👥 Player Helper — phone picks player names for the operator (see player-helper.js).
@@ -14564,6 +14566,34 @@ io.on('connection', async (socket) => {
 // the plumbing below; nothing in it reads or writes any cricket data.
 // ================================================================
 const volleyball = require('./volleyball-server')({
+    app, io, express,
+    getDb: () => mongoDb,
+    whenMongoReady: () => whenMongoReady(),
+    auth: {
+        extractIdToken,
+        verifyIdTokenFull,
+        ownerEmail: () => OWNER_EMAIL,
+        isCreatorEmail: (email) => isAuthorizedCreatorEmail(email),
+        isPrivateCreatorEmail: (email) => isPrivateCreatorEmail(email),
+    },
+    r2: () => (r2Client && R2_BUCKET_NAME
+        ? { client: r2Client, bucket: R2_BUCKET_NAME, publicUrl: R2_PUBLIC_URL, PutObjectCommand, GetObjectCommand, DeleteObjectCommand }
+        : null),
+    drive: () => driveClient,
+    clipMedia,
+    ffmpegPath: ffmpegInstallerPath,
+    clipsDir: CLIPS_DIR,
+    rootDir: __dirname,
+    sendHtmlNoCache,
+});
+
+// ================================================================
+// 🎾 TENNIS (lawn tennis — not the table-tennis tt-* pages) — its own
+// collections (tn*), Socket.IO namespace (/tennis), routes and clip
+// pipeline (see tennis-server.js). Like volleyball, it only borrows the
+// plumbing below; nothing in it reads or writes any other sport's data.
+// ================================================================
+const tennis = require('./tennis-server')({
     app, io, express,
     getDb: () => mongoDb,
     whenMongoReady: () => whenMongoReady(),
