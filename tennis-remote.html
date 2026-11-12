@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#060b09">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Tennis Remote · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/tennis-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🎾 THE TENNIS REMOTE — the match in a phone: the live score, two big
+  point buttons, the serve (fault / double fault, ace, let), undo, how a
+  point was won, call-outs and graphics to air, clips of a moment.
+
+  It scores only while it holds the match's controller lease (one device
+  at a time, so a point is never entered twice) — "Score from this phone"
+  takes it, and the laptop is told at once. Without it, it still shows the
+  score live and can drive graphics and clips. Every point goes the same
+  way as the panel's: the same rules, the same outbox, the same ids.
+  ?match=<id>
+-->
+<style>
+  html, body { overscroll-behavior: none; }
+  body { padding-bottom: env(safe-area-inset-bottom); --ca: #0f766e; --cb: #b45309; }
+  .r-top { position: sticky; top: 0; z-index: 10; padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--line); }
+  .r-top .row { gap: 8px; }
+  .sb { margin: 10px 12px 0; padding: 10px 12px; border-radius: 20px; background: #08110d; color: #f1f7f3; box-shadow: var(--lift); }
+  .srow { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 6px 0; }
+  .srow + .srowow { border-top: 1px solid rgba(255,255,255,.08); }
+  .srow i { width: 10px; height: 10px; border-radius: 50%; background: var(--optic); transform: scale(0); transition: transform .4s var(--bounce); }
+  .srow.srv i { transform: scale(1); }
+  .srow b { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow .st { display: flex; gap: 2px; font-variant-numeric: tabular-nums; }
+  .srow .st span { min-width: 22px; text-align: center; font-weight: 800; color: #7d9a8d; }
+  .srow .st span.w { color: #fff; } .srow .st span.c { color: #fff; background: rgba(255,255,255,.1); border-radius: 6px; }
+  .srow .pt { min-width: 46px; height: 32px; border-radius: 9px; background: var(--optic); color: #0d1512; font-weight: 900; font-size: 18px; display: grid; place-items: center; }
+  .cl { text-align: center; font-weight: 800; font-size: 14px; padding-top: 6px; }
+  .cl small { display: block; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--optic); }
+  .pts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px; }
+  .pbtn { min-height: 34vh; border-radius: 28px; color: #fff; font-weight: 900; font-size: 22px; display: grid; place-items: center; text-align: center; padding: 10px; position: relative; overflow: hidden;
+    background: linear-gradient(165deg, color-mix(in srgb, var(--c) 78%, #fff), var(--c) 55%, color-mix(in srgb, var(--c) 75%, #000)); box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--c) 85%, transparent), inset 0 1px 0 rgba(255,255,255,.3);
+    transition: transform .3s var(--bounce); touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  .pbtn:active:not(:disabled) { transform: scale(.955); }
+  .pbtn small { display: block; font-size: 12px; font-weight: 700; opacity: .85; margin-top: 4px; }
+  .pbtn .big { font-size: 46px; line-height: 1; letter-spacing: -.04em; }
+  .pbtn.srv::before { content: ''; position: absolute; top: 14px; right: 14px; width: 14px; height: 14px; border-radius: 50%; background: var(--optic); box-shadow: 0 0 12px var(--optic); }
+  .svc { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 8px; margin: 0 12px; }
+  .svc button, .ut button { height: 56px; border-radius: 18px; font-weight: 800; font-size: 15px; background: var(--fill); transition: transform .25s var(--bounce); touch-action: manipulation; }
+  .svc button:active, .ut button:active { transform: scale(.94); }
+  .svc .second { background: color-mix(in srgb, var(--orange) 22%, var(--fill)); color: color-mix(in srgb, var(--orange) 80%, var(--ink)); }
+  .ut { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 8px 12px 0; }
+  .how { margin: 10px 12px 0; padding: 10px; border-radius: 18px; background: var(--fill); display: none; }
+  .how.show { display: block; }
+  .how .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .how .chip { height: 36px; } .how .chip.sel { background: var(--green); color: #fff; }
+  .dock { margin: 14px 12px 0; }
+  .lock { margin: 12px; }
+</style>
+</head>
+<body>
+<div class="r-top"><div class="row"><a class="brand" href="/tennis" style="font-size:14px"><span class="asl" style="width:28px;height:28px"></span></a><b class="grow ellipsis" id="ttl" style="font-size:14px">Tennis Remote</b><span id="chips" class="row"></span></div></div>
+<div id="app"><div class="skel" style="height:300px;margin:14px"></div></div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/tennis-common.js"></script>
+<script src="/tennis-engine.js"></script>
+<script src="/tennis-stats.js"></script>
+<script src="/tennis-graphics.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, toast, api } = TN;
+  const E = window.TennisEngine, GX = window.TennisGraphics, TS = window.TennisStats;
+  const matchId = new URLSearchParams(location.search).get('match');
+  const R = { match: null, tournament: null, L: null, socket: null, connected: false, outbox: [], flushing: false, lease: { token: null, mine: false, holder: null }, how: null, graphic: GX.idle(), dock: 'graphics' };
+  if (!matchId) { $('#app').innerHTML = '<div class="empty card" style="margin:20px"><b>No match chosen</b>Open the remote from the panel or the dashboard.</div>'; return; }
+  const OUTBOX_KEY = 'tn_outbox:' + matchId, LEASE_KEY = 'tn_lease:' + matchId;
+  R.outbox = TN.store.get(OUTBOX_KEY, []);
+  R.lease.token = TN.store.get(LEASE_KEY, null);
+  const other = (s) => (s === 'A' ? 'B' : 'A');
+  const saveOutbox = () => { if (R.outbox.length) TN.store.set(OUTBOX_KEY, R.outbox); else TN.store.del(OUTBOX_KEY); };
+  const setupOf = (m) => { const side = (s) => { const x = m.sides && m.sides[s]; return { name: x ? x.name : s, players: x ? x.players.map((p) => ({ playerId: p.playerId, name: p.name, short: p.short, country: p.country })) : [] }; }; return { format: m.format, rules: m.rules, sides: { A: side('A'), B: side('B') } }; };
+  const S = () => E.summary(R.L.setup, R.L.state);
+  const side = (s) => R.match.sides[s];
+  const short = (s) => { const x = side(s); if (!x) return s; return R.match.format === 'doubles' ? x.players.map((p) => TN.surname(p.name)).join('/') : TN.surname(x.players[0].name); };
+  const pname = (id) => { const p = R.L && R.L.setup.byId[id]; return p ? p.player.name : ''; };
+
+  async function boot() {
+    const user = await TN.authReady;
+    if (!user) { $('#app').innerHTML = '<div class="card" style="margin:20px;text-align:center"><div style="font-size:40px">🎾</div><h3>Sign in to score</h3><button class="btn primary" id="si" style="margin-top:12px">Sign in with Google</button></div>'; $('#si').onclick = () => TN.signIn().then(() => location.reload()); return; }
+    TN.syncClock();
+    R.socket = await TN.connect();
+    R.socket.on('connect', onConnect);
+    R.socket.on('disconnect', () => { R.connected = false; chips(); });
+    R.socket.on('tn:update', onUpdate);
+    R.socket.on('tn:lease', (d) => { if (d.matchId === matchId) { R.lease.holder = d.lease; checkLease(); } });
+    R.socket.on('tn:graphic', (d) => { if (d.matchId === matchId && d.graphic && d.graphic.seq >= (R.graphic.seq || 0)) { R.graphic = d.graphic; if (R.dock === 'graphics') dock(); } });
+    setInterval(heartbeat, 10000);
+  }
+  async function onConnect() {
+    R.connected = true;
+    const r = await TN.ack(R.socket, 'tn:join', { matchId, events: true });
+    if (!r.ok || !r.match.canManage) { $('#app').innerHTML = '<div class="empty card" style="margin:20px"><b>Not available</b>Only the tournament’s account can use the remote.</div>'; return; }
+    R.match = r.match; R.tournament = r.tournament; R.graphic = r.graphic || R.graphic;
+    rebuild(r.events || []);
+    await checkLease(true);
+    flush();
+  }
+  function rebuild(events) {
+    R.L = new E.Ledger(setupOf(R.match), events);
+    const keep = [];
+    R.outbox.forEach((o) => { if (R.L.has(o.event.eventId)) return; const ev = Object.assign({}, o.event); delete ev.seq; const c = R.L.check(ev); if (c.ok) { R.L.commit(c.pending); keep.push({ event: c.pending.event }); } });
+    R.outbox = keep; saveOutbox();
+    const ca = TN.sideColor(side('A'), '#0f766e'), cb = TN.sideColor(side('B'), '#b45309');
+    document.body.style.setProperty('--ca', ca); document.body.style.setProperty('--cb', cb === ca ? '#b45309' : cb);
+    render();
+  }
+  function resync() { clearTimeout(R.rs); R.rs = setTimeout(async () => { const r = await TN.ack(R.socket, 'tn:sync', { matchId }); if (r.ok) { Object.assign(R.match, r.match); rebuild(r.events || []); } }, 60); }
+  async function checkLease(first) {
+    const holder = R.lease.holder || (R.match && R.match.lease);
+    if (R.lease.token && R.connected) {
+      const r = await TN.ack(R.socket, 'tn:lease:heartbeat', { matchId, leaseToken: R.lease.token });
+      R.lease.mine = !!r.ok; R.lease.holder = r.lease || holder || null;
+      if (!r.ok && r.lost) { R.lease.token = null; TN.store.del(LEASE_KEY); if (!first) toast('Another device took control', 'err'); }
+    } else { R.lease.mine = false; R.lease.holder = holder || null; }
+    if (first && !R.lease.mine && !(R.lease.holder && R.lease.holder.active) && !R.match.locked) await takeControl(false, true);
+    render();
+  }
+  async function takeControl(force, quiet) {
+    const r = await api('POST', `/api/tennis/matches/${matchId}/lease`, { deviceId: TN.deviceId(), force: !!force });
+    if (r.ok) { R.lease.token = r.json.leaseToken; R.lease.mine = true; R.lease.holder = r.json.lease; TN.store.set(LEASE_KEY, R.lease.token); if (!quiet) toast('This phone is scoring the match'); flush(); }
+    else if (r.json.code === 'LEASE_HELD' && !quiet) { const h = r.json.holder || {}; if (await TN.confirm('Score from this phone?', `${h.email || 'Another device'} is scoring now. Taking over stops it from scoring — it is told at once. Graphics and clips work without taking over.`, 'Score from this phone')) return takeControl(true); }
+    else if (!quiet) toast(r.json.error || 'Could not take control', 'err');
+    render();
+  }
+  async function heartbeat() { if (!R.lease.token || !R.connected) return; const r = await TN.ack(R.socket, 'tn:lease:heartbeat', { matchId, leaseToken: R.lease.token }, 6000); if (r.lost) { R.lease.mine = false; R.lease.token = null; TN.store.del(LEASE_KEY); toast('Another device took control', 'err'); render(); } }
+  function send(raw, opts) {
+    opts = opts || {};
+    if (!R.lease.mine) { toast('Tap “Score from this phone” first', 'err'); return null; }
+    const ev = Object.assign({ eventId: TN.uid() }, raw, { at: Math.round(Date.now() + TN.clock.offset) });
+    const c = R.L.check(ev);
+    if (!c.ok) { toast(c.error, 'err'); return null; }
+    R.L.commit(c.pending);
+    R.outbox.push({ event: c.pending.event }); saveOutbox();
+    if (navigator.vibrate) try { navigator.vibrate(12); } catch (e) { /* not supported */ }
+    if (ev.type === 'POINT' && opts.how !== false && (R.match.tracking || {}).outcomes !== false) { const en = R.L.timeline[R.L.timeline.length - 1]; R.how = { eventId: en.eventId, side: en.side }; clearTimeout(R.ht); R.ht = setTimeout(() => { R.how = null; render(); }, 8000); }
+    else if (ev.type !== 'CORRECT') R.how = null;
+    render(); flush();
+    return c.pending;
+  }
+  async function flush() {
+    if (R.flushing || !R.connected || !R.lease.mine) return;
+    R.flushing = true;
+    try {
+      while (R.outbox.length && R.connected) {
+        const ev = Object.assign({}, R.outbox[0].event), localSeq = ev.seq; delete ev.seq;
+        const r = await TN.ack(R.socket, 'tn:event', { matchId, leaseToken: R.lease.token, event: ev }, 12000);
+        if (r.ok) { R.outbox.shift(); saveOutbox(); if (!r.duplicate && r.seq !== localSeq) { resync(); break; } continue; }
+        if (r.timeout || r.retry) break;
+        R.outbox = []; saveOutbox(); toast(r.error || 'Not saved', 'err'); resync(); break;
+      }
+    } finally { R.flushing = false; chips(); }
+  }
+  function onUpdate(u) {
+    if (u.matchId !== matchId || !R.L) return;
+    if (R.outbox.some((o) => o.event.eventId === (u.event && u.event.eventId)) || R.L.has(u.event && u.event.eventId)) return;
+    if (!R.outbox.length && u.event && u.seq === R.L.seq + 1 && !u.full) { const c = R.L.check(Object.assign({}, u.event, { seq: undefined })); if (c.ok) { R.L.commit(c.pending); render(); return; } }
+    resync();
+  }
+  function chips() {
+    $('#chips').innerHTML = (R.connected ? (R.outbox.length ? `<span class="chip warn"><span class="dot wait"></span>${R.outbox.length}</span>` : '<span class="chip on"><span class="dot ok"></span>Synced</span>') : '<span class="chip bad"><span class="dot bad"></span>Offline</span>')
+      + (R.lease.mine ? '<span class="chip on">● Scoring</span>' : '');
+  }
+  function point(s, extra) { const st = R.L.state, ev = Object.assign({ type: 'POINT', winner: s }, extra || {}); if ((R.match.tracking || {}).serve !== false && ev.serve == null) ev.serve = st.serve; if (ev.kind === 'DOUBLE_FAULT') ev.serve = 2; send(ev); }
+  function render() {
+    if (!R.L) return;
+    chips();
+    const s = S(), st = R.L.state, m = R.match;
+    $('#ttl').textContent = `${short('A')} v ${short('B')}`;
+    const row = (sd) => `<div class="srow ${s.serving === sd && st.status === 'in_play' ? 'srv' : ''}"><i></i><b style="color:${sd === 'A' ? 'var(--ca)' : 'var(--cb)'};filter:brightness(1.4)">${esc(short(sd))}</b><span class="st">${s.sets.map((x, i) => `<span class="${x.winner === sd ? 'w' : ''}${!x.winner && i === s.sets.length - 1 ? ' c' : ''}">${x.mtb && x.tb ? x.tb[sd] : x[sd]}</span>`).join('')}</span><span class="pt">${st.status === 'completed' ? '' : esc(s.display[sd])}</span></div>`;
+    const h = s.headline;
+    const call = st.status === 'pregame' ? 'Not started — start it in the panel' : st.status === 'completed' ? 'Match over · ' + TN.scoreLine(st.result, st.result.winner) : st.status === 'paused' ? 'Paused' : st.status === 'suspended' ? 'Suspended' : s.call;
+    const play = st.status === 'in_play' && R.lease.mine;
+    const how = R.how && R.L.entry(R.how.eventId);
+    const sideBtn = (sd) => `<button class="pbtn ${s.serving === sd ? 'srv' : ''}" data-p="${sd}" style="--c:${sd === 'A' ? 'var(--ca)' : 'var(--cb)'}" ${play ? '' : 'disabled'}><span><span class="big">${esc(s.display[sd])}</span><br>${esc(short(sd))}<small>Point</small></span></button>`;
+    const isSrv = how && how.serverSide === how.side;
+    const kinds = how ? (isSrv ? [['WINNER', 'Winner'], ['FORCED_ERROR', 'Forced err.'], ['UNFORCED_ERROR', 'Unforced err.'], ['ACE', 'Ace']] : [['WINNER', 'Winner'], ['FORCED_ERROR', 'Forced err.'], ['UNFORCED_ERROR', 'Unforced err.'], ['RETURN_WINNER', 'Return winner']]) : [];
+    $('#app').innerHTML = `<div class="sb">${row('A')}${row('B')}<div class="cl">${esc(call || '')}${h && h.kind !== 'game' ? `<small>${esc((h.count > 1 ? h.count + ' × ' : '') + ({ match: 'Match point', set: 'Set point', break: 'Break point' })[h.kind])}</small>` : ''}</div></div>
+      ${R.lease.mine ? '' : `<div class="lock"><button class="btn optic lg" id="take" style="width:100%">Score from this phone</button><p class="small muted" style="margin-top:6px;text-align:center">${esc(R.lease.holder && R.lease.holder.active ? (R.lease.holder.email || 'Another device') + ' is scoring now.' : 'Nobody is scoring right now.')} Graphics and clips below work either way.</p></div>`}
+      <div class="pts">${sideBtn('A')}${sideBtn('B')}</div>
+      <div class="svc"><button id="flt" class="${st.serve === 2 ? 'second' : ''}" ${play ? '' : 'disabled'}>${st.serve === 2 ? 'Double fault' : 'Fault'}</button><button id="ace" ${play ? '' : 'disabled'}>Ace</button><button id="let" ${play && st.rules.lets ? '' : 'disabled'}>Let</button></div>
+      <div class="how ${how ? 'show' : ''}">${how ? `<div class="small muted"><b>How did ${esc(short(how.side))} win it?</b> (optional)</div><div class="chips">${kinds.map(([k, l]) => `<button class="chip ${how.kind === k ? 'sel' : ''}" data-k="${k}">${esc(l)}</button>`).join('')}</div>` : ''}</div>
+      <div class="ut"><button id="undo" ${R.lease.mine && R.L.lastUndoable() ? '' : 'disabled'}>↶ Undo</button><button id="redo" ${R.lease.mine && R.L.lastRedoable() ? '' : 'disabled'}>↷ Redo</button><button id="more">⋯ Match</button></div>
+      <div class="dock"><div class="ptabs"><button data-d="graphics" aria-selected="${R.dock === 'graphics'}">Graphics</button><button data-d="clips" aria-selected="${R.dock === 'clips'}">Clips</button><button data-d="stats" aria-selected="${R.dock === 'stats'}">Stats</button></div><div class="card" id="dock" style="margin-top:10px"></div></div>`;
+    if ($('#take')) $('#take').onclick = () => takeControl(false);
+    $$('[data-p]').forEach((b) => { b.onclick = () => point(b.dataset.p); });
+    $('#flt').onclick = () => { const ss = S(); if (!ss.serving) return; if (R.L.state.serve === 2) point(other(ss.serving), { kind: 'DOUBLE_FAULT' }); else send({ type: 'FAULT' }); };
+    $('#ace').onclick = () => { const ss = S(); if (ss.serving) point(ss.serving, { kind: 'ACE' }); };
+    $('#let').onclick = () => send({ type: 'LET' });
+    $('#undo').onclick = () => { const last = R.L.lastUndoable(); if (!last) return; if (R.L.state.status === 'completed') TN.prompt('Reopen the match?', 'Say why the last point is undone:', 'reason', 'Undo').then((reason) => { if (reason) send({ type: 'UNDO', target: last.eventId, reason }); }); else send({ type: 'UNDO', target: last.eventId }); };
+    $('#redo').onclick = () => { const u = R.L.lastRedoable(); if (u) send({ type: 'REDO', target: u.eventId }); };
+    $('#more').onclick = matchSheet;
+    $$('[data-k]').forEach((b) => { b.onclick = () => { send({ type: 'CORRECT', target: how.eventId, patch: { kind: b.dataset.k, player: null }, reason: 'classified' }, { how: false }); R.how = { eventId: how.eventId, side: how.side }; render(); }; });
+    $$('[data-d]').forEach((b) => { b.onclick = () => { R.dock = b.dataset.d; render(); }; });
+    dock();
+  }
+  async function gfx(cmd) { const r = await TN.ack(R.socket, 'tn:graphic', Object.assign({ matchId, reqId: TN.uid() }, cmd)); if (!r.ok) toast(r.error || 'Could not change the graphic', 'err'); else { R.graphic = r.graphic; toast('On its way to air'); dock(); } }
+  function dock() {
+    const el = $('#dock');
+    if (!el || !R.L) return;
+    const g = R.graphic, players = [].concat(side('A') ? side('A').players : [], side('B') ? side('B').players : []);
+    if (R.dock === 'graphics') {
+      const scenes = ['intro', 'setScore', 'stats', 'result', 'tiebreak', 'breakPoint', 'matchPoint', 'upcoming'];
+      el.innerHTML = `<div class="small muted" style="margin-bottom:8px">${g.scene ? '● On air: <b>' + esc(GX.SCENES[g.scene].label) + '</b>' : 'Score bug ' + (GX.liveLayout(g, {}, null) ? 'on air' : 'off')}</div>
+        <div class="row wrapr">${g.scene ? '<button class="btn sm danger" id="gstop">Hide graphic</button>' : ''}<button class="btn sm" id="glive">Back to live</button><button class="btn sm" id="gbug">Score bug on</button><button class="btn sm" id="goff">Score bug off</button></div>
+        <div class="section-title">Full screen</div><div class="row wrapr">${scenes.map((k) => `<button class="btn sm" data-s="${k}">${esc(GX.SCENES[k].label)}</button>`).join('')}</div>
+        <div class="section-title">Call-outs</div><div class="row wrapr">${['ACE', 'BREAK_POINT', 'SET_POINT', 'MATCH_POINT', 'BREAK', 'DOUBLE_FAULT'].map((k) => `<button class="chip" data-m="${k}">${esc(GX.MOMENTS[k].label)}</button>`).join('')}</div>
+        <div class="section-title">Lower third</div><div class="row wrapr">${players.map((p) => `<button class="chip" data-l="${esc(p.playerId)}">${esc(TN.surname(p.name))}</button>`).join('')}<button class="chip" id="loff">Hide</button></div>`;
+      if ($('#gstop')) $('#gstop').onclick = () => gfx({ action: 'stop', id: g.id });
+      $('#glive').onclick = () => gfx({ action: 'live' }); $('#gbug').onclick = () => gfx({ action: 'live-on', layout: 'bug' }); $('#goff').onclick = () => gfx({ action: 'live-off' });
+      $$('[data-s]', el).forEach((b) => { b.onclick = () => gfx({ action: 'take', scene: b.dataset.s }); });
+      $$('[data-m]', el).forEach((b) => { b.onclick = () => { const ss = S(); gfx({ action: 'moment', kind: b.dataset.m, side: ss.headline && ss.headline.side !== 'both' ? ss.headline.side : ss.serving || undefined, playerId: ss.server ? ss.server.playerId : undefined }); }; });
+      $$('[data-l]', el).forEach((b) => { b.onclick = () => gfx({ action: 'lower', kind: 'player', data: { playerId: b.dataset.l } }); });
+      $('#loff').onclick = () => gfx({ action: 'lower-off' });
+    } else if (R.dock === 'clips') {
+      el.innerHTML = `<p class="small muted">A clip is cut by the Tennis Clipper on the vMix PC (its Clipper page or the panel must be clipping). Choose the player, then the moment:</p>
+        <select class="input" id="cp" style="margin:8px 0"><option value="">No player</option>${players.map((p) => `<option value="${esc(p.playerId)}">${esc(p.name)}</option>`).join('')}</select>
+        <div class="row wrapr">${Object.keys(TS.CLIP_KINDS).filter((k) => k !== 'POINT').map((k) => `<button class="btn sm" data-c="${k}">${esc(TS.CLIP_KINDS[k])}</button>`).join('')}</div>`;
+      $$('[data-c]', el).forEach((b) => { b.onclick = async () => {
+        const pid = $('#cp').value || null, ps = pid ? R.L.setup.byId[pid] : null, last = R.L.timeline.filter((e) => e.type === 'POINT' && !e.voided).pop();
+        const snap = last && last.after;
+        const clipId = matchId + '_clip-' + TN.uid().replace(/[^a-z0-9]/gi, '').slice(0, 16);
+        const w = R.match.clip || { preRollSec: 7, postRollSec: 3 };
+        const r = await api('POST', `/api/tennis/matches/${matchId}/clips`, { clipId, kind: b.dataset.c, playerId: pid || undefined, side: ps ? ps.side : undefined, status: 'REQUESTED', localStatus: 'WAITING_FOR_POSTROLL', t0: Math.round(Date.now() + TN.clock.offset), preRollSec: w.preRollSec, postRollSec: w.postRollSec, engine: 'tennis-clipper', set: snap ? snap.set : null, game: snap ? snap.game : null, pointNo: snap ? snap.pointNo : null, scoreAtTrigger: snap ? { sets: snap.setsWon.A + '-' + snap.setsWon.B, games: snap.games.A + '-' + snap.games.B, points: snap.points.A + '-' + snap.points.B, set: snap.set } : null });
+        toast(r.ok ? '🎬 Clip requested — the Clipper on the vMix PC cuts it' : (r.json.error || 'Could not request the clip'), r.ok ? '' : 'err');
+      }; });
+    } else {
+      const st = TS.compute({ setup: R.L.setup, state: R.L.state, timeline: R.L.timeline }), A = st.sides.A, B = st.sides.B;
+      const fmt = (v, l) => (v == null ? '–' : esc(String(v)) + (/%/.test(l) ? '%' : ''));
+      const rows = [['Aces', A.serve.aces, B.serve.aces], ['Double faults', A.serve.doubleFaults, B.serve.doubleFaults], ['1st serve %', A.serve.firstPct, B.serve.firstPct], ['Break points', A.ret.bpConverted + '/' + A.ret.bpChances, B.ret.bpConverted + '/' + B.ret.bpChances], ['Winners', A.winners, B.winners], ['Unforced errors', A.unforcedErrors, B.unforcedErrors], ['Points won', A.pointsWon, B.pointsWon]];
+      el.innerHTML = `<table class="tbl"><thead><tr><th>${esc(short('A'))}</th><th></th><th class="n">${esc(short('B'))}</th></tr></thead><tbody>${rows.map(([l, a, b]) => `<tr><td><b>${fmt(a, l)}</b></td><td class="muted small" style="text-align:center">${esc(l)}</td><td class="n"><b>${fmt(b, l)}</b></td></tr>`).join('')}</tbody></table>`;
+    }
+  }
+  function matchSheet() {
+    const st = R.L.state, play = st.status === 'in_play', stopped = st.status === 'paused' || st.status === 'suspended';
+    const sh = TN.sheet(`<h3>Match</h3><div class="stack" style="margin-top:12px"><button class="btn" data-x="PAUSE" ${play && R.lease.mine ? '' : 'disabled'}>⏸ Pause (medical …)</button><button class="btn" data-x="SUSPEND" ${play && R.lease.mine ? '' : 'disabled'}>☂ Suspend (rain …)</button><button class="btn green" data-x="RESUME" ${stopped && R.lease.mine ? '' : 'disabled'}>▶ Resume</button><button class="btn" data-x="ENDS" ${R.lease.mine ? '' : 'disabled'}>⇄ Change ends</button><a class="btn" href="/tennis-panel?match=${esc(matchId)}">Open the full panel</a></div><div class="foot"><button class="btn" data-close>Close</button></div>`);
+    $$('[data-x]', sh.el).forEach((b) => { b.onclick = () => { const t = b.dataset.x; if (send(t === 'PAUSE' ? { type: t, kind: 'MEDICAL' } : t === 'SUSPEND' ? { type: t, kind: 'RAIN' } : { type: t })) sh.close(); }; });
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tennis Panel · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/tennis-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🎾 THE TENNIS SCORING PANEL — the operator's desk for one match.
+
+  A point is ONE press (or ← / →): it is counted at once with the same rules
+  the server uses (tennis-engine.js), kept on this device until the server
+  confirms it, and sent again with the same id if the line drops — never
+  counted twice. How it was won (winner, error, net, stroke …) is an
+  optional second tap that never holds up the next point. Animations are
+  CSS on transform / opacity only: nothing waits for them.
+
+  ?match=<id>
+-->
+<style>
+  body { --ca: #0f766e; --cb: #b45309; --cl: var(--ca); --cr: var(--cb); overflow-x: hidden;
+    background: radial-gradient(60vmax 46vmax at 0% 0%, color-mix(in srgb, var(--cl) 15%, transparent), transparent 62%),
+                radial-gradient(60vmax 46vmax at 100% 100%, color-mix(in srgb, var(--cr) 15%, transparent), transparent 62%), var(--bg); }
+  .topbar .title { font-weight: 750; font-size: 14.5px; min-width: 0; line-height: 1.2; }
+  .topbar .title small { display: block; font-weight: 600; color: var(--mute); font-size: 11.5px; }
+  #chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  #main { padding: 14px clamp(10px, 1.6vw, 22px) 48px; }
+  .live { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 420px) minmax(0, 1fr); gap: clamp(10px, 1.1vw, 16px); align-items: start; }
+  @media (max-width: 1100px) { .live { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .center { grid-column: 1 / -1; order: -1; } }
+  @media (max-width: 640px) { .live { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; } }
+
+  /* a side */
+  .side { --c: #0f766e; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 28px; background: linear-gradient(180deg, color-mix(in srgb, var(--c) 9%, var(--card)), var(--card) 46%);
+    box-shadow: var(--shadow), 0 0 0 1px var(--line); transition: box-shadow .45s var(--spring), transform .45s var(--spring); position: relative; min-width: 0; }
+  .side.serving { box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 82%, transparent), 0 26px 64px -30px color-mix(in srgb, var(--c) 90%, transparent); }
+  .side .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .side .who .avs { display: flex; } .side .who .avs .av + .av { margin-left: -10px; }
+  .side .names { min-width: 0; display: grid; gap: 1px; }
+  .side .names b { font-size: clamp(16px, 1.5vw, 20px); font-weight: 850; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .side .names small { font-size: 12px; color: var(--mute); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srvtag { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px 0 8px; border-radius: 99px; font-size: 12px; font-weight: 800; color: var(--c);
+    background: color-mix(in srgb, var(--c) 16%, transparent); opacity: 0; transform: translateY(-4px) scale(.9); transition: opacity .3s, transform .45s var(--bounce); }
+  .srvtag i { width: 12px; height: 12px; border-radius: 50%; background: var(--optic); box-shadow: 0 0 0 3px color-mix(in srgb, var(--optic) 35%, transparent); }
+  .serving .srvtag { opacity: 1; transform: none; }
+  :root:not([data-theme="light"]) .srvtag { filter: brightness(1.3); }
+  .bigpt { text-align: center; font-size: clamp(76px, 12vh, 150px); line-height: .92; font-weight: 900; letter-spacing: -.06em; font-variant-numeric: tabular-nums; position: relative; min-height: 1em; }
+  .bigpt.pend::after { content: ''; position: absolute; top: 8%; right: 14%; width: 12px; height: 12px; border-radius: 50%; background: var(--orange); animation: tnpulse 1s infinite; }
+  .bigpt small { display: block; font-size: 12px; letter-spacing: .1em; font-weight: 800; color: var(--mute); text-transform: uppercase; margin-top: 4px; }
+  .roll { display: inline-block; animation: roll .42s var(--bounce); }
+  @keyframes roll { from { transform: translateY(18%) scale(.86); opacity: .25; } }
+  .point { height: clamp(84px, 13vh, 128px); border-radius: 26px; color: #fff; font-weight: 850; font-size: clamp(20px, 3vh, 28px); letter-spacing: -.02em; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 0 14px;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--c) 78%, #fff), var(--c) 52%, color-mix(in srgb, var(--c) 78%, #000));
+    box-shadow: 0 18px 40px -16px color-mix(in srgb, var(--c) 80%, transparent), inset 0 1px 0 rgba(255,255,255,.34), inset 0 -2px 0 rgba(0,0,0,.18);
+    transition: transform .32s var(--bounce), filter .18s, box-shadow .3s; position: relative; overflow: hidden; }
+  .point::after { content: ''; position: absolute; inset: 0; background: radial-gradient(120px 80px at var(--px, 50%) var(--py, 50%), rgba(255,255,255,.35), transparent 70%); opacity: 0; transition: opacity .5s; pointer-events: none; }
+  .point.flash::after { opacity: 1; transition: opacity 0s; }
+  .point:hover:not(:disabled) { filter: brightness(1.06); }
+  .point:active:not(:disabled) { transform: scale(.962); }
+  .point span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .point kbd { font: 800 12px/1 Inter, sans-serif; padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,.22); flex: none; }
+  .how { display: grid; gap: 8px; padding: 12px; border-radius: 18px; background: var(--fill); opacity: 0; transform: translateY(-6px); pointer-events: none; transition: opacity .25s, transform .35s var(--spring); }
+  .how.show { opacity: 1; transform: none; pointer-events: auto; }
+  .how .hl { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); display: flex; justify-content: space-between; gap: 8px; }
+  .how .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .how .chip.sel { background: var(--c); color: #fff; }
+  .how .chip kbd { font: 800 10px/1 Inter, sans-serif; opacity: .6; }
+  .sidefoot { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* the centre */
+  .center { display: grid; gap: 12px; min-width: 0; }
+  .board { padding: 12px 14px; border-radius: 24px; background: #08110d; color: #f1f7f3; box-shadow: var(--lift), 0 0 0 1px rgba(255,255,255,.06); }
+  :root[data-theme="light"] .board { background: #0d1a14; }
+  .board .bh { display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #8fb3a3; margin-bottom: 8px; gap: 8px; }
+  .board .bh b { color: var(--optic); }
+  .brow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 7px 0; }
+  .brow + .brow { border-top: 1px solid rgba(255,255,255,.08); }
+  .brow .ball { width: 12px; height: 12px; border-radius: 50%; background: var(--optic); box-shadow: 0 0 10px -1px var(--optic); transform: scale(0); transition: transform .45s var(--bounce); }
+  .brow.srv .ball { transform: scale(1); }
+  .brow .nm { font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+  .brow .nm i { width: 4px; height: 18px; border-radius: 2px; background: var(--c); flex: none; }
+  .brow .sets { display: flex; gap: 3px; font-variant-numeric: tabular-nums; }
+  .brow .sets span { min-width: 26px; text-align: center; font-weight: 800; font-size: 17px; color: #7d9a8d; position: relative; }
+  .brow .sets span.w { color: #fff; }
+  .brow .sets span.cur { color: #fff; background: rgba(255,255,255,.09); border-radius: 7px; }
+  .brow .sets sup { font-size: 9.5px; position: absolute; top: -2px; right: -1px; color: #9fb8ad; }
+  .brow .pts { min-width: 52px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-weight: 900; font-size: 20px; font-variant-numeric: tabular-nums; background: var(--optic); color: #0d1512; }
+  .call { text-align: center; padding: 12px; border-radius: 18px; font-weight: 850; font-size: 19px; letter-spacing: -.01em; background: var(--fill); min-height: 50px; display: grid; place-items: center; transition: background .3s; }
+  .call small { display: block; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); }
+  .call.p-break { background: color-mix(in srgb, var(--orange) 22%, transparent); }
+  .call.p-set { background: color-mix(in srgb, var(--purple) 24%, transparent); }
+  .call.p-match { background: color-mix(in srgb, var(--red) 24%, transparent); }
+  .call.p-ends { background: color-mix(in srgb, var(--blue) 20%, transparent); }
+  .svc { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; }
+  .svc button { height: 52px; border-radius: 16px; font-weight: 800; font-size: 15px; background: var(--fill); display: flex; align-items: center; justify-content: center; gap: 7px; transition: transform .28s var(--bounce), background .18s; }
+  .svc button:hover:not(:disabled) { background: var(--fill2); }
+  .svc button:active:not(:disabled) { transform: scale(.95); }
+  .svc button kbd { font: 800 10.5px/1 Inter, sans-serif; opacity: .55; }
+  .svc .flt.second { background: color-mix(in srgb, var(--orange) 20%, var(--fill)); color: color-mix(in srgb, var(--orange) 80%, var(--ink)); }
+  .svc .ace { background: color-mix(in srgb, var(--optic) 30%, var(--fill)); }
+  .tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .tool { height: 44px; border-radius: 14px; background: var(--fill); font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px; transition: transform .28s var(--bounce), background .18s; }
+  .tool:hover:not(:disabled) { background: var(--fill2); } .tool:active:not(:disabled) { transform: scale(.94); }
+  .court { width: 100%; height: auto; display: block; border-radius: 18px; background: #0b1611; box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); cursor: default; }
+  .court.track { cursor: crosshair; }
+  .court .pl { transition: transform .6s var(--spring); }
+  .court text { font: 800 11px Inter, sans-serif; fill: #fff; }
+  .setbreak { padding: 14px; border-radius: 18px; background: color-mix(in srgb, var(--optic) 16%, var(--card)); box-shadow: 0 0 0 1px var(--line); }
+
+  /* the lower deck: history / graphics / clips / stats / match */
+  .deck { margin-top: 16px; }
+  .deck .pane { margin-top: 12px; }
+  .hist { display: grid; gap: 6px; max-height: 440px; overflow: auto; }
+  .hrow { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 14px; background: var(--fill); font-size: 13.5px; }
+  .hrow.void { opacity: .45; text-decoration: line-through; }
+  .hrow .sc { font-weight: 800; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .hrow .tm { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  .hrow.k-break { box-shadow: inset 3px 0 0 var(--orange); } .hrow.k-set, .hrow.k-match { box-shadow: inset 3px 0 0 var(--optic); }
+  .gfx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  .gcard { border-radius: 16px; padding: 12px; background: var(--fill); display: grid; gap: 6px; align-content: start; transition: box-shadow .3s, background .3s; }
+  .gcard b { font-size: 13.5px; }
+  .gcard small { font-size: 11.5px; color: var(--mute); min-height: 15px; }
+  .gcard.on { box-shadow: 0 0 0 2px var(--red); background: color-mix(in srgb, var(--red) 10%, var(--fill)); }
+  .gcard .acts { display: flex; gap: 6px; }
+  .airline { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--fill); }
+  .airline.on { background: color-mix(in srgb, var(--red) 14%, var(--fill)); } .airline.live { background: color-mix(in srgb, var(--green) 14%, var(--fill)); }
+  .airline.bad { background: color-mix(in srgb, var(--red) 20%, var(--fill)); } .airline.warn { background: color-mix(in srgb, var(--orange) 16%, var(--fill)); }
+  .mom { display: flex; flex-wrap: wrap; gap: 6px; }
+  .steps { display: grid; gap: 14px; max-width: 1080px; margin: 0 auto; }
+  .step { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; }
+  .step .n { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--fill); }
+  .step.done .n { background: var(--green); color: #fff; }
+  .ordr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .ordr .slot { border-radius: 14px; background: var(--fill); padding: 10px; display: grid; gap: 6px; }
+  .ordr .slot small { font-size: 11px; font-weight: 800; color: var(--mute); text-transform: uppercase; letter-spacing: .06em; }
+  @media (max-width: 760px) { .ordr { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .clipst { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--fill2); white-space: nowrap; }
+  .clipst.ok { color: var(--green); } .clipst.wait { color: var(--orange); } .clipst.bad { color: var(--red); } .clipst.mute { color: var(--mute); }
+  .keys { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--mute); }
+  .keys kbd { font: 800 11px/1 Inter, sans-serif; padding: 3px 6px; border-radius: 6px; background: var(--fill2); color: var(--ink2); margin-right: 4px; }
+  body.view-only .point, body.view-only .svc button, body.view-only .tool.w { filter: grayscale(.7); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/tennis" title="Tennis dashboard"><span class="asl"></span><span class="bt"><b>Tennis Panel</b><small>by All Sports Live</small></span></a>
+  <div class="title grow ellipsis" id="title"></div>
+  <div id="chips"></div>
+  <button class="theme-btn" data-theme-btn aria-label="Theme"></button>
+</header>
+<main id="main"><div class="skel" style="height:420px;max-width:1200px;margin:20px auto"></div></main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/tennis-common.js"></script>
+<script src="/tennis-engine.js"></script>
+<script src="/tennis-stats.js"></script>
+<script src="/tennis-graphics.js"></script>
+<script src="/tennis-clipper.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, toast, api } = TN;
+  const E = window.TennisEngine, TS = window.TennisStats, GX = window.TennisGraphics;
+  const qs = new URLSearchParams(location.search);
+  const P = {
+    matchId: qs.get('match'), match: null, tournament: null, L: null, socket: null, connected: false,
+    outbox: [], flushing: false, lease: { token: null, mine: false, holder: null },
+    CL: null, how: null, tab: TN.store.get('tn_panel_tab', 'history'), followEnds: TN.store.get('tn_follow_ends', true),
+    graphic: GX.idle(), style: GX.normalizeStyle(null), outputs: [], view: null, last: {}
+  };
+  if (!P.matchId) { $('#main').innerHTML = '<div class="empty card" style="max-width:520px;margin:40px auto"><b>No match chosen</b>Open a match from the <a href="/tennis">tennis dashboard</a>.</div>'; return; }
+  const OUTBOX_KEY = 'tn_outbox:' + P.matchId, LEASE_KEY = 'tn_lease:' + P.matchId;
+  P.outbox = TN.store.get(OUTBOX_KEY, []);
+  P.lease.token = TN.store.get(LEASE_KEY, null);
+  const other = (s) => (s === 'A' ? 'B' : 'A');
+
+  /* =============================== boot */
+  async function boot() {
+    const user = await TN.authReady;
+    if (!user) return gate('Sign in to score', 'The panel is for the tournament’s authorised account.', true);
+    TN.syncClock();
+    P.socket = await TN.connect();
+    P.socket.on('connect', onConnect);
+    P.socket.on('disconnect', () => { P.connected = false; renderChips(); });
+    P.socket.on('tn:update', onUpdate);
+    P.socket.on('tn:lease', (d) => { if (d.matchId === P.matchId) { P.lease.holder = d.lease; checkLease(); } });
+    P.socket.on('tn:match', (d) => { if (d.matchId === P.matchId) { const keep = { clipToken: P.match.clipToken, overlayKey: P.match.overlayKey, canManage: P.match.canManage }; Object.assign(P.match, d.match, keep); rebuildIfSetupChanged(); render(); } });
+    P.socket.on('tn:report', (d) => { if (d.matchId === P.matchId) { P.match.report = Object.assign(P.match.report || {}, { status: d.status, version: d.version || (P.match.report && P.match.report.version) }); if (P.view === 'done') renderDone(); } });
+    P.socket.on('tn:graphic', (d) => { if (d.matchId === P.matchId) setAir(d.graphic); });
+    P.socket.on('tn:outputs', (d) => { if (d.matchId === P.matchId) { P.outputs = d.outputs || []; renderAir(); } });
+    P.socket.on('tn:style', (d) => { if (P.match && d.tournamentId === P.match.tournamentId) { P.style = GX.normalizeStyle(d.style); renderGfx(); } });
+    setInterval(heartbeat, 10000);
+    setInterval(() => { renderAir(); }, 1000);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('beforeunload', (e) => { if (P.outbox.length) { e.preventDefault(); e.returnValue = ''; } });
+  }
+  function gate(title, text, signIn) {
+    $('#main').innerHTML = `<div class="card" style="max-width:520px;margin:40px auto;text-align:center"><div style="font-size:42px">🎾</div><h2 style="margin:6px 0">${esc(title)}</h2><p class="muted">${esc(text)}</p>
+      ${signIn ? '<button class="btn primary" style="margin-top:14px" id="gsi">Sign in with Google</button>' : '<a class="btn" style="margin-top:14px" href="/tennis">Tennis dashboard</a>'}</div>`;
+    if ($('#gsi')) $('#gsi').onclick = () => TN.signIn().then(() => location.reload());
+  }
+  async function onConnect() {
+    P.connected = true;
+    const r = await TN.ack(P.socket, 'tn:join', { matchId: P.matchId, events: true });
+    if (!r.ok) return gate('Match not found', 'It may have been deleted, or this account cannot open it.');
+    if (!r.match.canManage) return gate('View only', 'Only the account that runs this tournament can score it. The public match centre is open to everyone.');
+    P.match = r.match; P.tournament = r.tournament;
+    P.style = GX.normalizeStyle(r.style);
+    P.outputs = r.outputs || [];
+    P.graphic = GX.idle(); setAir(r.graphic);
+    rebuild(r.events || []);
+    await checkLease(true);
+    startClipper();
+    renderChips();
+    flush();
+  }
+  function startClipper() {
+    if (!window.TNClipper) return;
+    if (P.CL) { P.CL.refresh(); return; }
+    let paint = 0;
+    P.CL = TNClipper.create({
+      matchId: P.matchId, role: 'panel', socket: P.socket, toast,
+      getMatch: () => P.match, getTournament: () => P.tournament, getTimeline: () => (P.L ? P.L.timeline : []), getSetup: () => (P.L ? P.L.setup : null),
+      onChange: () => { cancelAnimationFrame(paint); paint = requestAnimationFrame(() => { renderChips(); if (P.tab === 'clips') renderClips(); }); }
+    });
+  }
+  function setupOf(m) {
+    const side = (s) => { const x = m.sides && m.sides[s]; return { name: x ? x.name : (s === 'A' ? 'Player A' : 'Player B'), players: x ? (x.players || []).map((p) => ({ playerId: p.playerId, name: p.name, short: p.short, country: p.country })) : [] }; };
+    return { format: m.format, rules: m.rules, sides: { A: side('A'), B: side('B') } };
+  }
+  let setupKey = '';
+  function rebuildIfSetupChanged() { if (JSON.stringify(setupOf(P.match)) !== setupKey) resync(); }
+  // the ledger = what the server has + what this device sent and is waiting to hear about
+  function rebuild(events) {
+    setupKey = JSON.stringify(setupOf(P.match));
+    P.L = new E.Ledger(setupOf(P.match), events);
+    const keep = [];
+    P.outbox.forEach((o) => {
+      if (P.L.has(o.event.eventId)) return;
+      const ev = Object.assign({}, o.event); delete ev.seq;
+      const chk = P.L.check(ev);
+      if (chk.ok) { P.L.commit(chk.pending); keep.push({ event: chk.pending.event }); }
+      else toast('Not saved: ' + chk.error, 'err');
+    });
+    P.outbox = keep; saveOutbox();
+    applyColors();
+    P.view = null;
+    render();
+  }
+  let resyncTimer = null;
+  function resync() {
+    clearTimeout(resyncTimer);
+    resyncTimer = setTimeout(async () => {
+      if (!P.socket || !P.connected) return;
+      const r = await TN.ack(P.socket, 'tn:sync', { matchId: P.matchId });
+      if (r.ok) { const keep = { clipToken: P.match.clipToken, overlayKey: P.match.overlayKey, canManage: P.match.canManage }; P.match = Object.assign(P.match, r.match, keep); rebuild(r.events || []); setAir(r.graphic); }
+    }, 60);
+  }
+  function saveOutbox() { if (P.outbox.length) TN.store.set(OUTBOX_KEY, P.outbox); else TN.store.del(OUTBOX_KEY); }
+
+  /* =============================== the controller lease */
+  async function checkLease(first) {
+    const holder = P.lease.holder || (P.match && P.match.lease);
+    if (P.lease.token && P.connected) {
+      const r = await TN.ack(P.socket, 'tn:lease:heartbeat', { matchId: P.matchId, leaseToken: P.lease.token });
+      P.lease.mine = !!r.ok;
+      P.lease.holder = r.lease || holder || null;
+      if (!r.ok && r.lost) { P.lease.token = null; TN.store.del(LEASE_KEY); if (!first) toast('Another device took control of this match', 'err'); }
+    } else { P.lease.mine = false; P.lease.holder = holder || null; }
+    if (first && !P.lease.mine && !(P.lease.holder && P.lease.holder.active) && !P.match.locked) await takeControl(false, true);
+    document.body.classList.toggle('view-only', !P.lease.mine);
+    renderChips(); render();
+  }
+  async function takeControl(force, quiet) {
+    const r = await api('POST', `/api/tennis/matches/${P.matchId}/lease`, { deviceId: TN.deviceId(), force: !!force });
+    if (r.ok) {
+      P.lease.token = r.json.leaseToken; P.lease.mine = true; P.lease.holder = r.json.lease;
+      TN.store.set(LEASE_KEY, P.lease.token);
+      if (!quiet) toast('This device is now scoring the match');
+      flush();
+    } else if (r.json.code === 'LEASE_HELD' && !quiet) {
+      const h = r.json.holder || {};
+      if (await TN.confirm('Take control from another device?', `${h.email || 'Another device'} is scoring this match (last seen ${TN.ago(h.heartbeatAt)}). Taking over stops that device from scoring — it is told straight away.`, 'Take control')) return takeControl(true);
+    } else if (!quiet) toast(r.json.error || 'Could not take control', 'err');
+    document.body.classList.toggle('view-only', !P.lease.mine);
+    renderChips(); render();
+  }
+  async function heartbeat() {
+    if (!P.lease.token || !P.connected) return;
+    const r = await TN.ack(P.socket, 'tn:lease:heartbeat', { matchId: P.matchId, leaseToken: P.lease.token }, 6000);
+    if (r.lost) { P.lease.mine = false; P.lease.token = null; TN.store.del(LEASE_KEY); P.lease.holder = r.lease; toast('Another device took control of this match', 'err'); document.body.classList.add('view-only'); renderChips(); render(); }
+  }
+
+  /* =============================== sending events */
+  // Checked here with the server's own rules, applied at once, kept until
+  // the server confirms it (sent again with the same id after a drop).
+  function send(raw, opts) {
+    opts = opts || {};
+    if (!P.L) return null;
+    if (P.match.locked) { toast('This match is locked', 'err'); return null; }
+    if (!P.lease.mine) { toast('Take control of the match first', 'err'); return null; }
+    const localAt = Date.now();
+    const ev = Object.assign({ eventId: TN.uid() }, raw, { at: Math.round(localAt + TN.clock.offset) });
+    const chk = P.L.check(ev);
+    if (!chk.ok) { toast(chk.error, 'err'); return null; }
+    const before = P.last.summary || null;
+    P.L.commit(chk.pending);
+    P.outbox.push({ event: chk.pending.event }); saveOutbox();
+    const entry = P.L.timeline[P.L.timeline.length - 1];
+    if (ev.type === 'POINT' && P.CL) P.CL.point(chk.pending.event, entry, localAt);
+    if (ev.type === 'POINT' && opts.how !== false) openHow(entry);
+    else if (E.META[ev.type] || ev.type !== 'POINT') closeHow();
+    if (P.CL && (E.META[ev.type])) P.CL.reconcile();
+    void before;
+    render();
+    flush();
+    return chk.pending;
+  }
+  async function flush() {
+    if (P.flushing || !P.connected || !P.lease.mine) return;
+    P.flushing = true;
+    try {
+      while (P.outbox.length && P.connected) {
+        const item = P.outbox[0];
+        const ev = Object.assign({}, item.event); const localSeq = ev.seq; delete ev.seq;
+        const r = await TN.ack(P.socket, 'tn:event', { matchId: P.matchId, leaseToken: P.lease.token, event: ev }, 12000);
+        if (r.ok) {
+          P.outbox.shift(); saveOutbox();
+          if (!r.duplicate && r.seq !== localSeq) { resync(); break; }
+          continue;
+        }
+        if (r.timeout || r.retry) break;                    // the line: keep it, try again
+        P.outbox = []; saveOutbox();                         // refused: back to what the server has
+        if (r.code === 'LEASE_REQUIRED') { P.lease.mine = false; P.lease.token = null; TN.store.del(LEASE_KEY); }
+        toast(r.error || 'Not saved', 'err');
+        resync();
+        break;
+      }
+    } finally { P.flushing = false; renderChips(); renderPending(); }
+  }
+  function onUpdate(u) {
+    if (u.matchId !== P.matchId || !P.L) return;
+    if (P.outbox.some((o) => o.event.eventId === (u.event && u.event.eventId))) return;
+    if (P.L.has(u.event && u.event.eventId)) return;
+    if (P.CL && u.event && u.event.type === 'POINT') P.CL.remotePoint(u.event, u.entry);
+    if (!P.outbox.length && u.event && u.seq === P.L.seq + 1 && !u.full) {
+      const chk = P.L.check(Object.assign({}, u.event, { seq: undefined }));
+      if (chk.ok) { P.L.commit(chk.pending); render(); if (P.CL) P.CL.reconcile(); return; }
+    }
+    resync();
+  }
+
+  /* =============================== small helpers */
+  const S = () => E.summary(P.L.setup, P.L.state);
+  function side(s) { return P.match.sides[s]; }
+  function sideLabel(s) { const x = side(s); return x ? x.name : (s === 'A' ? 'Side A' : 'Side B'); }
+  function shortSide(s) { const x = side(s); if (!x) return s; return P.match.format === 'doubles' ? x.players.map((p) => TN.surname(p.name)).join('/') : TN.surname(x.players[0] && x.players[0].name); }
+  function pname(id) { const p = P.L && P.L.setup.byId[id]; return p ? p.player.name : ''; }
+  function sideOf(id) { const p = P.L && P.L.setup.byId[id]; return p ? p.side : null; }
+  function orderLR() {
+    const s = P.L ? P.L.state : null;
+    return P.followEnds && s && s.left === 'B' ? ['B', 'A'] : ['A', 'B'];
+  }
+  function applyColors() {
+    const ca = TN.sideColor(side('A'), '#0f766e'), cb = TN.sideColor(side('B'), '#b45309');
+    document.body.style.setProperty('--ca', ca);
+    document.body.style.setProperty('--cb', cb === ca ? '#b45309' : cb);
+    const [l, r] = orderLR();
+    document.body.style.setProperty('--cl', l === 'A' ? 'var(--ca)' : 'var(--cb)');
+    document.body.style.setProperty('--cr', r === 'A' ? 'var(--ca)' : 'var(--cb)');
+  }
+  function renderTitle() {
+    const m = P.match;
+    $('#title').innerHTML = `${esc(sideLabel('A'))} <span class="muted">v</span> ${esc(sideLabel('B'))}<small>${esc([P.tournament && P.tournament.name, m.eventName, m.stage && m.stage.round, m.court ? 'Court ' + String(m.court).replace(/^court\s*/i, '') : ''].filter(Boolean).join(' · '))}</small>`;
+  }
+  function renderChips() {
+    if (!P.match) return;
+    const conn = P.connected ? (P.outbox.length ? `<span class="chip warn"><span class="dot wait"></span>Saving ${P.outbox.length}…</span>` : '<span class="chip on"><span class="dot ok"></span>Synced</span>') : `<span class="chip bad"><span class="dot bad"></span>${P.socket && P.socket.io && P.socket.io._reconnecting ? 'Reconnecting' : 'Offline'}${P.outbox.length ? ' · ' + P.outbox.length + ' waiting' : ''}</span>`;
+    const lease = P.lease.mine ? '<span class="chip on" title="This device is scoring">● In control</span>' : '<button class="chip warn" id="takeBtn">View only · Take control</button>';
+    const clp = P.CL && window.TNClipper ? TNClipper.chip(P.CL) : '';
+    $('#chips').innerHTML = '<button class="chip" id="airChip" title="What the overlay shows"></button>' + clp + conn + lease;
+    if ($('#takeBtn')) $('#takeBtn').onclick = () => takeControl(false);
+    if ($('#clpChip')) $('#clpChip').onclick = () => setTab('clips', true);
+    $('#airChip').onclick = () => setTab('graphics', true);
+    renderAir();
+  }
+  function renderPending() {
+    $$('.bigpt').forEach((b) => b.classList.toggle('pend', P.outbox.some((o) => o.event.type === 'POINT' && o.event.winner === b.dataset.side)));
+  }
+
+  /* =============================== views */
+  let raf = 0;
+  function render() { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); }
+  function draw() {
+    if (!P.match || !P.L) return;
+    renderTitle();
+    applyColors();
+    const st = P.L.state.status;
+    const view = st === 'pregame' ? 'pre' : (st === 'completed' || st === 'abandoned') ? 'done' : 'live';
+    if (view !== P.view) { P.view = view; P.last = {}; if (view === 'pre') buildPre(); else if (view === 'live') buildLive(); else buildDone(); }
+    if (view === 'pre') renderPre();
+    else if (view === 'live') renderLive();
+    else renderDone();
+    renderChips();
+    renderPending();
+  }
+
+  /* ---------- pregame: players, toss, start ---------- */
+  function buildPre() {
+    $('#main').innerHTML = `<div class="steps" id="pre"></div><div class="deck wrap" id="deck"></div>`;
+    buildDeck();
+  }
+  function renderPre() {
+    const m = P.match, st = P.L.state;
+    const both = m.sides.A && m.sides.B && P.L.setup.ready;
+    const toss = st.toss;
+    const playerLine = (s) => { const x = side(s); if (!x) return `<span class="muted">${esc(TN.slotLabel(m, s))}</span>`; return x.players.map((p) => `<span class="row" style="gap:8px">${TN.avatar(p, 34)}<b>${esc(p.name)}</b> ${TN.ctry(p.country)}${p.seed ? ` <span class="seed">[${p.seed}]</span>` : ''}</span>`).join(''); };
+    $('#pre').innerHTML = `
+      <div class="card step ${both ? 'done' : ''}"><span class="n">1</span><div class="stack"><h3>${m.format === 'doubles' ? 'The teams' : 'The players'}</h3>
+        <div class="grid2"><div class="stack">${playerLine('A')}</div><div class="stack">${playerLine('B')}</div></div>
+        <div class="small muted">${esc(E.normalizeRules(m.rules).label)} · ${esc(TN.surface(m.surface).label)}${both ? '' : ' · <a href="/tennis">set the players in the dashboard</a>'}</div>
+        <div class="row wrapr"><button class="btn sm" data-g="intro">Match intro on air</button>${m.format === 'doubles' ? '<button class="btn sm" data-g="teams">Teams on air</button>' : '<button class="btn sm" data-g="compare">Comparison on air</button>'}<button class="btn sm" data-g="tournament">Tournament on air</button></div></div></div>
+      <div class="card step ${toss ? 'done' : ''}"><span class="n">2</span><div class="stack"><h3>The toss</h3>
+        ${toss ? `<p class="small">${esc(tossText(toss))}</p><div class="row wrapr"><button class="btn sm" data-g="toss">Toss on air</button><button class="btn sm" id="retoss" ${P.lease.mine ? '' : 'disabled'}>Record again</button></div>` : `<p class="small muted">The winner of the toss chooses to serve, to receive, an end — or lets the opponent choose first. (Optional: you can start without it.)</p><div><button class="btn primary sm" id="tossBtn" ${P.lease.mine && both ? '' : 'disabled'}>Record the toss</button></div>`}</div></div>
+      <div class="card step"><span class="n">3</span><div class="stack"><div class="row wrapr"><div class="grow"><h3>Start the match</h3><p class="small muted">${m.format === 'doubles' ? 'Choose the order of service and who receives in each court.' : 'Choose who serves first and the ends.'}</p></div>
+        <button class="btn sm" data-g="server">First server on air</button><button class="btn sm" data-g="start">Match starting on air</button><button class="btn green" id="startBtn" ${both && P.lease.mine ? '' : 'disabled'}>Start the match</button></div>
+        ${trackingHtml()}</div></div>
+      <div class="card step"><span class="n">·</span><div class="row wrapr"><div class="grow"><h3>Before play</h3><p class="small muted">A walkover is recorded before the first point; once play has begun, a player who stops retires.</p></div><button class="btn danger sm" id="woBtn" ${both && P.lease.mine ? '' : 'disabled'}>Walkover…</button></div></div>`;
+    wireGfxButtons($('#pre'));
+    if ($('#tossBtn')) $('#tossBtn').onclick = tossSheet;
+    if ($('#retoss')) $('#retoss').onclick = tossSheet;
+    $('#startBtn').onclick = startSheet;
+    $('#woBtn').onclick = () => statusSheet('WALKOVER');
+    wireTracking($('#pre'));
+    renderDeck();
+  }
+  function tossText(t) { return `${sideLabel(t.winner)} won the toss and chose ${({ serve: 'to serve', receive: 'to receive', end: 'an end', defer: 'to let the opponent choose' })[t.choice]} — ${sideLabel(t.firstServe)} serve${P.match.format === 'doubles' ? '' : 's'} first.`; }
+  function tossSheet() {
+    let st = { winner: 'A', choice: 'serve', firstServe: 'A', left: 'A' };
+    const s = TN.sheet(`<h3>The toss</h3><div class="stack" style="margin-top:12px">
+      <label class="field">Who won the toss?<div class="seg" id="tw"><button data-v="A">${esc(sideLabel('A'))}</button><button data-v="B">${esc(sideLabel('B'))}</button></div></label>
+      <label class="field">They chose<div class="seg" id="tc"><button data-v="serve">To serve</button><button data-v="receive">To receive</button><button data-v="end">An end</button><button data-v="defer">Opponent chooses</button></div></label>
+      <label class="field">Who serves first?<div class="seg" id="tf"><button data-v="A">${esc(sideLabel('A'))}</button><button data-v="B">${esc(sideLabel('B'))}</button></div></label>
+      <label class="field">Who starts at the left end (the umpire's left)?<div class="seg" id="tl"><button data-v="A">${esc(sideLabel('A'))}</button><button data-v="B">${esc(sideLabel('B'))}</button></div></label>
+      </div><div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ok">Record the toss</button></div>`);
+    const seg = (id, key) => { const el = $('#' + id, s.el); const paint = () => $$('button', el).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st[key]))); $$('button', el).forEach((b) => { b.onclick = () => { st[key] = b.dataset.v; if (key === 'winner' || key === 'choice') { if (st.choice === 'serve') st.firstServe = st.winner; if (st.choice === 'receive') st.firstServe = other(st.winner); } paintAll(); }; }); return paint; };
+    const ps = [seg('tw', 'winner'), seg('tc', 'choice'), seg('tf', 'firstServe'), seg('tl', 'left')];
+    const paintAll = () => ps.forEach((f) => f());
+    paintAll();
+    $('#ok', s.el).onclick = () => { if (send({ type: 'TOSS', winner: st.winner, choice: st.choice, firstServe: st.firstServe, left: st.left })) s.close(); };
+  }
+  function startSheet() {
+    const m = P.match, st = P.L.state, d = m.format === 'doubles';
+    const toss = st.toss;
+    const firstSide = toss ? toss.firstServe : 'A';
+    const ids = (s) => P.L.setup.sides[s].ids;
+    const o = { server: ids(firstSide)[0], left: st.left || (toss && toss.left) || 'A', order: null, receive: E.defaultReceive(P.L.setup) };
+    const rebuildOrder = () => { const s1 = sideOf(o.server), s2 = other(s1); const second = o.second && sideOf(o.second) === s2 ? o.second : ids(s2)[0]; o.second = second; o.order = [o.server, second, ids(s1).find((x) => x !== o.server), ids(s2).find((x) => x !== second)]; };
+    const pick = (list, cur, key) => `<div class="seg" data-k="${key}">${list.map((id) => `<button data-v="${esc(id)}" aria-pressed="${id === cur}">${esc(pname(id))}</button>`).join('')}</div>`;
+    const paint = () => {
+      if (d) rebuildOrder();
+      const all = ids('A').concat(ids('B'));
+      el.innerHTML = `<label class="field">Serving first${pick(all, o.server, 'server')}</label>
+        ${d ? `<label class="field">Serving the second game (the other team)${pick(ids(other(sideOf(o.server))), o.second, 'second')}</label>
+          <div class="ordr">${o.order.map((id, i) => `<div class="slot"><small>Game ${i + 1}${i ? '' : ' · first'}</small><b>${esc(pname(id))}</b><span class="tiny muted">${esc(sideLabel(sideOf(id)))}</span></div>`).join('')}</div>
+          <div class="grid2">${['A', 'B'].map((s) => `<label class="field">${esc(sideLabel(s))} — deuce court (right)${pick(ids(s), o.receive[s].deuce, 'rcv' + s)}</label>`).join('')}</div>` : ''}
+        <label class="field">At the left end (the umpire's left)<div class="seg" data-k="left"><button data-v="A" aria-pressed="${o.left === 'A'}">${esc(sideLabel('A'))}</button><button data-v="B" aria-pressed="${o.left === 'B'}">${esc(sideLabel('B'))}</button></div></label>`;
+      $$('.seg', el).forEach((sg) => $$('button', sg).forEach((b) => { b.onclick = () => {
+        const k = sg.dataset.k, v = b.dataset.v;
+        if (k === 'server') o.server = v; else if (k === 'second') o.second = v; else if (k === 'left') o.left = v;
+        else if (k === 'rcvA' || k === 'rcvB') { const s = k.slice(3); o.receive[s] = { deuce: v, ad: ids(s).find((x) => x !== v) }; }
+        paint();
+      }; }));
+    };
+    const s = TN.sheet(`<h3>Start the match</h3><div class="stack" style="margin-top:12px" id="ss"></div><div class="foot"><button class="btn" data-close>Cancel</button><button class="btn green" id="go">Start — ${d ? 'first point' : 'play'}</button></div>`, { wide: d });
+    const el = $('#ss', s.el);
+    paint();
+    $('#go', s.el).onclick = () => {
+      const ev = { type: 'START', server: o.server, left: o.left };
+      if (d) { ev.order = o.order; ev.receive = o.receive; }
+      if (send(ev)) s.close();
+    };
+  }
+  function trackingHtml() {
+    const t = Object.assign({ serve: true, outcomes: true, net: false, shots: false, speed: false }, P.match.tracking || {});
+    const sw = (k, label) => `<label class="row small"><button class="switch" data-trk="${k}" role="switch" aria-checked="${!!t[k]}"></button>${esc(label)}</label>`;
+    return `<div class="row wrapr" style="gap:16px">${sw('serve', 'Track 1st / 2nd serves')}${sw('outcomes', 'Ask how each point was won')}${sw('net', 'Net points')}${sw('shots', 'Shot location on the court')}${sw('speed', 'Serve speed')}</div>`;
+  }
+  function wireTracking(root) {
+    $$('[data-trk]', root).forEach((b) => { b.onclick = async () => {
+      const k = b.dataset.trk, t = Object.assign({}, P.match.tracking || {});
+      t[k] = b.getAttribute('aria-checked') !== 'true';
+      b.setAttribute('aria-checked', String(t[k]));
+      P.match.tracking = t;
+      const r = await api('PUT', `/api/tennis/matches/${P.matchId}`, { tracking: t });
+      if (!r.ok) toast(r.json.error || 'Not saved', 'err');
+      render();
+    }; });
+  }
+
+  /* ---------- live ---------- */
+  function sideCard(pos) {
+    return `<section class="side" data-pos="${pos}">
+      <div class="who"><span class="avs" data-avs></span><div class="names"><b data-nm></b><small data-sub></small></div></div>
+      <span class="srvtag"><i></i><span data-srv>Serving</span></span>
+      <div class="bigpt" data-big></div>
+      <button class="point" data-point></button>
+      <div class="how" data-how></div>
+      <div class="sidefoot" data-foot></div>
+    </section>`;
+  }
+  function buildLive() {
+    $('#main').innerHTML = `<div class="live">${sideCard('L')}
+      <section class="center">
+        <div class="board" id="board"></div>
+        <div class="call" id="call"></div>
+        <div id="setbreak"></div>
+        <div class="svc"><button class="flt" id="fault"></button><button class="ace" id="ace">Ace <kbd>E</kbd></button><button id="let">Let <kbd>T</kbd></button></div>
+        <svg class="court" id="court" viewBox="-13.4 -7 26.8 14" aria-label="The court"></svg>
+        <div class="tools"><button class="tool w" id="undo">↶ Undo <kbd class="tiny muted">Z</kbd></button><button class="tool w" id="redo">↷ Redo</button><button class="tool w" id="ends">⇄ Ends</button><button class="tool w" id="srvfix">◎ Server</button></div>
+      </section>${sideCard('R')}</div>
+      <div class="deck" id="deck"></div>`;
+    $$('.point').forEach((b) => {
+      b.addEventListener('pointerdown', (e) => { const r = b.getBoundingClientRect(); b.style.setProperty('--px', (e.clientX - r.left) + 'px'); b.style.setProperty('--py', (e.clientY - r.top) + 'px'); });
+      b.onclick = () => { const s = b.dataset.side; flashBtn(b); point(s); };
+    });
+    $('#fault').onclick = fault;
+    $('#ace').onclick = () => { const s = S(); if (s.serving) point(s.serving, { kind: 'ACE' }); };
+    $('#let').onclick = () => send({ type: 'LET' });
+    $('#undo').onclick = undo;
+    $('#redo').onclick = redo;
+    $('#ends').onclick = () => send({ type: 'ENDS' });
+    $('#srvfix').onclick = serverSheet;
+    $('#court').addEventListener('click', onCourtClick);
+    buildDeck();
+  }
+  function flashBtn(b) { b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 30); }
+  function point(s, extra) {
+    if (!s) return;
+    const st = P.L.state, t = P.match.tracking || {};
+    const ev = Object.assign({ type: 'POINT', winner: s }, extra || {});
+    if (t.serve !== false && ev.serve == null) ev.serve = st.serve;
+    if (ev.kind === 'DOUBLE_FAULT') ev.serve = 2;
+    send(ev);
+  }
+  function fault() {
+    const st = P.L.state, s = S();
+    if (!s.serving) return;
+    if (st.serve === 2) point(other(s.serving), { kind: 'DOUBLE_FAULT' });
+    else send({ type: 'FAULT' });
+  }
+  function undo() {
+    const last = P.L.lastUndoable();
+    if (!last) return toast('Nothing to undo');
+    const done = P.L.state.status === 'completed' || P.L.state.status === 'abandoned';
+    if (done) {
+      TN.prompt('Reopen the match?', 'The match is over — undoing its last event reopens it (the scorecard PDF is remade afterwards). Say why:', 'e.g. the last point was out', 'Undo').then((reason) => { if (reason) send({ type: 'UNDO', target: last.eventId, reason }); });
+      return;
+    }
+    send({ type: 'UNDO', target: last.eventId });
+  }
+  function redo() { const u = P.L.lastRedoable(); if (!u) return toast('Nothing to redo'); send({ type: 'REDO', target: u.eventId }); }
+
+  function renderLive() {
+    const s = S(), st = P.L.state, m = P.match;
+    P.last.summary = s;
+    const [l, r] = orderLR();
+    fillSide($('.side[data-pos="L"]'), l, s);
+    fillSide($('.side[data-pos="R"]'), r, s);
+    renderBoard(s);
+    renderCall(s);
+    renderSetBreak(s);
+    const f = $('#fault');
+    f.className = 'flt' + (st.serve === 2 ? ' second' : '');
+    f.innerHTML = st.serve === 2 ? 'Double fault <kbd>F</kbd>' : 'Fault <kbd>F</kbd>';
+    const playing = st.status === 'in_play';
+    const ctl = P.lease.mine && !m.locked;
+    $$('.point').forEach((b) => { b.disabled = !ctl || !playing; });
+    f.disabled = $('#ace').disabled = !ctl || !playing;
+    $('#let').disabled = !ctl || !playing || !st.rules.lets;
+    $('#undo').disabled = !ctl || !P.L.lastUndoable();
+    $('#redo').disabled = !ctl || !P.L.lastRedoable();
+    $('#ends').disabled = $('#srvfix').disabled = !ctl;
+    renderCourt(s);
+    renderDeck();
+  }
+  function fillSide(el, sd, s) {
+    const x = side(sd), st = P.L.state;
+    el.dataset.side = sd;
+    el.style.setProperty('--c', sd === 'A' ? 'var(--ca)' : 'var(--cb)');
+    el.classList.toggle('serving', s.serving === sd && st.status !== 'completed');
+    const players = x ? x.players : [];
+    const avKey = players.map((p) => p.playerId + (p.photo || '')).join();
+    if (el.dataset.avk !== avKey) { el.dataset.avk = avKey; $('[data-avs]', el).innerHTML = players.map((p) => TN.avatar(p, 46)).join(''); }
+    $('[data-nm]', el).textContent = x ? x.name : sideLabel(sd);
+    $('[data-sub]', el).innerHTML = players.map((p) => [p.seed ? '[' + p.seed + ']' : '', p.country, p.club].filter(Boolean).join(' ')).filter(Boolean).map(esc).join(' · ') || '&nbsp;';
+    const srv = s.server && s.server.side === sd;
+    $('[data-srv]', el).textContent = srv ? (P.match.format === 'doubles' ? s.server.short + ' · ' : '') + (st.serve === 2 ? '2nd serve' : '1st serve') + ' · ' + (s.court === 'ad' ? 'ad court' : 'deuce court') : 'Serving';
+    const big = $('[data-big]', el);
+    const val = s.display[sd];
+    if (big.dataset.v !== val) { big.dataset.v = val; big.innerHTML = `<span class="roll">${esc(val)}</span><small>${esc(s.tiebreak ? (s.matchTiebreak ? 'match tie-break' : 'tie-break') : 'points')}</small>`; }
+    big.dataset.side = sd;
+    const keyHint = el.dataset.pos === 'L' ? '←' : '→';
+    const pb = $('[data-point]', el);
+    pb.dataset.side = sd;
+    const label = 'Point ' + shortSide(sd);
+    if (pb.dataset.l !== label + keyHint) { pb.dataset.l = label + keyHint; pb.innerHTML = `<span>${esc(label)}</span><kbd>${keyHint}</kbd>`; }
+    renderHow(el, sd);
+    const foot = $('[data-foot]', el);
+    const sets = s.setsWon[sd];
+    foot.innerHTML = `<span class="chip">Sets ${sets}</span><span class="chip">Games ${s.sets.length ? s.sets[s.sets.length - 1][sd] : 0}</span>${s.pressure && s.pressure[sd] ? `<span class="chip warn">${esc(({ match: 'Match point', set: 'Set point', break: 'Break point', game: 'Game point' })[s.pressure[sd].match ? 'match' : s.pressure[sd].set ? 'set' : s.pressure[sd].break ? 'break' : 'game'])}${s.pressure[sd].count > 1 ? ' ×' + s.pressure[sd].count : ''}</span>` : ''}`;
+  }
+  function renderBoard(s) {
+    const st = P.L.state;
+    const row = (sd) => {
+      const cells = s.sets.map((x, i) => {
+        const cur = !x.winner && i === s.sets.length - 1;
+        const g = x.mtb && x.tb ? x.tb[sd] : x[sd];
+        return `<span class="${x.winner === sd ? 'w' : ''}${cur ? ' cur' : ''}">${g}${x.tb && !x.mtb && x.winner && x.winner !== sd ? `<sup>${x.tb[sd]}</sup>` : ''}</span>`;
+      }).join('');
+      return `<div class="brow ${s.serving === sd ? 'srv' : ''}" style="--c:${sd === 'A' ? 'var(--ca)' : 'var(--cb)'}"><i class="ball"></i><span class="nm"><i></i>${esc(shortSide(sd))}</span><span class="sets">${cells}</span><span class="pts">${st.status === 'completed' ? '' : esc(s.display[sd])}</span></div>`;
+    };
+    const head = `<div class="bh"><span>${s.tiebreak ? `<b>${s.matchTiebreak ? 'Match tie-break' : 'Tie-break'}</b> · first to ${s.tiebreakTarget}` : `Set ${s.set} · game ${s.game}`}</span><span>${esc(P.L.setup.rules.label.split(' · ')[0])}${s.rules.noAd ? ' · No-Ad' : ''}</span></div>`;
+    const html = head + row('A') + row('B');
+    if ($('#board').dataset.h !== html) { $('#board').dataset.h = html; $('#board').innerHTML = html; }
+  }
+  function renderCall(s) {
+    const el = $('#call'), st = P.L.state;
+    let cls = 'call', main = s.call || '', sub = '';
+    const h = s.headline;
+    if (st.status === 'paused' || st.status === 'suspended') { main = st.status === 'paused' ? 'Play paused' : 'Match suspended'; sub = s.interruption ? (E.INTERRUPTIONS[s.interruption.kind] || '') + (s.interruption.reason ? ' — ' + s.interruption.reason : '') : ''; }
+    else if (h) {
+      cls += ' p-' + h.kind;
+      const word = ({ match: 'MATCH POINT', set: 'SET POINT', break: 'BREAK POINT', game: 'GAME POINT' })[h.kind];
+      sub = (h.count > 1 ? h.count + ' × ' : '') + word + (h.side !== 'both' ? ' · ' + shortSide(h.side) : '') + (h.deciding ? ' · deciding point' : '') + (h.alsoBreak ? ' · on serve' : '');
+    } else if (s.changeover) { cls += ' p-ends'; sub = 'Change of ends'; }
+    else if (s.deuce) sub = s.rules.noAd ? 'Deciding point — the receivers choose the court' : '';
+    const html = `<div>${esc(main || '—')}${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
+    if (el.dataset.h !== html + cls) { el.dataset.h = html + cls; el.className = cls; el.innerHTML = html; }
+  }
+  function renderSetBreak(s) {
+    const el = $('#setbreak');
+    if (!(s.betweenSets && P.match.format === 'doubles')) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="setbreak"><b>New set — ${esc(sideLabel(s.teamDue))} to serve</b><p class="small muted" style="margin:4px 0 8px">Each team may change its order of serving and receiving now. The rotation carries on if nothing is chosen.</p><button class="btn sm" id="ordBtn" ${P.lease.mine ? '' : 'disabled'}>Order for this set…</button></div>`;
+    $('#ordBtn').onclick = setOrderSheet;
+  }
+  function setOrderSheet() {
+    const s = S(), due = s.teamDue, ids = (x) => P.L.setup.sides[x].ids;
+    const cur = P.L.state.rotation.order;
+    const st = { first: ids(due).includes(cur[0]) ? cur[0] : ids(due)[0], second: ids(other(due))[0], receive: JSON.parse(JSON.stringify(P.L.state.receive)) };
+    const ord = () => [st.first, st.second, ids(due).find((x) => x !== st.first), ids(other(due)).find((x) => x !== st.second)];
+    const sh = TN.sheet(`<h3>Order for set ${s.set}</h3><div class="stack" id="so" style="margin-top:12px"></div><div class="foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="ok">Save the order</button></div>`, { wide: true });
+    const paint = () => {
+      const pick = (list, cur2, k) => `<div class="seg" data-k="${k}">${list.map((id) => `<button data-v="${esc(id)}" aria-pressed="${id === cur2}">${esc(pname(id))}</button>`).join('')}</div>`;
+      $('#so', sh.el).innerHTML = `<label class="field">${esc(sideLabel(due))} — who serves game 1${pick(ids(due), st.first, 'first')}</label><label class="field">${esc(sideLabel(other(due)))} — who serves game 2${pick(ids(other(due)), st.second, 'second')}</label>
+        <div class="ordr">${ord().map((id, i) => `<div class="slot"><small>Game ${i + 1}</small><b>${esc(pname(id))}</b></div>`).join('')}</div>
+        <div class="grid2">${['A', 'B'].map((x) => `<label class="field">${esc(sideLabel(x))} — deuce court${pick(ids(x), st.receive[x].deuce, 'r' + x)}</label>`).join('')}</div>`;
+      $$('.seg', sh.el).forEach((sg) => $$('button', sg).forEach((b) => { b.onclick = () => { const k = sg.dataset.k; if (k === 'first') st.first = b.dataset.v; else if (k === 'second') st.second = b.dataset.v; else { const x = k.slice(1); st.receive[x] = { deuce: b.dataset.v, ad: ids(x).find((y) => y !== b.dataset.v) }; } paint(); }; }));
+    };
+    paint();
+    $('#ok', sh.el).onclick = () => { if (send({ type: 'SET_ORDER', order: ord(), receive: st.receive })) sh.close(); };
+  }
+  function serverSheet() {
+    const st = P.L.state, d = P.match.format === 'doubles';
+    if (!st.rotation) return;
+    const cur = st.rotation.order.slice();
+    const curSrv = E.currentServer(st);
+    const all = P.L.setup.sides.A.ids.concat(P.L.setup.sides.B.ids);
+    let order = d ? [curSrv].concat(rotate(cur, cur.indexOf(curSrv)).slice(1)) : [curSrv, all.find((x) => x !== curSrv)];
+    const sh = TN.sheet(`<h3>Correct the server</h3><p class="small muted" style="margin:6px 0 12px">Only if the wrong player is serving. Points already played stand (ITF Rule 27); the order below serves from the coming point on. The reason is kept in the audit log.</p><div id="sv" class="stack"></div>
+      <input class="input" id="why" maxlength="200" placeholder="Reason (e.g. wrong player served)" style="margin-top:12px"><div class="foot"><button class="btn" data-close>Cancel</button><button class="btn danger" id="ok">Correct the server</button></div>`, { wide: d });
+    const paint = () => {
+      $('#sv', sh.el).innerHTML = `<label class="field">Serving now<div class="seg" data-k="0">${all.map((id) => `<button data-v="${esc(id)}" aria-pressed="${id === order[0]}">${esc(pname(id))}</button>`).join('')}</div></label>` + (d ? `<div class="ordr">${order.map((id, i) => `<div class="slot"><small>${i ? 'Then' : 'Now'}</small><b>${esc(pname(id))}</b></div>`).join('')}</div>` : '');
+      $$('.seg button', sh.el).forEach((b) => { b.onclick = () => {
+        const v = b.dataset.v;
+        if (!d) order = [v, all.find((x) => x !== v)];
+        else { const s1 = sideOf(v), partner = P.L.setup.sides[s1].ids.find((x) => x !== v), opp = order.filter((x) => sideOf(x) !== s1); order = [v, opp[0], partner, opp[1]]; }
+        paint();
+      }; });
+    };
+    paint();
+    $('#ok', sh.el).onclick = () => { const reason = $('#why', sh.el).value.trim(); if (!reason) return $('#why', sh.el).focus(); if (send(d ? { type: 'SERVE_CORRECTION', order, reason } : { type: 'SERVE_CORRECTION', server: order[0], reason })) sh.close(); };
+  }
+  function rotate(a, k) { return a.slice(k).concat(a.slice(0, k)); }
+
+  /* ---------- how was it won (optional, never blocking) ---------- */
+  let howTimer = null;
+  function openHow(entry) {
+    const t = P.match.tracking || {};
+    if (t.outcomes === false || !entry || entry.type !== 'POINT') { closeHow(); return; }
+    P.how = { eventId: entry.eventId, side: entry.side, at: Date.now() };
+    clearTimeout(howTimer);
+    howTimer = setTimeout(closeHow, 9000);
+  }
+  function closeHow() { clearTimeout(howTimer); if (P.how) { P.how = null; render(); } }
+  function renderHow(el, sd) {
+    const box = $('[data-how]', el);
+    const h = P.how;
+    const e = h && P.L.entry(h.eventId);
+    if (!h || h.side !== sd || !e || e.voided) { box.classList.remove('show'); return; }
+    const srvSide = e.serverSide, isSrv = srvSide === sd, d = P.match.format === 'doubles', t = P.match.tracking || {};
+    const kinds = isSrv ? [['WINNER', 'Winner', '1'], ['FORCED_ERROR', 'Forced error', '2'], ['UNFORCED_ERROR', 'Unforced error', '3'], ['ACE', 'Ace', ''], ['SERVICE_WINNER', 'Service winner', '']]
+      : [['WINNER', 'Winner', '1'], ['FORCED_ERROR', 'Forced error', '2'], ['UNFORCED_ERROR', 'Unforced error', '3'], ['RETURN_WINNER', 'Return winner', ''], ['DOUBLE_FAULT', 'Double fault', '']];
+    const strokes = [['FH', 'FH'], ['BH', 'BH'], ['VOLLEY', 'Volley'], ['SMASH', 'Smash'], ['DROP', 'Drop'], ['LOB', 'Lob']];
+    const by = (k) => { const K = E.KINDS[k]; return K.by === 'loser' ? other(sd) : K.by === 'server' ? srvSide : sd; };
+    const curPlayerSide = by(e.kind);
+    const players = d ? P.L.setup.sides[curPlayerSide].ids : [];
+    const html = `<div class="hl"><span>How did ${esc(shortSide(sd))} win it?</span><span>optional</span></div>
+      <div class="chips">${kinds.map(([k, l, key]) => `<button class="chip ${e.kind === k ? 'sel' : ''}" data-hk="${k}">${esc(l)}${key ? ' <kbd>' + key + '</kbd>' : ''}</button>`).join('')}</div>
+      <div class="chips">${strokes.map(([k, l]) => `<button class="chip ${e.stroke === k ? 'sel' : ''}" data-hs="${k}">${esc(l)}</button>`).join('')}${t.net ? `<button class="chip ${e.net ? 'sel' : ''}" data-hn="1">Net point <kbd>N</kbd></button>` : ''}</div>
+      ${d && E.KINDS[e.kind] && e.kind !== 'POINT' && E.KINDS[e.kind].by !== 'server' ? `<div class="chips">${players.map((id) => `<button class="chip ${e.player === id && e.playerNamed ? 'sel' : ''}" data-hp="${esc(id)}">${esc(pname(id))}</button>`).join('')}</div>` : ''}`;
+    if (box.dataset.h !== html) {
+      box.dataset.h = html; box.innerHTML = html;
+      $$('[data-hk]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { kind: b.dataset.hk }); });
+      $$('[data-hs]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { stroke: e.stroke === b.dataset.hs ? null : b.dataset.hs }); });
+      $$('[data-hn]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { net: e.net ? null : sd }); });
+      $$('[data-hp]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { player: b.dataset.hp }); });
+    }
+    box.classList.add('show');
+  }
+  function classify(eventId, patch) {
+    const e = P.L.entry(eventId);
+    if (!e) return;
+    // a player no longer fits once the kind moves the credit to the other side
+    if (patch.kind && e.player && e.playerNamed) {
+      const K = E.KINDS[patch.kind], want = K.by === 'loser' ? other(e.side) : K.by === 'server' ? e.serverSide : e.side;
+      if (sideOf(e.player) !== want) patch.player = null;
+    }
+    if (patch.kind === 'ACE' || patch.kind === 'SERVICE_WINNER' || patch.kind === 'DOUBLE_FAULT') patch.player = null;
+    const r = send({ type: 'CORRECT', target: eventId, patch, reason: 'classified' }, { how: false });
+    if (r) { P.how = { eventId, side: e.side, at: Date.now() }; clearTimeout(howTimer); howTimer = setTimeout(closeHow, 6000); render(); }
+  }
+
+  /* ---------- the court ---------- */
+  // metres from the net centre: x along the court (the left end negative), y across (top negative)
+  const BX = 11.885, SX = 6.4, DY = 5.485, SY = 4.115;
+  function renderCourt(s) {
+    const st = P.L.state, svg = $('#court');
+    const d = P.match.format === 'doubles', t = P.match.tracking || {};
+    svg.classList.toggle('track', !!t.shots);
+    const surf = TN.surface(P.match.surface);
+    const leftSide = st.left || 'A';
+    // where everyone stands for the coming point
+    const pos = [];
+    if (s.server && s.receiver) {
+      const srvLeft = s.server.side === leftSide, rcvLeft = !srvLeft;
+      const deuce = s.court !== 'ad';
+      // a player at the LEFT end faces right: their right (deuce) side is the bottom (+y)
+      const yFor = (isLeft, dc) => (isLeft ? (dc ? 1 : -1) : (dc ? -1 : 1)) * 2.2;
+      pos.push({ id: s.server.playerId, x: srvLeft ? -BX - 0.6 : BX + 0.6, y: yFor(srvLeft, deuce) * 0.55, srv: true });
+      pos.push({ id: s.receiver.playerId, x: rcvLeft ? -BX + 0.4 : BX - 0.4, y: yFor(rcvLeft, deuce) * 1.25 });
+      if (d) {
+        const sp = E.partner(P.L.setup, s.server.playerId), rp = E.partner(P.L.setup, s.receiver.playerId);
+        if (sp) pos.push({ id: sp, x: srvLeft ? -3.2 : 3.2, y: -yFor(srvLeft, deuce) * 1.1 });
+        if (rp) pos.push({ id: rp, x: rcvLeft ? -BX + 4.2 : BX - 4.2, y: -yFor(rcvLeft, deuce) * 1.2 });
+      }
+    }
+    const shots = t.shots ? P.L.timeline.filter((e) => e.type === 'POINT' && !e.voided && e.loc).slice(-10) : [];
+    const col = (id) => (sideOf(id) === 'A' ? getComputedStyle(document.body).getPropertyValue('--ca') : getComputedStyle(document.body).getPropertyValue('--cb')).trim();
+    const lines = `<g stroke="${surf.line}" stroke-width=".09" fill="none" stroke-opacity=".9">
+      <rect x="${-BX}" y="${-DY}" width="${2 * BX}" height="${2 * DY}"/>
+      <path d="M${-BX} ${-SY}H${BX}M${-BX} ${SY}H${BX}" ${d ? '' : 'stroke-opacity=".95"'}/>
+      <path d="M${-SX} ${-SY}V${SY}M${SX} ${-SY}V${SY}M${-SX} 0H${SX}"/>
+      <path d="M${-BX} 0h.35M${BX} 0h-.35"/></g>`;
+    const tram = `<rect x="${-BX}" y="${-DY}" width="${2 * BX}" height="${DY - SY}" fill="#000" fill-opacity="${d ? 0 : 0.28}"/><rect x="${-BX}" y="${SY}" width="${2 * BX}" height="${DY - SY}" fill="#000" fill-opacity="${d ? 0 : 0.28}"/>`;
+    const net = `<path d="M0 ${-DY - 0.9}V${DY + 0.9}" stroke="#fff" stroke-width=".16"/><circle cx="0" cy="${-DY - 0.9}" r=".22" fill="#fff"/><circle cx="0" cy="${DY + 0.9}" r=".22" fill="#fff"/>`;
+    const people = pos.map((p) => `<g class="pl" style="transform:translate(${p.x}px,${p.y}px)"><circle r="${p.srv ? 0.62 : 0.52}" fill="${col(p.id)}" stroke="#fff" stroke-width=".1"/>${p.srv ? '<circle r=".22" cx=".55" cy="-.55" fill="#c8f031"/>' : ''}<text y="1.45" text-anchor="middle" style="font-size:.7px">${esc(TN.surname(pname(p.id)))}</text></g>`).join('');
+    const marks = shots.map((e, i) => `<circle cx="${e.loc.x}" cy="${e.loc.y}" r=".28" fill="${e.side === 'A' ? 'var(--ca)' : 'var(--cb)'}" fill-opacity="${0.35 + 0.065 * i}" stroke="#fff" stroke-width=".05"/>`).join('');
+    const ends = `<text x="${-BX}" y="${-DY - 0.35}" style="font-size:.62px;fill:#9fb8ad">${esc(shortSide(leftSide))}</text><text x="${BX}" y="${-DY - 0.35}" text-anchor="end" style="font-size:.62px;fill:#9fb8ad">${esc(shortSide(other(leftSide)))}</text>`;
+    const html = `<rect x="-13.4" y="-7" width="26.8" height="14" fill="${surf.out}"/><rect x="${-BX}" y="${-DY}" width="${2 * BX}" height="${2 * DY}" fill="${surf.c}"/>${tram}${lines}${net}${marks}${people}${ends}`;
+    if (svg.dataset.h !== html) { svg.dataset.h = html; svg.innerHTML = html; }
+  }
+  function onCourtClick(e) {
+    const t = P.match.tracking || {};
+    if (!t.shots || !P.lease.mine) return;
+    const svg = $('#court'), pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    const last = P.L.timeline.filter((x) => x.type === 'POINT' && !x.voided).pop();
+    if (!last) return toast('Tap the court after a point to mark where it was won or lost');
+    send({ type: 'CORRECT', target: last.eventId, patch: { loc: { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 } }, reason: 'shot location' }, { how: false });
+    toast('Shot location saved for the last point');
+  }
+
+  /* ---------- the match is over ---------- */
+  function buildDone() { $('#main').innerHTML = '<div class="wrap" style="max-width:1000px"><div id="done"></div><div class="deck" id="deck"></div></div>'; buildDeck(); }
+  function renderDone() {
+    const st = P.L.state, res = st.result || {}, m = P.match;
+    const w = res.winner;
+    const rep = m.report;
+    $('#done').innerHTML = `<div class="card" style="text-align:center;padding:26px">
+      <div class="kick">${st.status === 'abandoned' ? 'Match abandoned' : res.reason === 'retired' ? 'Retirement' : res.reason === 'walkover' ? 'Walkover' : res.reason === 'default' ? 'Default' : 'Game, set and match'}</div>
+      <h2 style="font-size:30px;letter-spacing:-.03em;margin:6px 0">${w ? esc(sideLabel(w)) : 'No result'}</h2>
+      <div style="font-size:24px;font-weight:900" class="num">${esc(TN.scoreLine(res, w || 'A'))}</div>
+      <div class="row wrapr" style="justify-content:center;margin-top:16px"><a class="btn" href="/tennis/match/${esc(P.matchId)}" target="_blank" rel="noopener">Match centre ↗</a>
+        ${rep && rep.url ? `<a class="btn" href="${esc(rep.url)}" target="_blank" rel="noopener">Scorecard PDF${rep.version > 1 ? ' v' + rep.version : ''}</a>` : `<span class="chip">${rep && rep.status === 'generating' ? 'Scorecard PDF being made…' : 'Scorecard PDF follows'}</span>`}
+        <button class="btn" data-g="result">Result on air</button><button class="btn" data-g="stats">Statistics on air</button><button class="btn danger" id="reopen" ${P.lease.mine ? '' : 'disabled'}>Undo the last point…</button></div></div>`;
+    wireGfxButtons($('#done'));
+    $('#reopen').onclick = undo;
+    renderDeck();
+  }
+
+  /* =============================== the deck (tabs) */
+  const TABS = [['history', 'Point history'], ['graphics', 'Graphics'], ['clips', 'Clips'], ['stats', 'Statistics'], ['match', 'Match']];
+  function buildDeck() {
+    $('#deck').innerHTML = `<div class="ptabs" role="tablist">${TABS.map(([k, l]) => `<button role="tab" data-tab="${k}" aria-selected="${P.tab === k}">${esc(l)}</button>`).join('')}</div><div class="pane card" id="pane"></div>
+      <div class="keys" style="margin-top:10px"><span><kbd>←</kbd><kbd>→</kbd>point to the side on that side</span><span><kbd>F</kbd>fault / double fault</span><span><kbd>E</kbd>ace</span><span><kbd>T</kbd>let</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>winner / forced / unforced</span><span><kbd>N</kbd>net</span><span><kbd>Z</kbd>undo</span><span><kbd>⇧Z</kbd>redo</span></div>`;
+    $$('[data-tab]').forEach((b) => { b.onclick = () => setTab(b.dataset.tab); });
+    paneKey = '';
+  }
+  function setTab(k, scroll) {
+    P.tab = k; TN.store.set('tn_panel_tab', k);
+    $$('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === k)));
+    paneKey = '';
+    renderDeck();
+    if (scroll && $('#deck')) $('#deck').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  let paneKey = '';
+  function renderDeck() {
+    if (!$('#pane')) return;
+    if (P.tab === 'history') renderHistory();
+    else if (P.tab === 'graphics') renderGfx();
+    else if (P.tab === 'clips') renderClips();
+    else if (P.tab === 'stats') renderStats();
+    else renderMatchTab();
+  }
+  /* ---------- point history ---------- */
+  function renderHistory() {
+    const tl = P.L.timeline.filter((e) => !E.META[e.type]);
+    const key = 'h' + P.L.seq + ':' + tl.length;
+    if (paneKey === key) return;
+    paneKey = key;
+    const rows = tl.slice(-80).reverse().map((e) => {
+      const c = E.commentary(P.L.setup, e);
+      if (!c) return '';
+      const b = e.before || {};
+      const sc = e.type === 'POINT' && e.after ? `${e.after.games.A}-${e.after.games.B} · ${E.gameDisplay(e.after.points, e.after.tiebreak).A}-${E.gameDisplay(e.after.points, e.after.tiebreak).B}` : '';
+      const clip = P.CL && e.type === 'POINT' ? clipBadge(e.eventId) : '';
+      return `<div class="hrow ${e.voided ? 'void' : ''} k-${c.tone}" data-ev="${esc(e.eventId)}"><span class="sc">${b.set ? 'S' + b.set + ' G' + b.game : ''}</span><span class="ellipsis">${c.side ? `<span class="tm" style="background:${c.side === 'A' ? 'var(--ca)' : 'var(--cb)'}"></span>` : ''}${esc(c.text)}${sc && !e.voided ? ` <span class="muted small">(${esc(sc)})</span>` : ''}</span>
+        <span class="row" style="gap:6px">${clip}${e.type === 'POINT' && !e.voided && P.lease.mine ? `<button class="btn xs" data-fix="${esc(e.eventId)}">Correct</button>` : ''}</span></div>`;
+    }).join('');
+    $('#pane').innerHTML = `<div class="row" style="margin-bottom:10px"><b class="grow">Point by point</b><span class="small muted">${P.L.state.pointNo} points</span></div><div class="hist">${rows || '<div class="empty">No points yet.</div>'}</div>`;
+    $$('[data-fix]', $('#pane')).forEach((b) => { b.onclick = () => correctSheet(b.dataset.fix); });
+    $$('[data-clip]', $('#pane')).forEach((b) => { b.onclick = () => { if (P.CL) TNClipper.play(P.CL, b.dataset.clip); }; });
+  }
+  function clipBadge(eventId) {
+    const r = P.CL.row(eventId);
+    if (!r || !r.state) return '';
+    return `<span class="clipst ${r.state.cls}" title="${esc(r.error || r.state.text)}">🎬 ${esc(r.state.text)}</span>${r.watchUrl ? `<button class="btn xs" data-clip="${esc(eventId)}">▶</button>` : ''}`;
+  }
+  function correctSheet(eventId) {
+    const e = P.L.entry(eventId);
+    if (!e) return;
+    const kinds = Object.keys(E.KINDS);
+    const sh = TN.sheet(`<h3>Correct this point</h3><p class="small muted" style="margin:6px 0 12px">${esc((E.commentary(P.L.setup, e) || {}).text || '')}</p>
+      <div class="stack"><label class="field">Who won it?<div class="seg" id="cw"><button data-v="A" aria-pressed="${e.side === 'A'}">${esc(sideLabel('A'))}</button><button data-v="B" aria-pressed="${e.side === 'B'}">${esc(sideLabel('B'))}</button></div></label>
+      <label class="field">How<select class="input" id="ck">${kinds.map((k) => `<option value="${k}" ${e.kind === k ? 'selected' : ''}>${esc(E.KINDS[k].label)}</option>`).join('')}</select></label>
+      <input class="input" id="cr" maxlength="200" placeholder="Reason (needed when the winner changes)"></div>
+      <div class="foot"><button class="btn danger" id="cv">Void the point…</button><span class="grow"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="ok">Save</button></div>`);
+    let w = e.side;
+    $$('#cw button', sh.el).forEach((b) => { b.onclick = () => { w = b.dataset.v; $$('#cw button', sh.el).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.v === w))); }; });
+    $('#ok', sh.el).onclick = () => {
+      const kind = $('#ck', sh.el).value, reason = $('#cr', sh.el).value.trim();
+      const patch = {};
+      if (w !== e.side) { if (!reason) return $('#cr', sh.el).focus(); patch.winner = w; }
+      if (kind !== e.kind) patch.kind = kind;
+      if (!Object.keys(patch).length) return sh.close();
+      if (send({ type: 'CORRECT', target: eventId, patch, reason: reason || 'classified' }, { how: false })) sh.close();
+    };
+    $('#cv', sh.el).onclick = async () => {
+      const reason = $('#cr', sh.el).value.trim() || await TN.prompt('Void this point?', 'It will no longer count — every later score is recomputed from it. Say why:', 'e.g. recorded twice', 'Void');
+      if (reason && send({ type: 'VOID', target: eventId, reason }, { how: false })) sh.close();
+    };
+  }
+  /* ---------- graphics ---------- */
+  function setAir(g) {
+    if (!g || typeof g.seq !== 'number') return;
+    if (g.serverNow) TN.clock.offset = TN.clock.offset || (g.serverNow - Date.now());
+    if (P.graphic && g.seq < P.graphic.seq) return;
+    P.graphic = g;
+    renderAir();
+    if (P.tab === 'graphics') { paneKey = ''; renderGfx(); }
+  }
+  function renderAir() {
+    const chip = $('#airChip');
+    if (!chip || !P.match) return;
+    const a = GX.airSummary(P.graphic, P.style, P.outputs, TN.serverNow());
+    chip.className = 'chip ' + (a.k === 'on' ? 'bad' : a.k === 'live' ? 'on' : a.k === 'bad' || a.k === 'warn' ? 'warn' : '');
+    chip.innerHTML = `<span class="dot ${a.k === 'on' ? 'bad' : a.k === 'live' ? 'ok' : a.k === 'move' ? 'wait' : ''}"></span>${esc(a.t)}`;
+    chip.title = a.d || a.t;
+    const line = $('#airline');
+    if (line) { line.className = 'airline ' + a.k; line.innerHTML = `<span class="dot ${a.k === 'on' ? 'bad' : a.k === 'live' ? 'ok' : ''}"></span><div class="grow"><b>${esc(a.t)}</b><div class="small muted">${esc(a.d || '')}</div></div>`; }
+  }
+  async function airCmd(cmd) {
+    if (!P.socket) return;
+    const r = await TN.ack(P.socket, 'tn:graphic', Object.assign({ matchId: P.matchId, reqId: TN.uid() }, cmd));
+    if (!r.ok) toast(r.error || 'Could not change the graphic', 'err');
+    else if (r.graphic) setAir(r.graphic);
+    return r;
+  }
+  function wireGfxButtons(root) { $$('[data-g]', root).forEach((b) => { b.onclick = () => airCmd({ action: 'take', scene: b.dataset.g }); }); }
+  function sceneHint(sc, s) {
+    const m = P.match, st = P.L.state;
+    switch (sc) {
+      case 'teams': return m.format !== 'doubles' ? 'For doubles' : '';
+      case 'compare': return m.format === 'doubles' ? 'For singles' : '';
+      case 'toss': return st.toss ? '' : 'Record the toss first';
+      case 'setWinner': return st.sets.some((x) => x.winner) ? '' : 'After a set';
+      case 'tiebreak': return s.tiebreak ? '' : 'During a tie-break';
+      case 'breakPoint': return s.pressure && ((s.pressure.A && s.pressure.A.break) || (s.pressure.B && s.pressure.B.break)) ? '' : 'At a break point';
+      case 'matchPoint': return s.pressure && ((s.pressure.A && s.pressure.A.match) || (s.pressure.B && s.pressure.B.match)) ? '' : 'At a match point';
+      case 'result': return st.status === 'completed' ? '' : 'When the match is over';
+      case 'stats': case 'playerStats': case 'setScore': return st.pointNo > 0 ? '' : 'Once play has begun';
+      default: return '';
+    }
+  }
+  function renderGfx() {
+    if (P.tab !== 'graphics' || !$('#pane')) return;
+    const g = P.graphic, s = S();
+    const key = 'g' + g.seq + ':' + P.L.seq + ':' + JSON.stringify(P.style.moments);
+    if (paneKey === key) { renderAir(); return; }
+    paneKey = key;
+    const now = TN.serverNow();
+    const players = [].concat(side('A') ? side('A').players : [], side('B') ? side('B').players : []);
+    const groups = Object.keys(GX.GROUPS).map((gk) => `<div class="section-title">${esc(GX.GROUPS[gk])}</div><div class="gfx-grid">${GX.ORDER.filter((k) => GX.SCENES[k].group === gk).map((k) => {
+      const card = GX.sceneCard(k, g, P.outputs, now), hint = sceneHint(k, s);
+      const needPlayer = k === 'player' || k === 'playerStats';
+      return `<div class="gcard ${card && card.k === 'on' ? 'on' : ''}"><b>${esc(GX.SCENES[k].label)}</b><small>${esc(card ? card.word : hint || (GX.SCENES[k].def ? GX.SCENES[k].def + ' s on screen' : 'until hidden'))}</small>
+        ${needPlayer ? `<select class="input" data-pp="${k}" style="height:34px">${players.map((p) => `<option value="${esc(p.playerId)}">${esc(p.name)}</option>`).join('')}</select>` : ''}
+        <div class="acts">${card && card.k === 'on' ? `<button class="btn sm danger" data-stop="${esc(g.id)}">Hide</button>` : `<button class="btn sm" data-take="${k}" ${hint ? 'disabled' : ''}>Show</button>`}</div></div>`;
+    }).join('')}</div>`).join('');
+    const lv = GX.liveOf(g);
+    const lowerOn = g.lower;
+    const mom = GX.MOMENT_ORDER.map((k) => `<button class="chip ${P.style.moments[k] ? 'on' : ''}" data-mom="${k}" title="Show it now">${esc(GX.MOMENTS[k].label)}</button>`).join('');
+    const auto = GX.MOMENT_ORDER.map((k) => `<label class="row tiny"><button class="switch" data-auto="${k}" role="switch" aria-checked="${!!P.style.moments[k]}"></button>${esc(GX.MOMENTS[k].label)}</label>`).join('');
+    $('#pane').innerHTML = `<div class="airline" id="airline"></div>
+      <div class="row wrapr" style="margin-top:12px"><span class="small muted">Score bug</span><div class="seg" id="lmode"><button data-v="auto" aria-pressed="${lv.mode === 'auto'}">Automatic</button><button data-v="manual" aria-pressed="${lv.mode === 'manual'}">Manual</button></div>
+        <button class="btn sm" id="bugOn">Score bug on air</button><button class="btn sm" id="barOn">Wide bar on air</button><button class="btn sm" id="liveOff">Score bug off</button><span class="grow"></span><button class="btn sm" id="backLive">Back to live</button><button class="btn sm danger" id="clean">Hide everything</button></div>
+      ${groups}
+      <div class="section-title">Lower thirds</div>
+      <div class="gfx-grid">${Object.keys(GX.LOWERS).map((k) => `<div class="gcard ${lowerOn && lowerOn.kind === k ? 'on' : ''}"><b>${esc(GX.LOWERS[k].label)}</b>
+        ${['player', 'profile', 'serve', 'stat'].includes(k) ? `<select class="input" data-lp="${k}" style="height:34px">${players.map((p) => `<option value="${esc(p.playerId)}">${esc(p.name)}</option>`).join('')}</select>` : ''}
+        ${k === 'announce' || k === 'ticker' ? `<input class="input" data-lt="${k}" maxlength="${k === 'ticker' ? 400 : 160}" placeholder="${k === 'ticker' ? 'Scrolling text…' : 'Announcement…'}" style="height:34px">` : ''}
+        <div class="acts">${lowerOn && lowerOn.kind === k ? '<button class="btn sm danger" data-loff="1">Hide</button>' : `<button class="btn sm" data-lower="${k}">Show</button>`}</div></div>`).join('')}</div>
+      <div class="section-title">Call-outs on the score bug</div>
+      <p class="small muted" style="margin-bottom:8px">Shown once per event that earns it (never twice). Tap to show one now; switch which ones come automatically.</p>
+      <div class="mom">${mom}</div>
+      <details style="margin-top:10px"><summary class="small">Automatic call-outs</summary><div class="grid3" style="margin-top:10px">${auto}</div>
+        <div class="row wrapr" style="margin-top:10px;gap:16px"><label class="row tiny"><button class="switch" data-as="setWinner" role="switch" aria-checked="${!!P.style.autoScenes.setWinner}"></button>Set winner graphic after each set</label><label class="row tiny"><button class="switch" data-as="result" role="switch" aria-checked="${!!P.style.autoScenes.result}"></button>Match result graphic at the end</label></div></details>
+      <div class="section-title">Overlay links for vMix (1920×1080, transparent)</div>
+      <div class="stack small">${overlayLinks()}</div>`;
+    renderAir();
+    const pane = $('#pane');
+    $$('[data-take]', pane).forEach((b) => { b.onclick = () => { const k = b.dataset.take; const sel = $(`[data-pp="${k}"]`, pane); airCmd({ action: 'take', scene: k, data: sel ? { playerId: sel.value } : {} }); }; });
+    $$('[data-stop]', pane).forEach((b) => { b.onclick = () => airCmd({ action: 'stop', id: b.dataset.stop }); });
+    $$('[data-lower]', pane).forEach((b) => { b.onclick = () => { const k = b.dataset.lower; const p = $(`[data-lp="${k}"]`, pane), t = $(`[data-lt="${k}"]`, pane); airCmd({ action: 'lower', kind: k, data: p ? { playerId: p.value } : t ? { text: t.value, title: k === 'announce' ? '' : undefined } : {} }); }; });
+    $$('[data-loff]', pane).forEach((b) => { b.onclick = () => airCmd({ action: 'lower-off' }); });
+    $$('[data-mom]', pane).forEach((b) => { b.onclick = () => { const s2 = S(); const h = s2.headline; airCmd({ action: 'moment', kind: b.dataset.mom, side: h && h.side !== 'both' ? h.side : s2.serving || undefined, playerId: s2.server ? s2.server.playerId : undefined }); }; });
+    $$('[data-auto]', pane).forEach((b) => { b.onclick = () => saveStyle({ moments: { [b.dataset.auto]: b.getAttribute('aria-checked') !== 'true' } }); });
+    $$('[data-as]', pane).forEach((b) => { b.onclick = () => saveStyle({ autoScenes: { [b.dataset.as]: b.getAttribute('aria-checked') !== 'true' } }); });
+    $$('#lmode button', pane).forEach((b) => { b.onclick = () => airCmd({ action: 'live-mode', mode: b.dataset.v }); });
+    $('#bugOn').onclick = () => airCmd({ action: 'live-on', layout: 'bug' });
+    $('#barOn').onclick = () => airCmd({ action: 'live-on', layout: 'bar' });
+    $('#liveOff').onclick = () => airCmd({ action: 'live-off' });
+    $('#backLive').onclick = () => airCmd({ action: 'live' });
+    $('#clean').onclick = () => airCmd({ action: 'clean' });
+    $$('[data-copy]', pane).forEach((b) => { b.onclick = () => TN.copy(b.dataset.copy).then((ok) => toast(ok ? 'Link copied — paste it into a vMix Web Browser input' : 'Could not copy', ok ? '' : 'err')); });
+  }
+  async function saveStyle(patch) {
+    if (!P.tournament || !P.tournament.canManage) return toast('Only the tournament’s account can change its look', 'err');
+    const r = await api('PUT', `/api/tennis/tournaments/${P.match.tournamentId}/broadcast`, { style: patch });
+    if (r.ok) { P.style = GX.normalizeStyle(r.json.style); paneKey = ''; renderGfx(); } else toast(r.json.error || 'Not saved', 'err');
+  }
+  function overlayLinks() {
+    const base = `${location.origin}/tennis-overlay?match=${encodeURIComponent(P.matchId)}${P.match.overlayKey ? '&key=' + P.match.overlayKey : ''}`;
+    const row = (label, url) => `<div class="row"><span class="grow ellipsis"><b>${esc(label)}</b> <span class="muted">${esc(url)}</span></span><button class="btn xs" data-copy="${esc(url)}">Copy</button><a class="btn xs" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>`;
+    return row('Everything (score bug + graphics)', base) + row('Graphics only', base + '&layout=graphics') + row('Score bar layout', base + '&layout=bar') + row('Preview monitor (not counted as on air)', base + '&monitor=1');
+  }
+  /* ---------- clips ---------- */
+  function renderClips() {
+    if (P.tab !== 'clips' || !$('#pane')) return;
+    const players = [].concat(side('A') ? side('A').players : [], side('B') ? side('B').players : []);
+    if (!$('#clp')) {
+      $('#pane').innerHTML = `<div id="clp"></div><div class="section-title">Clip a moment by hand</div>
+        <div class="row wrapr"><select class="input" id="mcp" style="max-width:260px;height:38px"><option value="">No player</option>${players.map((p) => `<option value="${esc(p.playerId)}">${esc(p.name)}</option>`).join('')}</select>
+        ${Object.keys(TS.CLIP_KINDS).filter((k) => k !== 'POINT').map((k) => `<button class="btn sm" data-mclip="${k}">${esc(TS.CLIP_KINDS[k])}</button>`).join('')}</div>
+        <p class="small muted" style="margin-top:8px">A clip by hand is cut around the moment you press (the same window as a point), filed under the player you choose. Point clips are made by themselves for every point while the Tennis Clipper runs.</p>`;
+      $$('[data-mclip]', $('#pane')).forEach((b) => { b.onclick = () => { if (!P.CL) return toast('The Tennis Clipper is not loaded', 'err'); const pid = $('#mcp').value || null; P.CL.manual({ kind: b.dataset.mclip, playerId: pid, side: pid ? sideOf(pid) : null }); }; });
+    }
+    if (P.CL) TNClipper.paint(P.CL, $('#clp'), { matchId: P.matchId, onPlay: (eventId) => TNClipper.play(P.CL, eventId) });
+    else $('#clp').innerHTML = '<div class="empty">The Tennis Clipper could not be loaded.</div>';
+  }
+  /* ---------- statistics ---------- */
+  function renderStats() {
+    const key = 's' + P.L.seq;
+    if (paneKey === key) return;
+    paneKey = key;
+    const st = TS.compute({ setup: P.L.setup, state: P.L.state, timeline: P.L.timeline });
+    const A = st.sides.A, B = st.sides.B;
+    const fr = (x, y, p) => (x == null ? null : `${x}/${y}${p != null ? ' · ' + Math.round(p) + '%' : ''}`);
+    const rows = [
+      ['Aces', A.serve.aces, B.serve.aces], ['Double faults', A.serve.doubleFaults, B.serve.doubleFaults],
+      ['1st serve in', fr(A.serve.firstIn, A.serve.firstServes, A.serve.firstPct), fr(B.serve.firstIn, B.serve.firstServes, B.serve.firstPct), A.serve.firstPct, B.serve.firstPct],
+      ['1st serve won', fr(A.serve.firstWon, A.serve.firstIn, A.serve.firstWonPct), fr(B.serve.firstWon, B.serve.firstIn, B.serve.firstWonPct), A.serve.firstWonPct, B.serve.firstWonPct],
+      ['2nd serve won', fr(A.serve.secondWon, A.serve.secondPoints, A.serve.secondWonPct), fr(B.serve.secondWon, B.serve.secondPoints, B.serve.secondWonPct), A.serve.secondWonPct, B.serve.secondWonPct],
+      ['Break points saved', fr(A.serve.bpSaved, A.serve.bpFaced, A.serve.bpSavedPct), fr(B.serve.bpSaved, B.serve.bpFaced, B.serve.bpSavedPct)],
+      ['Break points won', fr(A.ret.bpConverted, A.ret.bpChances, A.ret.bpConvertedPct), fr(B.ret.bpConverted, B.ret.bpChances, B.ret.bpConvertedPct)],
+      ['Service games won', fr(A.serve.gamesWon, A.serve.games, A.serve.gamesWonPct), fr(B.serve.gamesWon, B.serve.games, B.serve.gamesWonPct)],
+      ['Return points won', fr(A.ret.won, A.ret.points, A.ret.wonPct), fr(B.ret.won, B.ret.points, B.ret.wonPct), A.ret.wonPct, B.ret.wonPct],
+      ['Winners', A.winners, B.winners], ['Unforced errors', A.unforcedErrors, B.unforcedErrors],
+      ['Net points won', A.net ? fr(A.net.won, A.net.points, A.net.wonPct) : null, B.net ? fr(B.net.won, B.net.points, B.net.wonPct) : null],
+      ['Total points won', A.pointsWon, B.pointsWon]
+    ];
+    const bar = (a, b, pa, pb) => { const x = pa != null ? pa : Number(a), y = pb != null ? pb : Number(b); const t = (x || 0) + (y || 0); return t ? [Math.round((x || 0) / t * 100), Math.round((y || 0) / t * 100)] : [0, 0]; };
+    $('#pane').innerHTML = `<div class="row" style="margin-bottom:10px"><b class="grow">${esc(shortSide('A'))} v ${esc(shortSide('B'))}</b><span class="small muted">${st.coverage.points} points · “–” = not recorded</span></div>
+      <div class="cmp">${rows.map(([l, a, b, pa, pb]) => { const [wa, wb] = bar(a, b, pa, pb); return `<div class="cmp-row"><b>${a == null ? '<span class="na">–</span>' : esc(String(a))}</b><span class="lbl">${esc(l)}</span><b>${b == null ? '<span class="na">–</span>' : esc(String(b))}</b><div class="bars"><i><span style="width:${wa}%"></span></i><i><span style="width:${wb}%"></span></i></div></div>`; }).join('')}</div>
+      <div class="section-title">Serve speed (manual)</div><div class="row wrapr">${[].concat(side('A').players, side('B').players).map((p) => `<button class="btn sm" data-speed="${esc(p.playerId)}">${esc(TN.surname(p.name))}: fastest serve…</button>`).join('')}</div>`;
+    $$('[data-speed]', $('#pane')).forEach((b) => { b.onclick = async () => { const v = await TN.prompt('Fastest serve (km/h)', 'Entered by hand (from the court radar or the broadcast).', 'e.g. 196', 'Save'); if (v && isFinite(Number(v))) send({ type: 'MANUAL_STAT', playerId: b.dataset.speed, key: 'fastestServeKmh', value: Number(v) }); }; });
+  }
+  /* ---------- match: status ---------- */
+  function renderMatchTab() {
+    const st = P.L.state;
+    const key = 'm' + P.L.seq + st.status + (P.lease.mine ? 1 : 0) + JSON.stringify(P.match.tracking || {});
+    if (paneKey === key) return;
+    paneKey = key;
+    const c = P.lease.mine;
+    const play = st.status === 'in_play', stopped = st.status === 'paused' || st.status === 'suspended', over = st.status === 'completed' || st.status === 'abandoned';
+    $('#pane').innerHTML = `<div class="stack">
+      <div class="row wrapr"><b class="grow">Match status: ${esc(({ pregame: 'Not started', in_play: 'In play', paused: 'Paused', suspended: 'Suspended', completed: 'Completed', abandoned: 'Abandoned' })[st.status])}</b>
+        <label class="row small"><button class="switch" id="follow" role="switch" aria-checked="${!!P.followEnds}"></button>Sides follow the ends</label></div>
+      <div class="row wrapr"><button class="btn" data-st="PAUSE" ${c && play ? '' : 'disabled'}>⏸ Pause (medical, toilet …)</button><button class="btn" data-st="SUSPEND" ${c && play ? '' : 'disabled'}>☂ Suspend (rain, light …)</button><button class="btn green" data-st="RESUME" ${c && stopped ? '' : 'disabled'}>▶ Resume</button></div>
+      <div class="row wrapr"><button class="btn danger" data-st="RETIRE" ${c && (play || stopped) ? '' : 'disabled'}>Retirement…</button><button class="btn danger" data-st="DEFAULT" ${c && !over ? '' : 'disabled'}>Default…</button><button class="btn danger" data-st="ABANDON" ${c && !over ? '' : 'disabled'}>Abandon…</button><button class="btn danger" data-st="WALKOVER" ${c && st.status === 'pregame' ? '' : 'disabled'}>Walkover…</button></div>
+      <div class="section-title">What this panel records</div>${trackingHtml()}
+      <div class="section-title">Links</div><div class="row wrapr"><a class="btn sm" href="/tennis/match/${esc(P.matchId)}" target="_blank" rel="noopener">Match centre ↗</a><a class="btn sm" href="/tennis-remote?match=${esc(P.matchId)}" target="_blank" rel="noopener">Phone remote ↗</a><a class="btn sm" href="/tennis-clipper?match=${esc(P.matchId)}" target="_blank" rel="noopener">Clipper page (vMix PC) ↗</a><button class="btn sm" id="auditBtn">Audit log</button></div></div>`;
+    $$('[data-st]', $('#pane')).forEach((b) => { b.onclick = () => statusSheet(b.dataset.st); });
+    $('#follow').onclick = () => { P.followEnds = !P.followEnds; TN.store.set('tn_follow_ends', P.followEnds); P.view = null; render(); };
+    $('#auditBtn').onclick = auditSheet;
+    wireTracking($('#pane'));
+  }
+  function statusSheet(type) {
+    const needSide = type === 'RETIRE' || type === 'DEFAULT' || type === 'WALKOVER';
+    const needKind = type === 'PAUSE' || type === 'SUSPEND';
+    if (type === 'RESUME') return send({ type: 'RESUME' });
+    const titles = { PAUSE: 'Pause play', SUSPEND: 'Suspend the match', RETIRE: 'A player retires', DEFAULT: 'Default (disqualification)', ABANDON: 'Abandon the match', WALKOVER: 'Walkover' };
+    const kinds = type === 'PAUSE' ? ['MEDICAL', 'TOILET', 'EQUIPMENT', 'HEAT', 'OTHER'] : ['RAIN', 'LIGHT', 'DARKNESS', 'HEAT', 'OTHER'];
+    let sd = 'A', kind = kinds[0];
+    const sh = TN.sheet(`<h3>${esc(titles[type])}</h3><div class="stack" style="margin-top:12px">
+      ${needSide ? `<label class="field">${type === 'WALKOVER' ? 'Who does not play?' : type === 'RETIRE' ? 'Who retires?' : 'Who is defaulted?'}<div class="seg" id="ss"><button data-v="A" aria-pressed="true">${esc(sideLabel('A'))}</button><button data-v="B">${esc(sideLabel('B'))}</button></div></label>` : ''}
+      ${needKind ? `<label class="field">Why<div class="seg" id="sk">${kinds.map((k, i) => `<button data-v="${k}" aria-pressed="${i === 0}">${esc(E.INTERRUPTIONS[k])}</button>`).join('')}</div></label>` : ''}
+      <input class="input" id="sr" maxlength="200" placeholder="${type === 'DEFAULT' || type === 'ABANDON' ? 'Reason (required)' : 'Note (optional)'}"></div>
+      <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn ${needKind ? 'primary' : 'danger'}" id="ok">${esc(titles[type])}</button></div>`);
+    $$('#ss button', sh.el).forEach((b) => { b.onclick = () => { sd = b.dataset.v; $$('#ss button', sh.el).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.v === sd))); }; });
+    $$('#sk button', sh.el).forEach((b) => { b.onclick = () => { kind = b.dataset.v; $$('#sk button', sh.el).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.v === kind))); }; });
+    $('#ok', sh.el).onclick = () => {
+      const reason = $('#sr', sh.el).value.trim();
+      if ((type === 'DEFAULT' || type === 'ABANDON') && !reason) return $('#sr', sh.el).focus();
+      const ev = { type, reason };
+      if (needSide) ev.side = sd;
+      if (needKind) ev.kind = kind;
+      if (send(ev)) sh.close();
+    };
+  }
+  async function auditSheet() {
+    const r = await api('GET', `/api/tennis/matches/${P.matchId}/audit`);
+    if (!r.ok) return toast(r.json.error || 'Could not load the audit log', 'err');
+    TN.sheet(`<h3>Audit log</h3><div class="list" style="margin-top:12px;max-height:60vh;overflow:auto">${(r.json.audit || []).map((a) => `<div class="li small"><span class="grow"><b>${esc(a.action)}</b> ${esc((a.by && a.by.email) || '')}${a.details && a.details.reason ? ' — ' + esc(a.details.reason) : ''}</span><span class="muted">${esc(TN.fmtDate(a.at))}</span></div>`).join('') || '<div class="empty">Nothing yet</div>'}</div><div class="foot"><button class="btn" data-close>Close</button></div>`, { wide: true });
+  }
+
+  /* =============================== keyboard */
+  function onKey(e) {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable)) return;
+    if (document.querySelector('.scrim')) return;
+    if (!P.L || P.view !== 'live' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const [l, r] = orderLR();
+    const k = e.key;
+    let handled = true;
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A') { const b = $('.side[data-pos="L"] .point'); if (b && !b.disabled) { flashBtn(b); point(l); } }
+    else if (k === 'ArrowRight' || k === 'l' || k === 'L') { const b = $('.side[data-pos="R"] .point'); if (b && !b.disabled) { flashBtn(b); point(r); } }
+    else if (k === 'f' || k === 'F') { if (!$('#fault').disabled) fault(); }
+    else if (k === 'e' || k === 'E') { if (!$('#ace').disabled) $('#ace').click(); }
+    else if (k === 't' || k === 'T') { if (!$('#let').disabled) send({ type: 'LET' }); }
+    else if ((k === 'z' || k === 'Z') && e.shiftKey) redo();
+    else if (k === 'z' || k === 'Z' || k === 'Backspace') undo();
+    else if ((k === '1' || k === '2' || k === '3') && P.how) classify(P.how.eventId, { kind: ['WINNER', 'FORCED_ERROR', 'UNFORCED_ERROR'][Number(k) - 1] });
+    else if ((k === 'n' || k === 'N') && P.how) { const en = P.L.entry(P.how.eventId); if (en) classify(en.eventId, { net: en.net ? null : en.side }); }
+    else if (k === 'Escape') closeHow();
+    else handled = false;
+    if (handled) e.preventDefault();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

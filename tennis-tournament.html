@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tennis Tournament · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/tennis-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🎾 A TENNIS TOURNAMENT, for everyone: its events, each with its draw (the
+  bracket round by round — the winner of a match moves on only once that
+  match is really over) or its groups and standings; the live, upcoming and
+  completed matches; and the players' figures across the tournament.
+-->
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><span class="asl"></span><span class="bt"><b>Tennis</b><small>by All Sports Live</small></span></a>
+  <span class="grow"></span>
+  <button class="theme-btn" data-theme-btn aria-label="Theme"></button>
+</header>
+<main class="wrap" id="app" style="padding-bottom:70px"><div class="skel" style="height:300px;margin-top:20px"></div></main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/tennis-common.js"></script>
+<script src="/tennis-engine.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, api } = TN;
+  const E = window.TennisEngine;
+  const tid = decodeURIComponent(location.pathname.split('/').pop() || '');
+  let D = null, tab = TN.store.get('tn_t_tab', 'draw'), ev = null, stats = null;
+  async function load() {
+    const r = await api('GET', `/api/tennis/tournaments/${encodeURIComponent(tid)}`);
+    if (!r.ok) { $('#app').innerHTML = '<div class="empty card" style="margin-top:30px"><b>Tournament not found</b><a href="/">All Sports Live</a></div>'; return false; }
+    D = r.json;
+    if (!ev || !D.events.some((e) => e.eventId === ev)) ev = D.events[0] ? D.events[0].eventId : null;
+    return true;
+  }
+  async function boot() {
+    if (!(await load())) return;
+    render();
+    // live scores without a refresh: the page follows its live matches' updates
+    const socket = await TN.connect();
+    const joined = new Set();
+    const joinLive = () => D.matches.filter((m) => ['live', 'paused', 'suspended', 'ready'].includes(m.status)).forEach((m) => { if (!joined.has(m.matchId)) { joined.add(m.matchId); TN.ack(socket, 'tn:join', { matchId: m.matchId }); } });
+    socket.on('connect', () => { joined.clear(); joinLive(); });
+    socket.on('tn:update', (u) => {
+      const m = D.matches.find((x) => x.matchId === u.matchId);
+      if (!m) return;
+      const was = m.status;
+      m.summary = u.summary; m.status = u.status; m.eventSeq = u.seq; if (u.summary && u.summary.result) m.result = u.summary.result;
+      if (was !== u.status && u.status === 'completed') { setTimeout(async () => { await load(); render(); joinLive(); }, 1500); return; }
+      paintSoon();
+    });
+    setInterval(async () => { if (await load()) { paintSoon(); joinLive(); } }, 60000);
+  }
+  let pt = 0;
+  function paintSoon() { cancelAnimationFrame(pt); pt = requestAnimationFrame(renderBody); }
+  function render() {
+    const t = D.tournament;
+    document.title = `${t.name} · Tennis · AllSportsLive`;
+    const live = D.matches.filter((m) => m.status === 'live' || m.status === 'paused').length;
+    $('#app').innerHTML = `<section class="cover" style="margin-top:18px">${TN.coverArt(t.surface, t.broadcast && t.broadcast.accent)}<div class="in"><div class="row" style="align-items:flex-end;gap:16px">${t.logo ? `<span class="clogo"><img src="${esc(t.logo)}" alt=""></span>` : ''}<div class="grow"><div class="kick" style="color:var(--optic)">${esc(TN.surface(t.surface).label)}${live ? ' · <span class="badge live">' + live + ' live</span>' : ''}</div><h1>${esc(t.name)}</h1><div class="small" style="opacity:.85">${esc([t.venue, t.city, t.startDate && t.endDate ? t.startDate + ' – ' + t.endDate : ''].filter(Boolean).join(' · '))}</div></div></div></div></section>
+      ${t.description ? `<p class="muted" style="margin-top:14px">${esc(t.description)}</p>` : ''}
+      <div class="row wrapr" style="margin-top:16px" id="evs"></div>
+      <div class="ptabs" style="margin-top:12px" id="tabs"></div>
+      <div id="body" style="margin-top:12px"></div>`;
+    renderBody();
+  }
+  function renderBody() {
+    if (!$('#body')) return;
+    const E2 = D.events.find((e) => e.eventId === ev);
+    $('#evs').innerHTML = D.events.length > 1 ? D.events.map((e) => `<button class="chip ${e.eventId === ev ? 'on' : ''}" data-ev="${esc(e.eventId)}">${esc(e.name)}</button>`).join('') : '';
+    $$('[data-ev]').forEach((b) => { b.onclick = () => { ev = b.dataset.ev; renderBody(); }; });
+    const hasGroups = E2 && E2.drawType !== 'knockout';
+    const tabs = [['draw', E2 && E2.drawType === 'round_robin' ? 'Groups' : 'Draw'], ['live', 'Live'], ['upcoming', 'Upcoming'], ['results', 'Results'], ['players', 'Players']];
+    if (hasGroups && E2.drawType === 'groups_knockout') tabs.splice(1, 0, ['groups', 'Groups']);
+    if (!tabs.some((x) => x[0] === tab)) tab = 'draw';
+    $('#tabs').innerHTML = tabs.map(([k, l]) => `<button role="tab" data-tab="${k}" aria-selected="${tab === k}">${esc(l)}</button>`).join('');
+    $$('[data-tab]').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; TN.store.set('tn_t_tab', tab); renderBody(); }; });
+    const evMatches = D.matches.filter((m) => !ev || m.eventId === ev || !m.eventId);
+    const body = $('#body');
+    if (tab === 'live') body.innerHTML = cards(D.matches.filter((m) => m.status === 'live' || m.status === 'paused' || m.status === 'suspended'), 'No match is live right now.');
+    else if (tab === 'upcoming') body.innerHTML = cards(D.matches.filter((m) => m.status === 'scheduled' || m.status === 'ready').sort((a, b) => (a.scheduledAt || 9e15) - (b.scheduledAt || 9e15)), 'No upcoming matches.');
+    else if (tab === 'results') body.innerHTML = cards(D.matches.filter((m) => m.status === 'completed' || m.status === 'abandoned').sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)), 'No results yet.');
+    else if (tab === 'players') playersTab(body);
+    else if (tab === 'groups' || (tab === 'draw' && E2 && E2.drawType === 'round_robin')) body.innerHTML = groupsHtml(E2, evMatches);
+    else body.innerHTML = E2 ? drawHtml(E2, evMatches) : '<div class="empty card"><b>No draw yet</b></div>';
+  }
+  function cards(list, empty) { return list.length ? `<div class="mcards">${list.map((m) => TN.matchCard(m)).join('')}</div>` : `<div class="empty card">${esc(empty)}</div>`; }
+  function entryName(E2, side) { return side ? side.name : ''; }
+  function drawHtml(E2, ms) {
+    const ko = ms.filter((m) => m.eventId === E2.eventId && m.stage && m.stage.type === 'knockout' && m.fixtureKey);
+    if (!ko.length) return '<div class="empty card"><b>The draw has not been made yet</b>It appears here as soon as the organisers generate it.</div>';
+    const rounds = {};
+    ko.forEach((m) => { if (/3RD$/.test(m.fixtureKey)) return; const r = m.stage.roundIndex || 1; (rounds[r] = rounds[r] || []).push(m); });
+    const third = ko.find((m) => /3RD$/.test(m.fixtureKey));
+    const keys = Object.keys(rounds).map(Number).sort((a, b) => a - b);
+    // byes: entries that went straight into round 2
+    const lines = E2.lines || null;
+    const sideRow = (m, s) => {
+      const x = m.sides[s], res = m.result, w = res && res.winner === s, l = res && res.winner && res.winner !== s;
+      const scores = res ? (res.scores || []).map((sc) => (sc.mtb && sc.tb ? '[' + sc.tb[s] + ']' : sc[s] + (sc.tb && !sc.mtb && sc.winner !== s ? '<sup>' + sc.tb[s] + '</sup>' : ''))).join(' ') : (m.status === 'live' && m.summary ? (m.summary.sets || []).map((sc) => sc[s]).join(' ') + ' · ' + esc(m.summary.display[s]) : '');
+      const seed = x && x.seed ? `<span class="seed">[${x.seed}]</span> ` : '';
+      return `<div class="bs ${w ? 'w' : l ? 'l' : ''}"><span class="ellipsis">${x ? seed + esc(x.name) + ' ' + (x.players[0] ? TN.ctry(x.players[0].country) : '') : `<span class="bye">${esc(TN.slotLabel(m, s))}</span>`}</span><span class="sc">${scores}</span></div>`;
+    };
+    const cell = (m) => `<div class="bm ${m.status === 'live' ? 'live' : ''}"><a href="/tennis/match/${esc(m.matchId)}" aria-label="Match"></a>${sideRow(m, 'A')}${sideRow(m, 'B')}</div>`;
+    void lines;
+    return `<div class="card"><div class="bracket">${keys.map((k) => `<div class="round"><div class="rtitle">${esc(rounds[k][0].stage.round || 'Round ' + k)}</div>${rounds[k].sort((a, b) => (a.stage.slot || 0) - (b.stage.slot || 0)).map(cell).join('')}</div>`).join('')}
+      ${keys.length ? (() => { const fin = rounds[keys[keys.length - 1]][0]; const champ = fin && fin.result && fin.result.winner ? fin.sides[fin.result.winner] : null; return `<div class="round"><div class="rtitle">Champion</div><div class="bm" style="padding:12px;text-align:center">${champ ? `<b>🏆 ${esc(champ.name)}</b>` : '<span class="muted">To be decided</span>'}</div>${third ? `<div class="rtitle" style="margin-top:14px">Third place</div>${cell(third)}` : ''}</div>`; })() : ''}</div>
+      <p class="small muted" style="margin-top:8px">A player moves on only when their match is over. ${E2.entries.some((e) => e.seed) ? 'Seeds in [brackets].' : ''}</p></div>`;
+  }
+  function groupsHtml(E2, ms) {
+    if (!E2) return '<div class="empty card">No groups yet.</div>';
+    const gs = (E2.standings || []).filter((g) => g.rows.length);
+    if (!gs.length) return '<div class="empty card"><b>No groups yet</b></div>';
+    const nameOf = (id) => { const en = E2.entries.find((x) => x.entryId === id); return en ? (en.name || en.players.map((p) => E2.format === 'doubles' ? TN.surname(p.name) : p.name).join(' / ')) : ''; };
+    return gs.map((g) => `<div class="card" style="margin-bottom:12px"><div class="section-title" style="margin-top:0">${esc(g.name ? 'Group ' + g.name : 'Standings')}</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>${E2.format === 'doubles' ? 'Team' : 'Player'}</th><th class="n">Played</th><th class="n">Won</th><th class="n">Lost</th><th class="n">Sets</th><th class="n">Games</th><th class="n">Sets %</th></tr></thead><tbody>
+      ${g.rows.map((r) => `<tr${E2.drawType === 'groups_knockout' && r.rank <= (E2.qualifiersPerGroup || 2) ? ' style="background:color-mix(in srgb,var(--optic) 10%,transparent)"' : ''}><td>${r.rank}</td><td><b>${esc(nameOf(r.entryId))}</b>${r.tied ? ' <span class="tiny muted">tied</span>' : ''}</td><td class="n">${r.played}</td><td class="n">${r.won}</td><td class="n">${r.lost}</td><td class="n">${r.setsWon}-${r.setsLost}</td><td class="n">${r.gamesWon}-${r.gamesLost}</td><td class="n">${r.setPct}%</td></tr>`).join('')}</tbody></table></div>
+      <div class="mcards" style="margin-top:12px">${ms.filter((m) => m.stage && m.stage.type === 'group' && (m.stage.group || '') === (g.name || '')).map((m) => TN.matchCard(m)).join('')}</div></div>`).join('')
+      + '<p class="small muted">Ranked by matches won; two level — who won their match; three or more — percentage of sets, then games, won.</p>';
+  }
+  async function playersTab(body) {
+    body.innerHTML = '<div class="skel" style="height:200px"></div>';
+    if (!stats) { const r = await api('GET', `/api/tennis/tournaments/${encodeURIComponent(tid)}/stats`); stats = r.ok ? r.json.players : []; }
+    const list = stats.slice().sort((a, b) => b.won - a.won || b.aces - a.aces);
+    body.innerHTML = list.length ? `<div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Player</th><th class="n">Matches</th><th class="n">Won</th><th class="n">Aces</th><th class="n">Double faults</th><th class="n">Break points</th><th class="n">Winners</th></tr></thead><tbody>
+      ${list.map((p) => `<tr><td><a href="/tennis/player/${esc(p.playerId)}"><b>${esc(p.name)}</b></a> ${TN.ctry(p.country)}</td><td class="n">${p.matches}</td><td class="n">${p.won}</td><td class="n">${p.aces}</td><td class="n">${p.doubleFaults}</td><td class="n">${p.bpConverted}/${p.bpChances}</td><td class="n">${p.winners == null ? '–' : p.winners}</td></tr>`).join('')}</tbody></table></div><p class="small muted" style="margin-top:8px">From the matches recorded so far. “–” = not recorded.</p></div>` : '<div class="empty card">No statistics yet.</div>';
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
