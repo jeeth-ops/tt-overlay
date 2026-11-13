@@ -208,6 +208,7 @@
   };
   var STROKES = { FH: 'Forehand', BH: 'Backhand', VOLLEY: 'Volley', HALF_VOLLEY: 'Half-volley', SMASH: 'Smash', DROP: 'Drop shot', LOB: 'Lob', SERVE: 'Serve', RETURN: 'Return', OTHER: 'Other' };
   var SERVE_DIRS = { WIDE: 'Wide', BODY: 'Body', T: 'Down the T' };
+  var DIR_WORDS = { WIDE: 'out wide', BODY: 'into the body', T: 'down the T' };   // as the commentary says it
   var INTERRUPTIONS = { MEDICAL: 'Medical time-out', TOILET: 'Toilet / change of attire break', EQUIPMENT: 'Equipment', RAIN: 'Rain', LIGHT: 'Bad light', DARKNESS: 'Darkness', HEAT: 'Heat', OTHER: 'Other' };
   var MANUAL_STATS = { fastestServeKmh: 'Fastest serve (km/h)', avgFirstServeKmh: 'Average 1st serve (km/h)', avgSecondServeKmh: 'Average 2nd serve (km/h)' };
 
@@ -1319,9 +1320,10 @@
         var k = KINDS[entry.kind] || KINDS.POINT;
         var who = entry.player && entry.playerNamed ? pn(entry.player) : n(entry.side);
         var head;
-        if (entry.kind === 'ACE') head = 'Ace by ' + pn(entry.server);
+        var dir = entry.serveDir && DIR_WORDS[entry.serveDir] ? ' ' + DIR_WORDS[entry.serveDir] : '';
+        if (entry.kind === 'ACE') head = 'Ace by ' + pn(entry.server) + dir;
         else if (entry.kind === 'DOUBLE_FAULT') head = 'Double fault' + (entry.foot ? ' (foot fault)' : '') + ' — ' + pn(entry.server);
-        else if (entry.kind === 'SERVICE_WINNER') head = 'Service winner — ' + pn(entry.server);
+        else if (entry.kind === 'SERVICE_WINNER') head = 'Service winner — ' + pn(entry.server) + dir;
         else if (k.winner) head = k.label + ' by ' + who + (entry.stroke ? ' (' + STROKES[entry.stroke].toLowerCase() + ')' : '');
         else if (k.error) head = k.label + ' by ' + (entry.player && entry.playerNamed ? pn(entry.player) : n(other(entry.side))) + ' — point ' + n(entry.side);
         else head = 'Point ' + n(entry.side);

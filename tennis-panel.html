@@ -718,12 +718,14 @@
     const html = `<div class="hl"><span>How did ${esc(shortSide(sd))} win it?</span><span>optional</span></div>
       <div class="chips">${kinds.map(([k, l, key]) => `<button class="chip ${e.kind === k ? 'sel' : ''}" data-hk="${k}">${esc(l)}${key ? ' <kbd>' + key + '</kbd>' : ''}</button>`).join('')}</div>
       <div class="chips">${strokes.map(([k, l]) => `<button class="chip ${e.stroke === k ? 'sel' : ''}" data-hs="${k}">${esc(l)}</button>`).join('')}${t.net ? `<button class="chip ${e.net ? 'sel' : ''}" data-hn="1">Net point <kbd>N</kbd></button>` : ''}</div>
+      ${t.shots ? `<div class="chips"><span class="small muted" style="align-self:center;margin-right:4px">Serve</span>${Object.keys(E.SERVE_DIRS).map((k) => `<button class="chip ${e.serveDir === k ? 'sel' : ''}" data-hd="${k}">${esc(E.SERVE_DIRS[k])}</button>`).join('')}</div>` : ''}
       ${d && E.KINDS[e.kind] && e.kind !== 'POINT' && E.KINDS[e.kind].by !== 'server' ? `<div class="chips">${players.map((id) => `<button class="chip ${e.player === id && e.playerNamed ? 'sel' : ''}" data-hp="${esc(id)}">${esc(pname(id))}</button>`).join('')}</div>` : ''}`;
     if (box.dataset.h !== html) {
       box.dataset.h = html; box.innerHTML = html;
       $$('[data-hk]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { kind: b.dataset.hk }); });
       $$('[data-hs]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { stroke: e.stroke === b.dataset.hs ? null : b.dataset.hs }); });
       $$('[data-hn]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { net: e.net ? null : sd }); });
+      $$('[data-hd]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { serveDir: e.serveDir === b.dataset.hd ? null : b.dataset.hd }); });
       $$('[data-hp]', box).forEach((b) => { b.onclick = () => classify(e.eventId, { player: b.dataset.hp }); });
     }
     box.classList.add('show');
@@ -1013,6 +1015,7 @@
     const rows = [
       ['Aces', A.serve.aces, B.serve.aces], ['Double faults', A.serve.doubleFaults, B.serve.doubleFaults],
       ...((A.serve.footFaults || B.serve.footFaults) ? [['Foot faults', A.serve.footFaults, B.serve.footFaults]] : []),
+      ...((A.serve.directions || B.serve.directions) ? [['Serves wide · body · T', A.serve.directions ? A.serve.directions.wide + ' · ' + A.serve.directions.body + ' · ' + A.serve.directions.t : null, B.serve.directions ? B.serve.directions.wide + ' · ' + B.serve.directions.body + ' · ' + B.serve.directions.t : null]] : []),
       ['1st serve in', fr(A.serve.firstIn, A.serve.firstServes, A.serve.firstPct), fr(B.serve.firstIn, B.serve.firstServes, B.serve.firstPct), A.serve.firstPct, B.serve.firstPct],
       ['1st serve won', fr(A.serve.firstWon, A.serve.firstIn, A.serve.firstWonPct), fr(B.serve.firstWon, B.serve.firstIn, B.serve.firstWonPct), A.serve.firstWonPct, B.serve.firstWonPct],
       ['2nd serve won', fr(A.serve.secondWon, A.serve.secondPoints, A.serve.secondWonPct), fr(B.serve.secondWon, B.serve.secondPoints, B.serve.secondWonPct), A.serve.secondWonPct, B.serve.secondWonPct],

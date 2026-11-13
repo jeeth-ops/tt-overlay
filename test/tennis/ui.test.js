@@ -53,6 +53,8 @@ async function until(fn, ms, step) { const end = Date.now() + (ms || 8000); let 
     await panel.waitForSelector('.point', { timeout: 8000 });
     let j = await until(async () => { const x = await server(); return x.match.status === 'live' ? x : null; });
     ok('toss and start: the match is live on the server, Alcaraz serving', j && j.match.status === 'live' && j.summary.server && j.summary.server.playerId === P.a.playerId, j && j.summary && j.summary.server);
+    await api('PUT', `/api/tennis/matches/${MID}`, { json: { tracking: { shots: true } } });   // optional shot tracking on
+    await sleep(500);
     await panel.keyboard.press('ArrowLeft'); await sleep(80);
     await panel.keyboard.press('ArrowLeft'); await sleep(80);
     await panel.click('.side[data-pos="R"] .point'); await sleep(80);
@@ -74,6 +76,10 @@ async function until(fn, ms, step) { const end = Date.now() + (ms || 8000); let 
     j = await until(async () => { const x = await server(); return x.summary.display.A === '40' ? x : null; });
     const lastPt = j && j.timeline.filter((y) => y.type === 'POINT' && !y.voided).pop();
     ok('E: an ace — 40-30, recorded as an ace by the server', j && lastPt.kind === 'ACE' && lastPt.side === 'A', lastPt && { kind: lastPt.kind, side: lastPt.side });
+    await panel.click('.side[data-pos="L"] [data-hd="T"]');
+    j = await until(async () => { const x = await server(); const e = x.timeline.filter((y) => y.type === 'POINT' && !y.voided).pop(); return e && e.serveDir === 'T' ? x : null; });
+    ok('shot tracking: the ace marked "Down the T" from the panel — on the server’s point', !!j);
+    ok('…and the point history says so', await until(async () => /Ace by Carlos Alcaraz down the T/.test(await panel.textContent('#deck')), 4000), (await panel.textContent('#deck')).slice(0, 200));
     await panel.keyboard.press('Shift+F');
     j = await until(async () => { const x = await server(); const e = x.timeline[x.timeline.length - 1]; return e && e.type === 'FAULT' && e.foot === true ? x : null; });
     ok('Shift+F: a foot fault — recorded as one, the second serve now', !!j && j.summary.serve === 2, j && j.summary.serve);

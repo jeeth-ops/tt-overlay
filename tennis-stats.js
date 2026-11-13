@@ -27,7 +27,7 @@
   var GENERIC = { POINT: 1, OTHER: 1, PENALTY: 1 };
 
   function serveBlock() {
-    return { points: 0, won: 0, known: 0, firstIn: 0, firstWon: 0, secondPoints: 0, secondWon: 0, aces: 0, doubleFaults: 0, serviceWinners: 0, faults: 0, footFaults: 0,
+    return { points: 0, won: 0, known: 0, firstIn: 0, firstWon: 0, secondPoints: 0, secondWon: 0, aces: 0, doubleFaults: 0, serviceWinners: 0, faults: 0, footFaults: 0, dirs: { WIDE: 0, BODY: 0, T: 0 }, dirAces: { WIDE: 0, BODY: 0, T: 0 }, dirKnown: 0,
       games: 0, gamesWon: 0, bpFaced: 0, bpSaved: 0, speeds: { first: [], second: [], all: [] } };
   }
   function returnBlock() { return { points: 0, won: 0, known: 0, firstPoints: 0, firstWon: 0, secondPoints: 0, secondWon: 0, games: 0, gamesWon: 0, bpChances: 0, bpConverted: 0, returnWinners: 0 }; }
@@ -131,6 +131,12 @@
       if (!GENERIC[k]) cov.classified++;
       var named = e.playerNamed && players[e.player] ? players[e.player] : null;
       if (named) named.byKind[k] = (named.byKind[k] || 0) + 1;
+      // the serve's direction, where shot tracking recorded it
+      if (e.serveDir && sv.serve.dirs[e.serveDir] != null) {
+        sv.serve.dirs[e.serveDir]++; sv.serve.dirKnown++;
+        if (P) { P.serve.dirs[e.serveDir]++; P.serve.dirKnown++; }
+        if (k === 'ACE') { sv.serve.dirAces[e.serveDir]++; if (P) P.serve.dirAces[e.serveDir]++; }
+      }
       if (k === 'ACE') { sv.serve.aces++; if (P) P.serve.aces++; }
       else if (k === 'DOUBLE_FAULT') { sv.serve.doubleFaults++; if (P) P.serve.doubleFaults++; if (e.foot) { sv.serve.footFaults++; if (P) P.serve.footFaults++; } }
       else if (k === 'SERVICE_WINNER') { sv.serve.serviceWinners++; if (P) P.serve.serviceWinners++; }
@@ -190,6 +196,8 @@
       var out = {
         points: b.points, won: b.won, wonPct: pct(b.won, b.points),
         aces: b.aces, doubleFaults: b.doubleFaults, serviceWinners: b.serviceWinners, footFaults: b.footFaults,
+        // serve directions: not recorded (null) unless shot tracking named at least one
+        directions: b.dirKnown ? { recorded: b.dirKnown, wide: b.dirs.WIDE, body: b.dirs.BODY, t: b.dirs.T, acesWide: b.dirAces.WIDE, acesBody: b.dirAces.BODY, acesT: b.dirAces.T } : null,
         firstIn: available.serve ? b.firstIn : null, firstServes: available.serve ? b.known : null,
         firstPct: available.serve ? pct(b.firstIn, b.known) : null,
         firstWon: available.serve ? b.firstWon : null, firstWonPct: available.serve ? pct(b.firstWon, b.firstIn) : null,

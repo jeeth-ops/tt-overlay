@@ -737,5 +737,24 @@ head('FOOT FAULTS — a fault like any other; on the second serve, a double faul
   ok('no foot fault recorded: the count is 0 (an untracked match shows no foot-fault row)', Stats.compute({ setup: plain.setup, state: plain.state, timeline: plain.timeline }).sides.A.serve.footFaults === 0);
 }
 
+head('SERVE DIRECTION — optional shot tracking');
+{
+  const Stats = require('../../tennis-stats.js');
+  const L = start('singles', {});
+  const st = () => Stats.compute({ setup: L.setup, state: L.state, timeline: L.timeline });
+  const a = pt(L, 'A', { kind: 'ACE', serve: 1 });
+  ok('nothing recorded yet: no serve directions in the statistics (unavailable, not 0)', st().sides.A.serve.directions === null);
+  must(L, { type: 'CORRECT', target: a.event.eventId, patch: { serveDir: 'T' }, reason: 'shot tracking' });
+  ok('down the T, marked afterwards: on the point and in the commentary', L.entry(a.event.eventId).serveDir === 'T' && /^Ace by Roger Alpha down the T/.test(E.commentary(L.setup, L.entry(a.event.eventId)).text), E.commentary(L.setup, L.entry(a.event.eventId)).text);
+  pt(L, 'A', { serveDir: 'WIDE' });
+  let d = st().sides.A.serve.directions;
+  ok('the statistics count what was recorded: 2 serves — 1 wide, 1 down the T (the ace)', d && d.recorded === 2 && d.wide === 1 && d.t === 1 && d.body === 0 && d.acesT === 1 && st().players[P.a1].serve.directions.recorded === 2, d);
+  ok('…and nothing for the receiver, who has not served', st().sides.B.serve.directions === null);
+  must(L, { type: 'CORRECT', target: a.event.eventId, patch: { serveDir: null }, reason: 'not sure' });
+  d = st().sides.A.serve.directions;
+  ok('a direction taken back is no longer counted', d && d.recorded === 1 && d.t === 0 && d.acesT === 0, d);
+  ok('incremental = replay with serve directions', matchesReplay(L).ok);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

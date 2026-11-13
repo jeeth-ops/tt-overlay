@@ -16,7 +16,8 @@ node test/tennis/engine.test.js       # ITF scoring: 0/15/30/40, deuce, advantag
                                       # empty sets; serving order singles + doubles, receiving positions, court (deuce / ad);
                                       # faults, lets, aces, double faults, foot faults; change of ends; pause / suspend /
                                       # resume / retire / walkover / default / abandon; game / break / set / match point with
-                                      # counts; foot faults (a fault; on the second serve a double fault); undo / redo / void /
+                                      # counts; foot faults (a fault; on the second serve a double fault); serve direction
+                                      # (optional shot tracking); undo / redo / void /
                                       # correct (O(1) undo, no copy of the match), idempotency;
                                       # property test: incremental == full replay; performance
 node test/tennis/stats-draw.test.js   # statistics from the timeline (unavailable is not 0), who a point (and its clip) is
@@ -43,7 +44,7 @@ NODE_PATH=$(npm root -g) node test/tennis/overlay-layout.test.js  # Chromium: EV
                                       # wide logo: every word inside 1920×1080, none cut short, pictures loaded and not
                                       # stretched, each one in and out
 NODE_PATH=$(npm root -g) node test/tennis/ui.test.js              # Chromium: the panel (keys, buttons, corrections, undo /
-                                      # redo, faults, foot faults, aces), the network dropping (kept, sent once, across a reload), the phone
+                                      # redo, faults, foot faults, aces, serve direction), the network dropping (kept, sent once, across a reload), the phone
                                       # remote taking over and handing back, graphics to air with ON AIR confirmed, the public
                                       # match centre, a winner moving through the draw, the dashboard and who may use it,
                                       # the player page, overlay links and Clipper page, phone widths
