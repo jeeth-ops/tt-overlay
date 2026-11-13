@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tennis · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/tennis-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🎾 THE TENNIS DASHBOARD — tournaments, their events (Men's Singles,
+  Mixed Doubles …) with entries, seeds and draws, the players (one identity
+  each, duplicates caught), and every match with its links: the scoring
+  panel, the phone remote, the overlay for vMix, the public match centre.
+  What an account may do is decided by the server on every request.
+-->
+<style>
+  .tcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+  .tcard { position: relative; border-radius: 22px; overflow: hidden; background: var(--card); box-shadow: var(--shadow), 0 0 0 1px var(--line); transition: transform .35s var(--spring), box-shadow .35s; min-height: 170px; display: flex; flex-direction: column; justify-content: flex-end; color: #fff; }
+  .tcard:hover { transform: translateY(-2px); box-shadow: var(--lift), 0 0 0 1px var(--line2); }
+  .tcard .art { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tcard .in { position: relative; padding: 14px 16px; background: linear-gradient(0deg, rgba(4,10,8,.88), rgba(4,10,8,0)); }
+  .tcard b { font-size: 18px; letter-spacing: -.02em; display: block; }
+  .tcard small { color: rgba(255,255,255,.75); font-weight: 600; }
+  .tcard a { position: absolute; inset: 0; z-index: 2; }
+  .evcard { display: grid; gap: 10px; }
+  .entries { display: grid; gap: 6px; }
+  .entry { display: grid; grid-template-columns: 54px minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 8px; align-items: center; }
+  .entry.single { grid-template-columns: 54px minmax(0, 1fr) 36px; }
+  .pl-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+  .pick-list { max-height: 50vh; overflow: auto; }
+  .rules-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 760px) { .rules-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+  .mrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+  .logo-pick { width: 84px; height: 84px; border-radius: 22px; border: 2px dashed var(--line2); display: grid; place-items: center; font-size: 30px; cursor: pointer; background: var(--fill) center / contain no-repeat; flex: none; overflow: hidden; }
+  .logo-pick img { width: 100%; height: 100%; object-fit: cover; }
+  .dup { border-radius: 14px; padding: 12px; background: color-mix(in srgb, var(--orange) 14%, transparent); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/tennis"><span class="asl"></span><span class="bt"><b>Tennis <em>Manager</em></b><small>by All Sports Live</small></span></a>
+  <nav class="row" id="nav" style="margin-left:6px"></nav>
+  <span class="grow"></span>
+  <span id="who" class="row small"></span>
+  <button class="theme-btn" data-theme-btn aria-label="Theme"></button>
+</header>
+<main class="wrap" id="app" style="padding-bottom:70px"><div class="skel" style="height:140px;margin-top:24px"></div></main>
+
+<script src="/tennis-common.js"></script>
+<script src="/tennis-engine.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, toast, api } = TN;
+  const E = window.TennisEngine;
+  const app = $('#app');
+  let mine = null, user = null, cfg = null;
+
+  async function boot() {
+    user = await TN.authReady;
+    renderWho();
+    if (!user) return gate('Sign in to manage tennis', 'Tournaments, players and matches are managed by the authorised All Sports Live accounts.', false);
+    const r = await api('GET', '/api/tennis/mine');
+    if (r.status === 403) return gate('Not authorised', 'This account is not one of the tournament accounts. The public tennis pages are open to everyone.', true);
+    if (!r.ok) return gate('Could not load', r.json.error || 'Try again in a moment.', true);
+    mine = r.json;
+    const c = await api('GET', '/api/tennis/config');
+    cfg = c.ok ? c.json : null;
+    window.addEventListener('hashchange', route);
+    route();
+  }
+  function renderWho() {
+    $('#who').innerHTML = user ? `<span class="muted ellipsis" style="max-width:220px">${esc(user.email)}</span><button class="btn sm" id="so">Sign out</button>` : '<button class="btn sm primary" id="si">Sign in</button>';
+    if ($('#so')) $('#so').onclick = () => TN.signOut().then(() => location.reload());
+    if ($('#si')) $('#si').onclick = () => TN.signIn().then(() => location.reload());
+    $('#nav').innerHTML = user ? '<a class="chip" href="#/">Tournaments</a><a class="chip" href="#/players">Players</a><a class="chip" href="/tennis-templates">Overlays</a>' : '';
+  }
+  async function gate(title, text, signedIn) {
+    app.innerHTML = `<div class="card" style="max-width:560px;margin:40px auto;text-align:center"><div style="font-size:44px">🎾</div><h2 style="margin:6px 0">${esc(title)}</h2><p class="muted">${esc(text)}</p>
+      ${signedIn ? '' : '<div class="row" style="justify-content:center;margin-top:16px"><button class="btn primary" id="gsi">Sign in with Google</button></div>'}</div>
+      <div class="section-title">Public tennis tournaments</div><div id="publist" class="tcards"><div class="skel" style="height:150px"></div></div>`;
+    if ($('#gsi')) $('#gsi').onclick = () => TN.signIn().then(() => location.reload());
+    const r = await api('GET', '/api/tennis/public/tournaments');
+    const list = (r.ok && r.json.tournaments) || [];
+    $('#publist').innerHTML = list.length ? list.map((t) => tcard(t, t.url)).join('') : '<div class="empty">No public tennis tournaments yet.</div>';
+  }
+  function route() {
+    const h = location.hash.replace(/^#/, '') || '/';
+    if (h.startsWith('/t/')) return viewTournament(h.slice(3));
+    if (h === '/players') return viewPlayers();
+    viewTournaments();
+  }
+  async function refreshMine() { const r = await api('GET', '/api/tennis/mine'); if (r.ok) mine = r.json; }
+  const statusWord = (s) => ({ upcoming: 'Upcoming', ongoing: 'Ongoing', completed: 'Completed', live: 'Live' })[s] || s;
+  function tcard(t, href) {
+    return `<article class="tcard">${TN.coverArt(t.surface, (t.broadcast && t.broadcast.accent) || '#c8f031')}<a href="${esc(href)}" aria-label="${esc(t.name)}"></a><div class="in"><span class="badge ${t.status === 'live' ? 'live' : ''}">${esc(statusWord(t.status))}</span><b style="margin-top:6px">${esc(t.name)}</b><small>${esc([t.city || t.venue, TN.surface(t.surface).label, t.counts ? t.counts.matches + ' matches' : (t.matchCount != null ? t.matchCount + ' played' : '')].filter(Boolean).join(' · '))}</small></div></article>`;
+  }
+
+  /* ---------------------------------------------------------- tournaments */
+  function viewTournaments() {
+    app.innerHTML = `<div class="hero"><div><div class="kick">🎾 Tennis · Tournament Manager</div><h1>Tournaments</h1></div>
+      <div class="row wrapr"><a class="btn" href="#/players">Players (${mine.players.length})</a><button class="btn primary" id="newt">＋ New tournament</button></div></div>
+      <div class="tcards">${mine.tournaments.map((t) => tcard(t, '#/t/' + t.tournamentId)).join('') || '<div class="empty card"><b>No tournaments yet</b>Create the first one — then add its events (Men’s Singles, Mixed Doubles …), players and draws.</div>'}</div>`;
+    $('#newt').onclick = () => editTournament(null);
+  }
+  function editTournament(t) {
+    const isNew = !t;
+    t = t || { name: '', venue: '', city: '', surface: 'hard', courts: [], visibility: 'public', clip: { preRollSec: 7, postRollSec: 3 } };
+    let logo;
+    const s = TN.sheet(`<h3>${isNew ? 'New tournament' : 'Edit tournament'}</h3>
+      <div class="stack" style="margin-top:14px">
+        <div class="row" style="align-items:flex-start;gap:14px"><label class="logo-pick" id="tlogo" title="Tournament logo">${t.logo ? `<img src="${esc(t.logo)}" alt="">` : '🏆'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+          <div class="stack grow"><label class="field">Tournament name<input class="input" id="tname" maxlength="80" value="${esc(t.name)}" autofocus></label>
+          <div class="grid2"><label class="field">Venue<input class="input" id="tvenue" maxlength="120" value="${esc(t.venue || '')}"></label><label class="field">City<input class="input" id="tcity" maxlength="60" value="${esc(t.city || '')}"></label></div></div></div>
+        <div class="grid3"><label class="field">Starts<input class="input" type="date" id="tstart" value="${esc(t.startDate || '')}"></label><label class="field">Ends<input class="input" type="date" id="tend" value="${esc(t.endDate || '')}"></label><label class="field">Organiser<input class="input" id="torg" maxlength="80" value="${esc(t.organizer || '')}"></label></div>
+        <div class="grid2"><label class="field">Court surface<select class="input" id="tsurf">${Object.keys(TN.SURFACES).map((k) => `<option value="${k}" ${t.surface === k ? 'selected' : ''}>${esc(TN.SURFACES[k].label)}</option>`).join('')}</select></label>
+          <label class="field">Courts (comma separated)<input class="input" id="tcourts" maxlength="400" value="${esc((t.courts || []).join(', '))}" placeholder="Centre Court, Court 1, Court 2"></label></div>
+        <label class="field">Description<textarea class="input" id="tdesc" maxlength="600">${esc(t.description || '')}</textarea></label>
+        <div class="row wrapr"><span class="small muted" style="min-width:90px">Visibility</span><div class="seg" id="tvis"><button data-v="public">Public</button><button data-v="private">Private</button></div></div>
+        <div class="section-title" style="margin:6px 0 0">Point clips (the Tennis Clipper)</div>
+        <div class="grid2"><label class="field">Seconds before the press (the rally)<input class="input" type="number" id="tpre" min="1" max="30" value="${esc((t.clip && t.clip.preRollSec) || 7)}"></label><label class="field">Seconds after the press<input class="input" type="number" id="tpost" min="1" max="15" value="${esc((t.clip && t.clip.postRollSec) || 3)}"></label></div>
+        <label class="field">Google Drive folder for clips (optional)<input class="input" id="tdrive" placeholder="https://drive.google.com/drive/folders/…" value="${esc(t.driveFolderId ? 'https://drive.google.com/drive/folders/' + t.driveFolderId : '')}"></label>
+      </div>
+      <div class="foot">${!isNew ? `<button class="btn danger" id="tarch">${t.archived ? 'Restore' : 'Archive'}</button><span class="grow"></span>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" id="tsave">${isNew ? 'Create tournament' : 'Save'}</button></div>`, { wide: true, sticky: true });
+    let vis = t.visibility || 'public';
+    const paintVis = () => $$('#tvis button', s.el).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === vis)));
+    $$('#tvis button', s.el).forEach((b) => { b.onclick = () => { vis = b.dataset.v; paintVis(); }; });
+    paintVis();
+    const lp = $('#tlogo', s.el);
+    $('input', lp).onchange = async (e) => { try { logo = await TN.readLogo(e.target.files[0]); lp.innerHTML = `<img src="${logo}" alt=""><input type="file" hidden>`; } catch (err) { toast(err.message, 'err'); } };
+    if (!isNew) $('#tarch', s.el).onclick = async () => { const r = await api('PUT', `/api/tennis/tournaments/${t.tournamentId}`, { archived: !t.archived }); if (r.ok) { s.close(); await refreshMine(); route(); } else toast(r.json.error, 'err'); };
+    $('#tsave', s.el).onclick = async () => {
+      const body = { name: $('#tname', s.el).value, venue: $('#tvenue', s.el).value, city: $('#tcity', s.el).value, startDate: $('#tstart', s.el).value, endDate: $('#tend', s.el).value, organizer: $('#torg', s.el).value,
+        surface: $('#tsurf', s.el).value, courts: $('#tcourts', s.el).value.split(',').map((x) => x.trim()).filter(Boolean), description: $('#tdesc', s.el).value, visibility: vis,
+        clip: { preRollSec: Number($('#tpre', s.el).value), postRollSec: Number($('#tpost', s.el).value) }, driveFolder: $('#tdrive', s.el).value };
+      if (logo) body.logo = logo;
+      const r = isNew ? await api('POST', '/api/tennis/tournaments', body) : await api('PUT', `/api/tennis/tournaments/${t.tournamentId}`, body);
+      if (!r.ok) return toast(r.json.error || 'Not saved', 'err');
+      s.close(); toast(isNew ? 'Tournament created' : 'Saved');
+      await refreshMine();
+      if (isNew) location.hash = '#/t/' + r.json.tournament.tournamentId; else route();
+    };
+  }
+
+  /* ---------------------------------------------------------- one tournament */
+  let T = null;
+  async function viewTournament(tid) {
+    app.innerHTML = '<div class="skel" style="height:260px;margin-top:20px"></div>';
+    const r = await api('GET', `/api/tennis/tournaments/${tid}`);
+    if (!r.ok) { app.innerHTML = `<div class="empty card" style="margin-top:30px"><b>Tournament not found</b><a href="#/">Back</a></div>`; return; }
+    T = r.json;
+    const t = T.tournament;
+    const live = T.matches.filter((m) => m.status === 'live' || m.status === 'paused');
+    app.innerHTML = `<section class="cover" style="margin-top:18px">${TN.coverArt(t.surface, t.broadcast && t.broadcast.accent)}<div class="in"><div class="row" style="align-items:flex-end;gap:16px">${t.logo ? `<span class="clogo"><img src="${esc(t.logo)}" alt=""></span>` : ''}<div class="grow"><div class="kick" style="color:var(--optic)">${esc(TN.surface(t.surface).label)} · ${esc(t.visibility)}</div><h1>${esc(t.name)}</h1><div class="small" style="opacity:.85">${esc([t.venue, t.city, t.startDate && t.endDate ? t.startDate + ' – ' + t.endDate : ''].filter(Boolean).join(' · '))}</div></div>
+      <div class="row wrapr"><a class="btn" href="/tennis/tournament/${esc(t.tournamentId)}" target="_blank" rel="noopener">Public page ↗</a><button class="btn" id="edt">✎ Edit</button></div></div></div></section>
+      ${live.length ? `<div class="section-title">🔴 Live now</div><div class="mcards">${live.map((m) => TN.matchCard(m, { href: null, actions: matchActions(m) })).join('')}</div>` : ''}
+      <div class="row" style="margin-top:22px"><div class="section-title grow" style="margin:0">Events</div><button class="btn sm primary" id="addev">＋ Event (draw)</button></div>
+      <div class="stack" id="events" style="margin-top:10px">${T.events.map(eventCard).join('') || '<div class="empty card"><b>No events yet</b>An event is one draw: Men’s Singles, Women’s Doubles, Mixed Doubles, U-18 Boys …</div>'}</div>
+      <div class="row" style="margin-top:22px"><div class="section-title grow" style="margin:0">All matches</div><button class="btn sm" id="addm">＋ Match</button></div>
+      <div class="mcards" style="margin-top:10px">${T.matches.map((m) => TN.matchCard(m, { href: null, actions: matchActions(m) })).join('') || '<div class="empty">No matches yet — generate a draw or add a match.</div>'}</div>`;
+    $('#edt').onclick = () => editTournament(t);
+    $('#addev').onclick = () => editEvent(null);
+    $('#addm').onclick = () => editMatch(null);
+    wireMatchActions(app);
+    $$('[data-ev-edit]').forEach((b) => { b.onclick = () => editEvent(T.events.find((e) => e.eventId === b.dataset.evEdit)); });
+    $$('[data-ev-draw]').forEach((b) => { b.onclick = () => generateDraw(T.events.find((e) => e.eventId === b.dataset.evDraw), b.dataset.stage); });
+    $$('[data-ev-match]').forEach((b) => { b.onclick = () => editMatch(null, b.dataset.evMatch); });
+  }
+  function eventCard(ev) {
+    const n = ev.entries.filter((e) => !e.withdrawn).length;
+    const ms = T.matches.filter((m) => m.eventId === ev.eventId);
+    const drawType = { knockout: 'Knockout', round_robin: 'Round robin', groups_knockout: 'Groups → knockout', custom: 'Custom' }[ev.drawType];
+    return `<div class="card evcard"><div class="row wrapr"><div class="grow"><b style="font-size:17px">${esc(ev.name)}</b><div class="small muted">${esc([ev.format === 'doubles' ? 'Doubles' : 'Singles', ev.categoryLabel, drawType, n + ' entries', ms.length + ' matches', E.normalizeRules(ev.rules).label].filter(Boolean).join(' · '))}</div></div>
+      <button class="btn sm" data-ev-edit="${esc(ev.eventId)}">Entries & format</button>
+      ${ev.drawType === 'groups_knockout' ? `<button class="btn sm" data-ev-draw="${esc(ev.eventId)}" data-stage="groups">Generate groups</button><button class="btn sm" data-ev-draw="${esc(ev.eventId)}" data-stage="knockout">Knockout from groups</button>` : `<button class="btn sm primary" data-ev-draw="${esc(ev.eventId)}">Generate draw</button>`}
+      <button class="btn sm" data-ev-match="${esc(ev.eventId)}">＋ Match</button></div>
+      ${ev.entries.length ? `<div class="row wrapr small">${ev.entries.filter((e) => !e.withdrawn).slice(0, 40).map((e) => `<span class="chip">${e.seed ? '<b>[' + e.seed + ']</b> ' : ''}${esc(e.name || e.players.map((p) => ev.format === 'doubles' ? TN.surname(p.name) : p.name).join(' / '))}</span>`).join('')}</div>` : ''}
+      ${(ev.standings || []).filter((g) => g.rows.length).map((g) => `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(g.name ? 'Group ' + g.name : 'Standings')}</th><th class="n">P</th><th class="n">W</th><th class="n">L</th><th class="n">Sets</th><th class="n">Games</th></tr></thead><tbody>${g.rows.map((r) => { const en = ev.entries.find((x) => x.entryId === r.entryId); return `<tr><td>${r.rank}. ${esc(en ? (en.name || en.players.map((p) => p.name).join(' / ')) : '')}${r.tied ? ' <span class="tiny muted">(tied)</span>' : ''}</td><td class="n">${r.played}</td><td class="n">${r.won}</td><td class="n">${r.lost}</td><td class="n">${r.setsWon}-${r.setsLost}</td><td class="n">${r.gamesWon}-${r.gamesLost}</td></tr>`; }).join('')}</tbody></table></div>`).join('')}</div>`;
+  }
+  function matchActions(m) {
+    const ov = `/tennis-overlay?match=${encodeURIComponent(m.matchId)}${m.overlayKey ? '&key=' + m.overlayKey : ''}`;
+    return `<a class="btn xs primary" href="/tennis-panel?match=${esc(m.matchId)}" target="_blank" rel="noopener">Panel</a><a class="btn xs" href="/tennis-remote?match=${esc(m.matchId)}" target="_blank" rel="noopener">Remote</a>
+      <button class="btn xs" data-copy="${esc(location.origin + ov)}" title="Copy the vMix browser-source link">Overlay link</button><a class="btn xs" href="/tennis/match/${esc(m.matchId)}" target="_blank" rel="noopener">Match centre</a>
+      <button class="btn xs" data-medit="${esc(m.matchId)}">Edit</button>`;
+  }
+  function wireMatchActions(root) {
+    $$('[data-copy]', root).forEach((b) => { b.onclick = () => TN.copy(b.dataset.copy).then((ok) => toast(ok ? 'Overlay link copied — add it as a vMix Web Browser input at 1920×1080' : 'Could not copy', ok ? '' : 'err')); });
+    $$('[data-medit]', root).forEach((b) => { b.onclick = () => editMatch(T.matches.find((m) => m.matchId === b.dataset.medit)); });
+  }
+
+  /* ---------- the scoring format (preset or custom) ---------- */
+  function rulesEditor(host, rules, locked) {
+    let r = E.normalizeRules(rules || {});
+    const presets = E.PRESETS;
+    const paint = () => {
+      const key = E.presetOf(r);
+      host.innerHTML = `<label class="field">Scoring format<select class="input" data-r="preset" ${locked ? 'disabled' : ''}>${Object.keys(presets).map((k) => `<option value="${k}" ${key === k ? 'selected' : ''}>${esc(presets[k].label)}</option>`).join('')}<option value="custom" ${key === 'custom' ? 'selected' : ''}>Custom…</option></select></label>
+        <details ${key === 'custom' ? 'open' : ''} style="margin-top:8px"><summary class="small">Every rule</summary><div class="rules-grid" style="margin-top:10px">
+          <label class="field">Best of (sets)<select class="input" data-r="bestOf" ${locked ? 'disabled' : ''}>${[1, 3, 5].map((n) => `<option ${r.bestOf === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+          <label class="field">Games to win a set<input class="input" type="number" min="1" max="12" data-r="gamesPerSet" value="${r.gamesPerSet}" ${locked ? 'disabled' : ''}></label>
+          <label class="field">Tie-break at (games all)<select class="input" data-r="tiebreakAt" ${locked ? 'disabled' : ''}><option value="none" ${r.tiebreakAt == null ? 'selected' : ''}>No tie-break (advantage sets)</option>${Array.from({ length: 13 }, (_, i) => i + Math.max(1, r.gamesPerSet - 1)).filter((n) => n <= 30).map((n) => `<option value="${n}" ${r.tiebreakAt === n ? 'selected' : ''}>${n}-all</option>`).join('')}</select></label>
+          <label class="field">Tie-break: first to<input class="input" type="number" min="3" max="21" data-r="tiebreakPoints" value="${r.tiebreakPoints}" ${locked ? 'disabled' : ''}></label>
+          <label class="field">Tie-break margin<select class="input" data-r="tiebreakMargin" ${locked ? 'disabled' : ''}><option value="2" ${r.tiebreakMargin === 2 ? 'selected' : ''}>Two clear</option><option value="1" ${r.tiebreakMargin === 1 ? 'selected' : ''}>Sudden death</option></select></label>
+          <label class="field">The deciding set<select class="input" data-r="finalSet" ${locked ? 'disabled' : ''}>${Object.keys(E.FINAL_SET).map((k) => `<option value="${k}" ${r.finalSet === k ? 'selected' : ''}>${esc(E.FINAL_SET[k])}</option>`).join('')}</select></label>
+          ${r.finalSet === 'tiebreak' ? `<label class="field">…tie-break at<input class="input" type="number" min="1" max="30" data-r="finalTiebreakAt" value="${r.finalTiebreakAt}" ${locked ? 'disabled' : ''}></label>` : ''}
+          ${r.finalSet === 'tiebreak' || r.finalSet === 'matchTiebreak' ? `<label class="field">…first to<input class="input" type="number" min="3" max="21" data-r="finalTiebreakPoints" value="${r.finalTiebreakPoints}" ${locked ? 'disabled' : ''}></label>` : ''}
+          <label class="row small"><button class="switch" data-rs="noAd" role="switch" aria-checked="${r.noAd}" ${locked ? 'disabled' : ''}></button>No-Ad (deciding point at deuce)</label>
+          <label class="row small"><button class="switch" data-rs="lets" role="switch" aria-checked="${r.lets}" ${locked ? 'disabled' : ''}></button>Lets on serve are replayed</label>
+        </div></details><p class="small muted" style="margin-top:8px">${esc(r.label)}${r.official ? '' : ' · <b>custom format</b>'}${locked ? ' · locked: matches have started' : ''}</p>`;
+      $$('[data-r]', host).forEach((el) => { el.onchange = () => {
+        const k = el.dataset.r;
+        if (k === 'preset') { if (el.value !== 'custom') r = E.normalizeRules(presets[el.value].rules); }
+        else { const v = el.value; r = E.normalizeRules(Object.assign({}, r, { [k]: k === 'tiebreakAt' ? (v === 'none' ? null : Number(v)) : k === 'finalSet' ? v : Number(v) })); }
+        paint();
+      }; });
+      $$('[data-rs]', host).forEach((el) => { el.onclick = () => { r = E.normalizeRules(Object.assign({}, r, { [el.dataset.rs]: !r[el.dataset.rs] })); paint(); }; });
+    };
+    paint();
+    return { value: () => r };
+  }
+
+  /* ---------- an event: entries, seeds, groups, format ---------- */
+  function editEvent(ev) {
+    const isNew = !ev;
+    ev = ev || { name: '', format: 'singles', category: 'men', drawType: 'knockout', entries: [], groups: [], rules: E.normalizeRules({}), thirdPlace: false, qualifiersPerGroup: 2 };
+    let entries = (ev.entries || []).filter((e) => !e.withdrawn).map((e) => ({ entryId: e.entryId, seed: e.seed || '', playerIds: e.players.map((p) => p.playerId), name: e.name || '' }));
+    let format = ev.format, drawType = ev.drawType;
+    let groupsN = Math.max(1, (ev.groups || []).length || 2);
+    const s = TN.sheet(`<h3>${isNew ? 'New event' : esc(ev.name)}</h3><div class="stack" style="margin-top:14px">
+      <div class="grid2"><label class="field">Event name<input class="input" id="en" maxlength="60" value="${esc(ev.name)}" placeholder="Men’s Singles" autofocus></label>
+        <label class="field">Category<select class="input" id="ec">${Object.keys(TN.CATEGORIES).map((k) => `<option value="${k}" ${ev.category === k ? 'selected' : ''}>${esc(TN.CATEGORIES[k])}</option>`).join('')}</select></label></div>
+      <div class="row wrapr"><span class="small muted" style="min-width:70px">Format</span><div class="seg" id="ef"><button data-v="singles">Singles</button><button data-v="doubles">Doubles</button></div>
+        <span class="small muted" style="min-width:60px;margin-left:12px">Draw</span><div class="seg" id="ed"><button data-v="knockout">Knockout</button><button data-v="round_robin">Round robin</button><button data-v="groups_knockout">Groups → knockout</button></div></div>
+      <div id="edx" class="row wrapr"></div>
+      <div id="erules"></div>
+      <div class="row"><div class="section-title grow" style="margin:6px 0 0">Entries <span class="tiny">(seed · player${format === 'doubles' ? 's' : ''})</span></div><button class="btn sm" id="eadd">＋ Entry</button></div>
+      <div class="entries" id="elist"></div></div>
+      <div class="foot">${!isNew ? '<button class="btn danger" id="edel">Delete event</button><span class="grow"></span>' : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" id="esave">${isNew ? 'Create event' : 'Save'}</button></div>`, { wide: true, sticky: true });
+    const re = rulesEditor($('#erules', s.el), ev.rules, ev.rulesLocked);
+    const segs = () => { $$('#ef button', s.el).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === format))); $$('#ed button', s.el).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === drawType))); paintExtra(); };
+    $$('#ef button', s.el).forEach((b) => { b.onclick = () => { if (format === b.dataset.v) return; format = b.dataset.v; entries = entries.map((e) => Object.assign(e, { playerIds: e.playerIds.slice(0, format === 'doubles' ? 2 : 1) })); segs(); paintEntries(); }; });
+    $$('#ed button', s.el).forEach((b) => { b.onclick = () => { drawType = b.dataset.v; segs(); }; });
+    let thirdPlace = !!ev.thirdPlace, randomUnseeded = !!ev.randomUnseeded, qpg = ev.qualifiersPerGroup || 2;
+    function paintExtra() {
+      $('#edx', s.el).innerHTML = (drawType !== 'round_robin' ? `<label class="row small"><button class="switch" id="e3p" role="switch" aria-checked="${thirdPlace}"></button>Third-place match</label><label class="row small"><button class="switch" id="ern" role="switch" aria-checked="${randomUnseeded}"></button>Draw the unseeded at random</label>` : '')
+        + (drawType !== 'knockout' ? `<label class="row small">Groups <input class="input" id="egn" type="number" min="1" max="16" value="${groupsN}" style="width:70px;height:34px"></label>` : '')
+        + (drawType === 'groups_knockout' ? `<label class="row small">Through per group <input class="input" id="eq" type="number" min="1" max="8" value="${qpg}" style="width:70px;height:34px"></label>` : '');
+      if ($('#e3p', s.el)) $('#e3p', s.el).onclick = (e) => { thirdPlace = !thirdPlace; e.target.setAttribute('aria-checked', thirdPlace); };
+      if ($('#ern', s.el)) $('#ern', s.el).onclick = (e) => { randomUnseeded = !randomUnseeded; e.target.setAttribute('aria-checked', randomUnseeded); };
+      if ($('#egn', s.el)) $('#egn', s.el).onchange = (e) => { groupsN = Math.max(1, Math.min(16, Number(e.target.value) || 1)); };
+      if ($('#eq', s.el)) $('#eq', s.el).onchange = (e) => { qpg = Math.max(1, Math.min(8, Number(e.target.value) || 2)); };
+    }
+    const pname = (id) => { const p = mine.players.find((x) => x.playerId === id); return p ? p.name : 'Choose…'; };
+    function paintEntries() {
+      const d = format === 'doubles';
+      $('#elist', s.el).innerHTML = entries.map((e, i) => `<div class="entry ${d ? '' : 'single'}"><input class="input" data-seed="${i}" type="number" min="1" max="64" placeholder="Seed" value="${esc(e.seed || '')}">
+        ${[0].concat(d ? [1] : []).map((k) => `<button class="btn" data-pick="${i}:${k}" style="justify-content:flex-start">${esc(e.playerIds[k] ? pname(e.playerIds[k]) : 'Choose player…')}</button>`).join('')}
+        <button class="icon-btn" data-rm="${i}" title="Remove">✕</button></div>`).join('') || '<div class="small muted">No entries yet.</div>';
+      $$('[data-seed]', s.el).forEach((el) => { el.onchange = () => { entries[Number(el.dataset.seed)].seed = el.value; }; });
+      $$('[data-rm]', s.el).forEach((el) => { el.onclick = () => { entries.splice(Number(el.dataset.rm), 1); paintEntries(); }; });
+      $$('[data-pick]', s.el).forEach((el) => { el.onclick = () => { const [i, k] = el.dataset.pick.split(':').map(Number); pickPlayer((p) => { entries[i].playerIds[k] = p.playerId; paintEntries(); }, [].concat(...entries.map((x) => x.playerIds))); }; });
+    }
+    $('#eadd', s.el).onclick = () => { entries.push({ seed: '', playerIds: [] }); paintEntries(); const last = $$('[data-pick]', s.el).slice(-(format === 'doubles' ? 2 : 1))[0]; if (last) last.click(); };
+    segs(); paintEntries();
+    if (!isNew) $('#edel', s.el).onclick = async () => { if (!(await TN.confirm('Delete this event?', 'Only an event without matches can be deleted.', 'Delete', true))) return; const r = await api('DELETE', `/api/tennis/tournaments/${T.tournament.tournamentId}/events/${ev.eventId}`); if (r.ok) { s.close(); viewTournament(T.tournament.tournamentId); } else toast(r.json.error, 'err'); };
+    $('#esave', s.el).onclick = async () => {
+      const need = format === 'doubles' ? 2 : 1;
+      if (entries.some((e) => e.playerIds.filter(Boolean).length !== need)) return toast(format === 'doubles' ? 'Every doubles entry needs two players' : 'Every entry needs its player', 'err');
+      const body = { name: $('#en', s.el).value, category: $('#ec', s.el).value, format, drawType, rules: re.value(), thirdPlace, randomUnseeded, qualifiersPerGroup: qpg,
+        entries: entries.map((e) => ({ entryId: e.entryId, seed: e.seed ? Number(e.seed) : null, playerIds: e.playerIds, name: e.name })) };
+      let r = isNew ? await api('POST', `/api/tennis/tournaments/${T.tournament.tournamentId}/events`, body) : await api('PUT', `/api/tennis/tournaments/${T.tournament.tournamentId}/events/${ev.eventId}`, body);
+      if (!r.ok) return toast(r.json.error || 'Not saved', 'err');
+      // groups for a round robin: snake by seed (1 to A, 2 to B …), then the rest
+      if (drawType !== 'knockout') {
+        const saved = r.json.event.entries.filter((e) => !e.withdrawn).slice().sort((a, b) => (a.seed || 999) - (b.seed || 999));
+        const n = Math.min(groupsN, Math.max(1, Math.floor(saved.length / 2)));
+        const groups = Array.from({ length: n }, (_, i) => ({ name: n === 1 ? '' : String.fromCharCode(65 + i), entryIds: [] }));
+        saved.forEach((e, i) => { const row = Math.floor(i / n), col = row % 2 ? n - 1 - (i % n) : i % n; groups[col].entryIds.push(e.entryId); });
+        r = await api('PUT', `/api/tennis/tournaments/${T.tournament.tournamentId}/events/${r.json.event.eventId}`, { groups: groups.map((g) => Object.assign(g, { name: g.name || 'A' })) });
+        if (!r.ok) return toast(r.json.error || 'Groups not saved', 'err');
+      }
+      s.close(); toast('Saved'); viewTournament(T.tournament.tournamentId);
+    };
+  }
+  async function generateDraw(ev, stage) {
+    const go = async (force) => {
+      const start = await chooseStart();
+      if (start === false) return;
+      const r = await api('POST', `/api/tennis/tournaments/${T.tournament.tournamentId}/events/${ev.eventId}/draw`, Object.assign({ stage: stage || undefined, force: !!force }, start || {}));
+      if (r.status === 409 && r.json.code === 'GROUPS_NOT_DONE') { if (await TN.confirm('The groups are not finished', r.json.error, 'Generate anyway')) return go(true); return; }
+      if (!r.ok) return toast(r.json.error || 'Could not generate', 'err');
+      toast(`${r.json.created} match${r.json.created === 1 ? '' : 'es'} created${r.json.existing ? ' · ' + r.json.existing + ' already there' : ''}`);
+      viewTournament(T.tournament.tournamentId);
+    };
+    go(false);
+  }
+  function chooseStart() {
+    return new Promise((resolve) => {
+      let done = false;
+      const s = TN.sheet(`<h3>Schedule</h3><p class="small muted" style="margin:6px 0 12px">Give the first match a time and the rest follow; or leave the times to set later.</p>
+        <div class="grid3"><label class="field">First match<input class="input" type="datetime-local" id="st"></label><label class="field">Minutes apart<input class="input" type="number" id="gap" value="75" min="0"></label><label class="field">Matches per day<input class="input" type="number" id="pd" value="8" min="1"></label></div>
+        <div class="foot"><button class="btn" data-close>Cancel</button><button class="btn" id="nos">No times</button><button class="btn primary" id="go">Generate</button></div>`, { onClose: () => { if (!done) resolve(false); } });
+      $('#nos', s.el).onclick = () => { done = true; resolve({}); s.close(); };
+      $('#go', s.el).onclick = () => { const v = $('#st', s.el).value; done = true; resolve(v ? { startAt: new Date(v).getTime(), gapMinutes: Number($('#gap', s.el).value), matchesPerDay: Number($('#pd', s.el).value) } : {}); s.close(); };
+    });
+  }
+
+  /* ---------- a match ---------- */
+  function editMatch(m, eventId) {
+    const isNew = !m;
+    const t = T.tournament;
+    const ev = m ? T.events.find((e) => e.eventId === m.eventId) : T.events.find((e) => e.eventId === eventId);
+    let format = m ? m.format : ev ? ev.format : 'singles';
+    const started = m && m.summary && m.summary.status && m.summary.status !== 'pregame';
+    const sideIds = (s) => (m && m.sides[s] ? m.sides[s].players.map((p) => p.playerId) : []);
+    const sel = { A: sideIds('A'), B: sideIds('B') };
+    const dt = m && m.scheduledAt ? new Date(m.scheduledAt - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+    const s = TN.sheet(`<h3>${isNew ? 'New match' : 'Edit match'}</h3><div class="stack" style="margin-top:14px">
+      ${ev ? `<div class="small muted">Event: <b>${esc(ev.name)}</b> (${esc(ev.format)})</div>` : `<div class="row wrapr"><span class="small muted" style="min-width:70px">Format</span><div class="seg" id="mf"><button data-v="singles">Singles</button><button data-v="doubles">Doubles</button></div></div>`}
+      <div class="grid2" id="msides"></div>
+      <div class="grid3"><label class="field">Stage<select class="input" id="mst">${['friendly', 'knockout', 'group', 'qualifying', 'exhibition'].map((k) => `<option value="${k}" ${m && m.stage && m.stage.type === k ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></label>
+        <label class="field">Round<input class="input" id="mrd" maxlength="40" placeholder="e.g. Semi-final" value="${esc((m && m.stage && m.stage.round) || '')}"></label>
+        <label class="field">Match title (optional)<input class="input" id="mtl" maxlength="80" value="${esc((m && m.title) || '')}"></label></div>
+      <div class="grid3"><label class="field">Date &amp; time<input class="input" type="datetime-local" id="mwhen" value="${esc(dt)}"></label>
+        <label class="field">Court<input class="input" id="mct" list="courts" maxlength="40" value="${esc((m && m.court) || '')}"><datalist id="courts">${(t.courts || []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+        <label class="field">Surface<select class="input" id="msf">${Object.keys(TN.SURFACES).map((k) => `<option value="${k}" ${((m && m.surface) || t.surface) === k ? 'selected' : ''}>${esc(TN.SURFACES[k].label)}</option>`).join('')}</select></label></div>
+      <div class="grid2"><label class="field">Venue<input class="input" id="mvn" maxlength="120" value="${esc((m && m.venue) || t.venue || '')}"></label><label class="field">Chair umpire<input class="input" id="mum" maxlength="60" value="${esc((m && m.officials && m.officials.umpire) || '')}"></label></div>
+      <div class="grid2"><label class="field">Broadcast (channel)<input class="input" id="mbc" maxlength="60" value="${esc((m && m.broadcastInfo && m.broadcastInfo.channel) || '')}" placeholder="YouTube · All Sports Live"></label><label class="field">Stream link<input class="input" id="mbu" maxlength="300" value="${esc((m && m.broadcastInfo && m.broadcastInfo.url) || '')}" placeholder="https://youtube.com/…"></label></div>
+      <div id="mrules"></div>
+      <label class="field">Notes<input class="input" id="mnt" maxlength="400" value="${esc((m && m.notes) || '')}"></label></div>
+      <div class="foot">${!isNew && !(m.eventSeq > 0) ? '<button class="btn danger" id="mdel">Delete</button>' : ''}${!isNew ? `<button class="btn" id="mlock">${m.locked ? 'Unlock' : 'Lock'}</button>` : ''}<span class="grow"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="msave">${isNew ? 'Create match' : 'Save'}</button></div>`, { wide: true, sticky: true });
+    const re = rulesEditor($('#mrules', s.el), m ? m.rules : ev ? ev.rules : {}, started);
+    const pname = (id) => { const p = mine.players.find((x) => x.playerId === id); return p ? p.name : 'Choose…'; };
+    function paintSides() {
+      const d = format === 'doubles';
+      if (ev && isNew) {
+        const opts = ev.entries.filter((e) => !e.withdrawn).map((e) => `<option value="${esc(e.entryId)}">${e.seed ? '[' + e.seed + '] ' : ''}${esc(e.name || e.players.map((p) => p.name).join(' / '))}</option>`).join('');
+        $('#msides', s.el).innerHTML = ['A', 'B'].map((x) => `<label class="field">Side ${x}<select class="input" data-entry="${x}"><option value="">To be decided</option>${opts}</select></label>`).join('');
+        return;
+      }
+      $('#msides', s.el).innerHTML = ['A', 'B'].map((x) => `<div class="stack"><span class="small muted">Side ${x}${started ? ' (the match has started)' : ''}</span>${[0].concat(d ? [1] : []).map((k) => `<button class="btn" data-sp="${x}:${k}" ${started ? 'disabled' : ''} style="justify-content:flex-start">${esc(sel[x][k] ? pname(sel[x][k]) : 'Choose player…')}</button>`).join('')}</div>`).join('');
+      $$('[data-sp]', s.el).forEach((b) => { b.onclick = () => { const [x, k] = b.dataset.sp.split(':'); pickPlayer((p) => { sel[x][Number(k)] = p.playerId; paintSides(); }, sel.A.concat(sel.B)); }; });
+    }
+    if (!ev) { const paintF = () => $$('#mf button', s.el).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === format))); $$('#mf button', s.el).forEach((b) => { b.onclick = () => { if (started) return; format = b.dataset.v; sel.A = sel.A.slice(0, format === 'doubles' ? 2 : 1); sel.B = sel.B.slice(0, format === 'doubles' ? 2 : 1); paintF(); paintSides(); }; }); paintF(); }
+    paintSides();
+    if ($('#mdel', s.el)) $('#mdel', s.el).onclick = async () => { if (!(await TN.confirm('Delete this match?', 'A match that has not started can be deleted.', 'Delete', true))) return; const r = await api('DELETE', `/api/tennis/matches/${m.matchId}`); if (r.ok) { s.close(); viewTournament(t.tournamentId); } else toast(r.json.error, 'err'); };
+    if ($('#mlock', s.el)) $('#mlock', s.el).onclick = async () => { const r = await api('POST', `/api/tennis/matches/${m.matchId}/lock`, { locked: !m.locked }); if (r.ok) { s.close(); viewTournament(t.tournamentId); } else toast(r.json.error, 'err'); };
+    $('#msave', s.el).onclick = async () => {
+      const when = $('#mwhen', s.el).value;
+      const body = { stage: { type: $('#mst', s.el).value, round: $('#mrd', s.el).value }, title: $('#mtl', s.el).value, scheduledAt: when ? new Date(when).getTime() : null, court: $('#mct', s.el).value, surface: $('#msf', s.el).value,
+        venue: $('#mvn', s.el).value, officials: { umpire: $('#mum', s.el).value }, broadcastInfo: { channel: $('#mbc', s.el).value, url: $('#mbu', s.el).value }, notes: $('#mnt', s.el).value };
+      if (!started) body.rules = re.value();
+      let r;
+      if (isNew) {
+        if (ev) { body.eventId = ev.eventId; body.entryA = ($('[data-entry="A"]', s.el) || {}).value || undefined; body.entryB = ($('[data-entry="B"]', s.el) || {}).value || undefined; }
+        else { body.format = format; body.sideA = { playerIds: sel.A.filter(Boolean) }; body.sideB = { playerIds: sel.B.filter(Boolean) }; }
+        r = await api('POST', `/api/tennis/tournaments/${t.tournamentId}/matches`, body);
+      } else {
+        if (!started && !m.eventId) { body.format = format; body.sideA = { playerIds: sel.A.filter(Boolean) }; body.sideB = { playerIds: sel.B.filter(Boolean) }; }
+        r = await api('PUT', `/api/tennis/matches/${m.matchId}`, body);
+      }
+      if (!r.ok) return toast(r.json.error || 'Not saved', 'err');
+      s.close(); toast(isNew ? 'Match created' : 'Saved'); viewTournament(t.tournamentId);
+    };
+  }
+
+  /* ---------------------------------------------------------- players */
+  function pickPlayer(onPick, exclude) {
+    exclude = exclude || [];
+    const s = TN.sheet(`<h3>Choose a player</h3><div class="row" style="margin:12px 0"><input class="input" id="q" placeholder="Search by name" autofocus><button class="btn primary" id="np">＋ New</button></div><div class="list pick-list" id="pl"></div><div class="foot"><button class="btn" data-close>Done</button></div>`);
+    const paint = () => {
+      const q = $('#q', s.el).value.trim().toLowerCase();
+      const list = mine.players.filter((p) => !p.archived && !exclude.includes(p.playerId) && (!q || p.name.toLowerCase().includes(q))).slice(0, 80);
+      $('#pl', s.el).innerHTML = list.map((p) => `<button class="li" data-p="${esc(p.playerId)}">${TN.avatar(p, 36)}<span class="grow"><b>${esc(p.name)}</b> ${TN.ctry(p.country)}<br><span class="small muted">${esc([p.club, p.ranking ? (p.ranking.label || 'Rank') + ' #' + p.ranking.value : ''].filter(Boolean).join(' · '))}</span></span></button>`).join('') || '<div class="empty">No player found — create one.</div>';
+      $$('[data-p]', s.el).forEach((b) => { b.onclick = () => { onPick(mine.players.find((p) => p.playerId === b.dataset.p)); s.close(); }; });
+    };
+    $('#q', s.el).oninput = paint;
+    $('#np', s.el).onclick = () => { s.close(); editPlayer(null, (p) => onPick(p), $('#q', s.el).value); };
+    paint();
+  }
+  function viewPlayers() {
+    app.innerHTML = `<div class="hero"><div><div class="kick">🎾 Tennis · Players</div><h1>Players</h1><p class="muted small">One record per person — renames follow them everywhere, their history stays theirs.</p></div><button class="btn primary" id="np">＋ New player</button></div>
+      <input class="input" id="pq" placeholder="Search players" style="max-width:420px;margin-bottom:12px"><div class="list" id="plist"></div>`;
+    const paint = () => {
+      const q = $('#pq').value.trim().toLowerCase();
+      $('#plist').innerHTML = mine.players.filter((p) => !q || p.name.toLowerCase().includes(q)).map((p) => `<div class="li pl-row">${TN.avatar(p, 44)}<span class="ellipsis"><b>${esc(p.name)}</b> ${TN.ctry(p.country)}${p.archived ? ' <span class="badge">Archived</span>' : ''}<br><span class="small muted">${esc([p.club, p.gender === 'M' ? 'Men' : p.gender === 'F' ? 'Women' : '', p.hand ? (p.hand === 'L' ? 'Left-handed' : 'Right-handed') : '', p.ranking ? (p.ranking.label || 'Rank') + ' #' + p.ranking.value : ''].filter(Boolean).join(' · '))}</span></span>
+        <span class="row"><a class="btn sm" href="/tennis/player/${esc(p.playerId)}" target="_blank" rel="noopener">Profile ↗</a><button class="btn sm" data-ep="${esc(p.playerId)}">Edit</button></span></div>`).join('') || '<div class="empty card"><b>No players yet</b>Create players, then enter them in your events.</div>';
+      $$('[data-ep]').forEach((b) => { b.onclick = () => editPlayer(mine.players.find((p) => p.playerId === b.dataset.ep), () => { viewPlayers(); }); });
+    };
+    $('#pq').oninput = paint;
+    $('#np').onclick = () => editPlayer(null, () => viewPlayers());
+    paint();
+  }
+  function editPlayer(p, onSaved, nameHint) {
+    const isNew = !p;
+    p = p || { name: nameHint || '', country: '', club: '', gender: '', hand: '', backhand: '', ranking: null, allAchievements: [], color: null };
+    let photo;
+    let ach = (p.allAchievements || []).map((a) => ({ text: a.text, verified: !!a.verified }));
+    const s = TN.sheet(`<h3>${isNew ? 'New player' : 'Edit player'}</h3><div class="stack" style="margin-top:14px">
+      <div class="row" style="align-items:flex-start;gap:14px"><label class="logo-pick" id="pph" title="Photo" style="border-radius:50%">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : '📷'}<input type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <div class="stack grow"><label class="field">Full name<input class="input" id="pn" maxlength="60" value="${esc(p.name)}" autofocus></label>
+        <div class="grid3"><label class="field">Country (code)<input class="input" id="pc" maxlength="3" value="${esc(p.country || '')}" placeholder="IND" style="text-transform:uppercase"></label><label class="field">Club<input class="input" id="pcl" maxlength="60" value="${esc(p.club || '')}"></label><label class="field">Colour<input class="input" type="color" id="pco" value="${esc(p.color || TN.colorOf(p))}" style="padding:4px"></label></div></div></div>
+      <div class="grid3"><label class="field">Gender<select class="input" id="pg"><option value="">—</option><option value="M" ${p.gender === 'M' ? 'selected' : ''}>Men</option><option value="F" ${p.gender === 'F' ? 'selected' : ''}>Women</option></select></label>
+        <label class="field">Plays<select class="input" id="ph"><option value="">—</option><option value="R" ${p.hand === 'R' ? 'selected' : ''}>Right-handed</option><option value="L" ${p.hand === 'L' ? 'selected' : ''}>Left-handed</option></select></label>
+        <label class="field">Backhand<select class="input" id="pb"><option value="">—</option><option value="2H" ${p.backhand === '2H' ? 'selected' : ''}>Two-handed</option><option value="1H" ${p.backhand === '1H' ? 'selected' : ''}>One-handed</option></select></label></div>
+      <div class="grid2"><label class="field">Ranking (only if configured)<input class="input" type="number" id="prv" min="1" value="${esc(p.ranking ? p.ranking.value : '')}" placeholder="e.g. 12"></label><label class="field">Ranking list<input class="input" id="prl" maxlength="40" value="${esc(p.ranking ? p.ranking.label : '')}" placeholder="e.g. AITA U-18"></label></div>
+      <div class="section-title" style="margin:6px 0 0">Achievements <span class="tiny">(only ticked = verified ones are shown on air and on the website)</span></div><div class="stack" id="pach"></div><button class="btn sm" id="padd" style="justify-self:start">＋ Achievement</button>
+      <div id="pdup"></div></div>
+      <div class="foot">${!isNew ? `<button class="btn" id="parch">${p.archived ? 'Restore' : 'Archive'}</button><span class="grow"></span>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" id="psave">${isNew ? 'Create player' : 'Save'}</button></div>`, { wide: true, sticky: true });
+    const paintAch = () => {
+      $('#pach', s.el).innerHTML = ach.map((a, i) => `<div class="row"><button class="switch" data-av="${i}" role="switch" aria-checked="${a.verified}" title="Verified"></button><input class="input" data-at="${i}" maxlength="100" value="${esc(a.text)}"><button class="icon-btn" data-ar="${i}">✕</button></div>`).join('');
+      $$('[data-av]', s.el).forEach((b) => { b.onclick = () => { ach[b.dataset.av].verified = !ach[b.dataset.av].verified; paintAch(); }; });
+      $$('[data-at]', s.el).forEach((b) => { b.oninput = () => { ach[b.dataset.at].text = b.value; }; });
+      $$('[data-ar]', s.el).forEach((b) => { b.onclick = () => { ach.splice(Number(b.dataset.ar), 1); paintAch(); }; });
+    };
+    paintAch();
+    $('#padd', s.el).onclick = () => { ach.push({ text: '', verified: false }); paintAch(); };
+    const pp = $('#pph', s.el);
+    $('input', pp).onchange = async (e) => { try { photo = await TN.readPhoto(e.target.files[0]); pp.innerHTML = `<img src="${photo}" alt=""><input type="file" hidden>`; } catch (err) { toast(err.message, 'err'); } };
+    if (!isNew) $('#parch', s.el).onclick = async () => { const r = await api('PUT', `/api/tennis/players/${p.playerId}`, { archived: !p.archived }); if (r.ok) { s.close(); await refreshMine(); onSaved && onSaved(r.json.player); } };
+    const save = async (force) => {
+      const rv = Number($('#prv', s.el).value);
+      const body = { name: $('#pn', s.el).value, country: $('#pc', s.el).value, club: $('#pcl', s.el).value, color: $('#pco', s.el).value, gender: $('#pg', s.el).value, hand: $('#ph', s.el).value, backhand: $('#pb', s.el).value,
+        ranking: rv > 0 ? { value: rv, label: $('#prl', s.el).value } : null, achievements: ach.filter((a) => a.text.trim()), force: !!force };
+      if (isNew && photo) body.photo = photo;
+      const r = isNew ? await api('POST', '/api/tennis/players', body) : await api('PUT', `/api/tennis/players/${p.playerId}`, body);
+      if (r.status === 409 && r.json.code === 'POSSIBLE_DUPLICATE') {
+        $('#pdup', s.el).innerHTML = `<div class="dup"><b>This player may already exist</b><p class="small" style="margin:4px 0 8px">${esc(r.json.error)}</p><div class="list">${r.json.candidates.map((c) => `<button class="li" data-use="${esc(c.playerId)}">${TN.avatar(c, 32)}<span class="grow"><b>${esc(c.name)}</b> ${TN.ctry(c.country)} <span class="small muted">${esc(c.club || '')}</span></span><span class="btn xs">Use this player</span></button>`).join('')}</div><button class="btn sm" id="force" style="margin-top:8px">It is a different person — create anyway</button></div>`;
+        $$('[data-use]', s.el).forEach((b) => { b.onclick = async () => { await refreshMine(); const ex = mine.players.find((x) => x.playerId === b.dataset.use); s.close(); if (ex && onSaved) onSaved(ex); }; });
+        $('#force', s.el).onclick = () => save(true);
+        return;
+      }
+      if (!r.ok) return toast(r.json.error || 'Not saved', 'err');
+      if (!isNew && photo) await api('PUT', `/api/tennis/players/${p.playerId}/photo`, { photo });
+      s.close(); toast(isNew ? 'Player created' : 'Saved');
+      await refreshMine();
+      if (onSaved) onSaved(mine.players.find((x) => x.playerId === r.json.player.playerId) || r.json.player);
+    };
+    $('#psave', s.el).onclick = () => save(false);
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

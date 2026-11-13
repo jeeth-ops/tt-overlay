@@ -239,10 +239,12 @@
       for (var i = tl.length - 1; i >= 0; i--) if (tl[i].type === 'POINT' && !tl[i].voided) { last = tl[i]; break; }
       var snap = last && last.after ? last.after : null;
       var w = windowOf(), m = match(), t = o.getTournament ? o.getTournament() : null, now = Date.now();
-      var meta = { eventId: null, kind: x.kind || 'MANUAL', set: snap ? snap.set : null, game: snap ? snap.game : null, pointNo: snap ? snap.pointNo : null, side: x.side || null,
-        sideName: x.side ? sideName(x.side) : null, sides: { A: sideName('A'), B: sideName('B') }, players: x.playerId ? [{ playerId: x.playerId, side: x.side || null, role: 'chosen' }] : [],
+      var setup = o.getSetup ? o.getSetup() : null, chosen = x.playerId && setup && setup.byId[x.playerId] ? setup.byId[x.playerId] : null;
+      var meta = { eventId: null, kind: x.kind || 'MANUAL', set: snap ? snap.set : null, game: snap ? snap.game : null, pointNo: snap ? snap.pointNo : null, side: x.side || (chosen ? chosen.side : null),
+        sideName: x.side ? sideName(x.side) : null, sides: { A: sideName('A'), B: sideName('B') }, players: x.playerId ? [{ playerId: x.playerId, side: x.side || (chosen ? chosen.side : null), role: 'chosen', name: chosen ? chosen.player.name : null }] : [],
         playerId: x.playerId || null, tnClipToken: m.clipToken || null, at: Math.round(now + TN.clock.offset), preRollSec: w.pre, postRollSec: w.post, tournamentName: (t && t.name) || null };
       queue({ k: 'clip', clipId: clipId, at: now, body: { sport: 'tennis', matchId: o.matchId, clipId: clipId, timestamp: now, sessionId: C.session.id, point: meta, matchLabel: sideName('A') + ' v ' + sideName('B'), tournamentId: m.tournamentId || null, tournamentName: meta.tournamentName } });
+      C.sent['man:' + clipId] = '1'; saveSent();   // this device's own: never relayed back to itself
       var sc = snap ? { sets: snap.setsWon.A + '-' + snap.setsWon.B, games: snap.games.A + '-' + snap.games.B, points: snap.points.A + '-' + snap.points.B, set: snap.set } : null;
       TN.api('POST', '/api/tennis/matches/' + o.matchId + '/clips', { clipId: clipId, kind: meta.kind, playerId: x.playerId || undefined, side: x.side || undefined, status: 'REQUESTED', localStatus: 'WAITING_FOR_POSTROLL', t0: meta.at, preRollSec: w.pre, postRollSec: w.post, engine: 'tennis-clipper', sourceSessionId: C.session.id, scoreAtTrigger: sc, set: meta.set, game: meta.game, pointNo: meta.pointNo });
       toast('🎬 ' + (TS() ? TS().CLIP_KINDS[meta.kind] : meta.kind) + ' clip on its way');
@@ -256,7 +258,7 @@
       (o.getTimeline() || []).forEach(function (e) { if (e.type === 'POINT') byId[e.eventId] = e; });
       var moved = false;
       Object.keys(C.sent).forEach(function (clipId) {
-        if (clipId.indexOf('rel:') === 0) return;
+        if (clipId.indexOf('rel:') === 0 || clipId.indexOf('man:') === 0) return;
         var e = byId[clipId.slice(o.matchId.length + 1)];
         if (!e) return;
         var a = attributionOf(e);
@@ -304,8 +306,30 @@
         C.clips = next; C.byClip = byClip; changed();
       }
     }
+    // a clip another device asked for (the phone remote's "clip that"): the website has it as
+    // REQUESTED; the device clipping on the vMix PC hands it to its Tennis Clipper — once
+    function relayManual(cl) {
+      if (!mine() || !cl || cl.eventId || cl.status !== 'REQUESTED' || cl.deleted) return false;
+      if (cl.clipId.indexOf(o.matchId + '_clip-') !== 0 || !/^[A-Za-z0-9-]+$/.test(cl.clipId.slice(o.matchId.length + 6))) return false;
+      if (C.sent['man:' + cl.clipId] || C.jobs.has(cl.clipId) || C.outbox.some(function (x) { return x.k === 'clip' && x.clipId === cl.clipId; })) return false;
+      var serverT0 = cl.t0 || Math.round(Date.now() + TN.clock.offset);
+      if (Math.abs(Date.now() + TN.clock.offset - serverT0) > 10 * 60000) return false;   // not a request from long ago
+      var m = match(), t = o.getTournament ? o.getTournament() : null, w = windowOf();
+      var setup = o.getSetup ? o.getSetup() : null, chosen = cl.playerId && setup && setup.byId[cl.playerId] ? setup.byId[cl.playerId] : null;
+      var sd = cl.side || (chosen ? chosen.side : null);
+      var meta = { eventId: null, kind: cl.kind || 'MANUAL', set: cl.set || null, game: cl.game || null, pointNo: cl.pointNo || null, side: sd, sideName: sd ? sideName(sd) : null,
+        sides: { A: sideName('A'), B: sideName('B') }, players: cl.playerId ? [{ playerId: cl.playerId, side: sd, role: 'chosen', name: chosen ? chosen.player.name : null }] : [],
+        playerId: cl.playerId || null, tnClipToken: m.clipToken || null, at: serverT0, preRollSec: cl.preRollSec || w.pre, postRollSec: cl.postRollSec || w.post, tournamentName: (t && t.name) || null };
+      queue({ k: 'clip', clipId: cl.clipId, at: Date.now(), body: { sport: 'tennis', matchId: o.matchId, clipId: cl.clipId, timestamp: Math.round(serverT0 - TN.clock.offset), sessionId: C.session.id, point: meta,
+        matchLabel: sideName('A') + ' v ' + sideName('B'), tournamentId: m.tournamentId || null, tournamentName: meta.tournamentName } });
+      C.sent['man:' + cl.clipId] = '1'; saveSent();
+      toast('🎬 ' + (TS() ? TS().CLIP_KINDS[meta.kind] || 'Clip' : 'Clip') + ' asked for on another device — cutting it here');
+      flush(); changed();
+      return true;
+    }
     function onClip(d) {
       if (!d || d.matchId !== o.matchId || !d.clip) return;
+      relayManual(d.clip);
       if (d.clip.eventId) C.clips.set(d.clip.eventId, Object.assign(C.clips.get(d.clip.eventId) || {}, d.clip));
       C.byClip.set(d.clip.clipId, Object.assign(C.byClip.get(d.clip.clipId) || {}, d.clip));
       changed();

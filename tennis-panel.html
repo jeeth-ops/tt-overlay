@@ -373,7 +373,7 @@
   }
   function renderTitle() {
     const m = P.match;
-    $('#title').innerHTML = `${esc(sideLabel('A'))} <span class="muted">v</span> ${esc(sideLabel('B'))}<small>${esc([P.tournament && P.tournament.name, m.eventName, m.stage && m.stage.round, m.court ? 'Court ' + String(m.court).replace(/^court\s*/i, '') : ''].filter(Boolean).join(' · '))}</small>`;
+    $('#title').innerHTML = `${esc(sideLabel('A'))} <span class="muted">v</span> ${esc(sideLabel('B'))}<small>${esc([P.tournament && P.tournament.name, m.eventName, m.stage && m.stage.round, m.court ? (/court/i.test(String(m.court)) ? String(m.court) : 'Court ' + m.court) : ''].filter(Boolean).join(' · '))}</small>`;
   }
   function renderChips() {
     if (!P.match) return;
@@ -766,7 +766,9 @@
       <path d="M${-BX} 0h.35M${BX} 0h-.35"/></g>`;
     const tram = `<rect x="${-BX}" y="${-DY}" width="${2 * BX}" height="${DY - SY}" fill="#000" fill-opacity="${d ? 0 : 0.28}"/><rect x="${-BX}" y="${SY}" width="${2 * BX}" height="${DY - SY}" fill="#000" fill-opacity="${d ? 0 : 0.28}"/>`;
     const net = `<path d="M0 ${-DY - 0.9}V${DY + 0.9}" stroke="#fff" stroke-width=".16"/><circle cx="0" cy="${-DY - 0.9}" r=".22" fill="#fff"/><circle cx="0" cy="${DY + 0.9}" r=".22" fill="#fff"/>`;
-    const people = pos.map((p) => `<g class="pl" style="transform:translate(${p.x}px,${p.y}px)"><circle r="${p.srv ? 0.62 : 0.52}" fill="${col(p.id)}" stroke="#fff" stroke-width=".1"/>${p.srv ? '<circle r=".22" cx=".55" cy="-.55" fill="#c8f031"/>' : ''}<text y="1.45" text-anchor="middle" style="font-size:.7px">${esc(TN.surname(pname(p.id)))}</text></g>`).join('');
+    // a name under each player — kept inside the picture: beside the baseline it runs into the court
+    const label = (p) => (p.x < -10.6 ? 'x="-.7" text-anchor="start"' : p.x > 10.6 ? 'x=".7" text-anchor="end"' : 'text-anchor="middle"');
+    const people = pos.map((p) => `<g class="pl" style="transform:translate(${p.x}px,${p.y}px)"><circle r="${p.srv ? 0.62 : 0.52}" fill="${col(p.id)}" stroke="#fff" stroke-width=".1"/>${p.srv ? '<circle r=".22" cx=".55" cy="-.55" fill="#c8f031"/>' : ''}<text y="1.45" ${label(p)} style="font-size:.7px">${esc(TN.surname(pname(p.id)))}</text></g>`).join('');
     const marks = shots.map((e, i) => `<circle cx="${e.loc.x}" cy="${e.loc.y}" r=".28" fill="${e.side === 'A' ? 'var(--ca)' : 'var(--cb)'}" fill-opacity="${0.35 + 0.065 * i}" stroke="#fff" stroke-width=".05"/>`).join('');
     const ends = `<text x="${-BX}" y="${-DY - 0.35}" style="font-size:.62px;fill:#9fb8ad">${esc(shortSide(leftSide))}</text><text x="${BX}" y="${-DY - 0.35}" text-anchor="end" style="font-size:.62px;fill:#9fb8ad">${esc(shortSide(other(leftSide)))}</text>`;
     const html = `<rect x="-13.4" y="-7" width="26.8" height="14" fill="${surf.out}"/><rect x="${-BX}" y="${-DY}" width="${2 * BX}" height="${2 * DY}" fill="${surf.c}"/>${tram}${lines}${net}${marks}${people}${ends}`;

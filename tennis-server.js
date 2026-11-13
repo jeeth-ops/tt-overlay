@@ -1625,6 +1625,11 @@ module.exports = function setupTennis(deps) {
     try { await fs.promises.mkdir(dir, { recursive: true }); await fs.promises.writeFile(file, req.body); }
     catch (e) { return res.status(500).json({ success: false, clipId, error: 'Could not store the clip: ' + (e.message || e) }); }
     const eventId = idOk(meta.eventId) ? meta.eventId : (existing && existing.eventId) || null;
+    // a point's clip follows its point (its kind, its players come from the ledger); only a clip
+    // pressed by hand keeps its own kind and the player chosen for it — a player of this match
+    const squad = new Map([].concat((m.sides.A ? m.sides.A.players.map((p) => [p.playerId, 'A']) : []), (m.sides.B ? m.sides.B.players.map((p) => [p.playerId, 'B']) : [])));
+    const handKind = !eventId && Stats.CLIP_KINDS[meta.kind] ? meta.kind : null;
+    const handPlayer = !eventId && idOk(meta.playerId) && squad.has(meta.playerId) ? meta.playerId : null;
     const durationSec = await probeDuration(file);
     const reqPre = num(meta.preRollSec, CLIP_PRE_ROLL_SEC);
     const actualPre = meta.actualPreRollSec != null ? num(meta.actualPreRollSec, null) : null;
@@ -1639,10 +1644,10 @@ module.exports = function setupTennis(deps) {
       },
       $unset: { error: '' },
       $setOnInsert: {
-        clipId, matchId, tournamentId: m.tournamentId, eventId, createdAt: Date.now(), kind: Stats.CLIP_KINDS[meta.kind] ? meta.kind : null,
+        clipId, matchId, tournamentId: m.tournamentId, eventId, createdAt: Date.now(), kind: handKind,
         eventTimestamp: num(req.query.timestamp, num(meta.t0, null)), preRollSec: reqPre, postRollSec: num(meta.postRollSec, CLIP_POST_ROLL_SEC),
         set: num(meta.set, null), game: num(meta.game, null), pointNo: num(meta.pointNo, null),
-        playerId: idOk(meta.playerId) ? meta.playerId : null, sourceSessionId: str(meta.sourceSessionId, 80) || null
+        playerId: handPlayer, side: handPlayer ? squad.get(handPlayer) : null, sourceSessionId: str(meta.sourceSessionId, 80) || null
       }
     }, { upsert: true });
     res.json({ success: true, clipId, status: 'LOCAL_RECEIVED', durationSec });
@@ -1768,7 +1773,10 @@ module.exports = function setupTennis(deps) {
   const troom = (tournamentId) => 't:' + tournamentId;
   function emitClip(matchId, doc) {
     if (!doc) return;
-    nsp.to(room(matchId)).emit('tn:clip', { matchId, clip: { clipId: doc.clipId, eventId: doc.eventId || null, status: doc.status, displayStatus: displayStatus(doc), local: doc.local || null, durationSec: doc.durationSec || null, partialPreRoll: !!doc.partialPreRoll, deleted: !!doc.deleted, kind: doc.kind || null } });
+    // (the moment, kind, player and window too — what the public clip list shows — so the device
+    // clipping on the vMix PC can cut a clip another device asked for: the phone remote's "clip that")
+    nsp.to(room(matchId)).emit('tn:clip', { matchId, clip: { clipId: doc.clipId, eventId: doc.eventId || null, status: doc.status, displayStatus: displayStatus(doc), local: doc.local || null, durationSec: doc.durationSec || null, partialPreRoll: !!doc.partialPreRoll, deleted: !!doc.deleted, kind: doc.kind || null,
+      t0: doc.eventTimestamp || null, playerId: doc.playerId || null, side: doc.side || null, set: doc.set || null, game: doc.game || null, pointNo: doc.pointNo || null, preRollSec: doc.preRollSec || null, postRollSec: doc.postRollSec || null } });
   }
   function broadcastMatchDoc(m) {
     if (!m) return;

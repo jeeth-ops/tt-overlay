@@ -91,7 +91,6 @@
     else body.innerHTML = E2 ? drawHtml(E2, evMatches) : '<div class="empty card"><b>No draw yet</b></div>';
   }
   function cards(list, empty) { return list.length ? `<div class="mcards">${list.map((m) => TN.matchCard(m)).join('')}</div>` : `<div class="empty card">${esc(empty)}</div>`; }
-  function entryName(E2, side) { return side ? side.name : ''; }
   function drawHtml(E2, ms) {
     const ko = ms.filter((m) => m.eventId === E2.eventId && m.stage && m.stage.type === 'knockout' && m.fixtureKey);
     if (!ko.length) return '<div class="empty card"><b>The draw has not been made yet</b>It appears here as soon as the organisers generate it.</div>';
@@ -99,8 +98,6 @@
     ko.forEach((m) => { if (/3RD$/.test(m.fixtureKey)) return; const r = m.stage.roundIndex || 1; (rounds[r] = rounds[r] || []).push(m); });
     const third = ko.find((m) => /3RD$/.test(m.fixtureKey));
     const keys = Object.keys(rounds).map(Number).sort((a, b) => a - b);
-    // byes: entries that went straight into round 2
-    const lines = E2.lines || null;
     const sideRow = (m, s) => {
       const x = m.sides[s], res = m.result, w = res && res.winner === s, l = res && res.winner && res.winner !== s;
       const scores = res ? (res.scores || []).map((sc) => (sc.mtb && sc.tb ? '[' + sc.tb[s] + ']' : sc[s] + (sc.tb && !sc.mtb && sc.winner !== s ? '<sup>' + sc.tb[s] + '</sup>' : ''))).join(' ') : (m.status === 'live' && m.summary ? (m.summary.sets || []).map((sc) => sc[s]).join(' ') + ' · ' + esc(m.summary.display[s]) : '');
@@ -108,7 +105,6 @@
       return `<div class="bs ${w ? 'w' : l ? 'l' : ''}"><span class="ellipsis">${x ? seed + esc(x.name) + ' ' + (x.players[0] ? TN.ctry(x.players[0].country) : '') : `<span class="bye">${esc(TN.slotLabel(m, s))}</span>`}</span><span class="sc">${scores}</span></div>`;
     };
     const cell = (m) => `<div class="bm ${m.status === 'live' ? 'live' : ''}"><a href="/tennis/match/${esc(m.matchId)}" aria-label="Match"></a>${sideRow(m, 'A')}${sideRow(m, 'B')}</div>`;
-    void lines;
     return `<div class="card"><div class="bracket">${keys.map((k) => `<div class="round"><div class="rtitle">${esc(rounds[k][0].stage.round || 'Round ' + k)}</div>${rounds[k].sort((a, b) => (a.stage.slot || 0) - (b.stage.slot || 0)).map(cell).join('')}</div>`).join('')}
       ${keys.length ? (() => { const fin = rounds[keys[keys.length - 1]][0]; const champ = fin && fin.result && fin.result.winner ? fin.sides[fin.result.winner] : null; return `<div class="round"><div class="rtitle">Champion</div><div class="bm" style="padding:12px;text-align:center">${champ ? `<b>🏆 ${esc(champ.name)}</b>` : '<span class="muted">To be decided</span>'}</div>${third ? `<div class="rtitle" style="margin-top:14px">Third place</div>${cell(third)}` : ''}</div>`; })() : ''}</div>
       <p class="small muted" style="margin-top:8px">A player moves on only when their match is over. ${E2.entries.some((e) => e.seed) ? 'Seeds in [brackets].' : ''}</p></div>`;
