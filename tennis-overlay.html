@@ -75,8 +75,8 @@ body.pos-tr #bug{left:auto;right:64px} body.pos-bl #bug{top:auto;bottom:70px} bo
 #moment .mo{position:relative;height:100%;min-width:300px;padding:0 34px 0 30px;border-radius:12px;display:flex;flex-direction:column;justify-content:center;overflow:hidden;
   background:linear-gradient(135deg,var(--mc,#0f766e),var(--mcd,#064e3b));box-shadow:0 18px 44px -16px rgba(0,0,0,.75)}
 #moment .mo:before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--acc)}
-#moment .mk{font:800 54px/1 var(--font);letter-spacing:3px;text-transform:uppercase;white-space:nowrap}
-#moment .ms{font:700 22px/1.1 var(--font);letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.85);margin-top:6px;white-space:nowrap}
+#moment .mk{font:800 54px/1.08 var(--font);letter-spacing:3px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#moment .ms{font:700 22px/1.15 var(--font);letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.85);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #moment .shine{position:absolute;top:0;bottom:0;width:120px;left:-160px;background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.28),rgba(255,255,255,0));transform:skewX(-18deg)}
 
 /* ================= the wide score bar ================= */
@@ -98,7 +98,7 @@ body.pos-tr #bug{left:auto;right:64px} body.pos-bl #bug{top:auto;bottom:70px} bo
 
 /* ================= lower thirds ================= */
 #lower{position:absolute;left:120px;bottom:92px;opacity:0}
-.lt{position:relative;display:flex;align-items:stretch;height:128px;min-width:720px}
+.lt{position:relative;display:flex;align-items:stretch;height:128px;min-width:720px;max-width:1680px}
 .lt .ph{position:relative;width:128px;flex:none;border-radius:16px 0 0 16px;overflow:hidden;background:var(--lc,#0f766e)}
 .lt .ph img{width:100%;height:100%;object-fit:cover;display:block}
 .lt .ph .mono{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:800 56px/1 var(--font);color:rgba(255,255,255,.92)}
@@ -106,9 +106,9 @@ body.pos-tr #bug{left:auto;right:64px} body.pos-bl #bug{top:auto;bottom:70px} bo
 .lt.nophoto .bd{border-radius:16px}
 .lt .bd:before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--lc,#0f766e)}
 .lt .k{font:700 20px/1 var(--font);letter-spacing:3.5px;text-transform:uppercase;color:var(--acc)}
-.lt .n{font:800 52px/1.05 var(--font);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;margin-top:6px}
+.lt .n{font:800 52px/1.08 var(--font);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;margin-top:6px;overflow:hidden;text-overflow:ellipsis}
 .lt .n small{font-size:26px;color:rgba(255,255,255,.6);margin-left:12px}
-.lt .s{font:600 24px/1.2 var(--font);letter-spacing:1px;color:rgba(255,255,255,.78);margin-top:4px;white-space:nowrap}
+.lt .s{font:600 24px/1.2 var(--font);letter-spacing:1px;color:rgba(255,255,255,.78);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lt .st{display:flex;margin-top:8px}
 .lt .st div{margin-right:34px}
 .lt .st b{display:block;font:800 40px/1 var(--font)}
@@ -182,7 +182,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
 .sett .r{display:flex;align-items:center;height:130px;padding:0 36px}
 .sett .r+.r{border-top:1px solid rgba(255,255,255,.1)}
 .sett .r .st{width:14px;height:80px;border-radius:7px;margin-right:30px}
-.sett .r .n{flex:1;font:800 64px/1 var(--font);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sett .r .n{flex:1;min-width:0;font:800 64px/1.2 var(--font);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sett .r .g{width:110px;text-align:center;font:800 84px/1 var(--font);color:rgba(255,255,255,.45)}
 .sett .r .g.w{color:#fff}
 .sett .r .g sup{font-size:34px;vertical-align:top;color:rgba(255,255,255,.6)}
@@ -617,12 +617,24 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     if (m.kind === 'MATCH_POINT' || m.kind === 'MATCH_WON') col = '#be123c';
     if (m.kind === 'SET_POINT') col = '#6d28d9';
     var el = $('#moment');
-    var plate = $('#bug .bplate');
-    el.style.left = (plate.offsetWidth + 10) + 'px';
+    var bugEl = $('#bug'), plate = $('.bplate', bugEl), cls = document.body.classList;
+    var onRight = cls.contains('pos-tr') || cls.contains('pos-br'), atBottom = cls.contains('pos-bl') || cls.contains('pos-br');
+    // beside the bug, on the side with the frame's room — or, with too little, under it (over it at the bottom)
+    var room = onRight ? bugEl.offsetLeft - 10 - 56 : 1920 - 56 - (bugEl.offsetLeft + plate.offsetWidth + 10);
+    el.style.left = el.style.right = el.style.top = el.style.height = '';
+    if (room < 360) {
+      var hh = Math.min(plate.offsetHeight, 130);
+      el.style.height = hh + 'px';
+      el.style.top = atBottom ? -(hh + 12) + 'px' : (plate.offsetHeight + 12) + 'px';
+      el.style[onRight ? 'right' : 'left'] = '0px';
+      room = Math.max(plate.offsetWidth, 560);
+    } else el.style[onRight ? 'right' : 'left'] = (plate.offsetWidth + 10) + 'px';
     el.innerHTML = '<div class="mo" style="--mc:' + col + ';--mcd:' + rgb(mix(rgbOf(col), [0, 0, 0], 0.5)) + '"><div class="mk">' + esc(t[0]) + '</div>' + (t[1] ? '<div class="ms">' + esc(t[1]) + '</div>' : '') + '<i class="shine"></i></div>';
     el.style.opacity = 1;
     reportOutput();
     var mo = $('.mo', el);
+    mo.style.maxWidth = room + 'px';
+    fitLine($('.mk', el), 30); fitLine($('.ms', el), 16);
     var p = all([anim(mo, [{ clipPath: 'inset(0 100% 0 0 round 12px)', transform: 'translateX(-24px)' }, { clipPath: 'inset(0 0 0 0 round 12px)', transform: 'none' }], 560, 0, EASE.out),
       anim($('.mk', el), [{ opacity: 0, transform: 'translateX(-18px)' }, { opacity: 1, transform: 'none' }], 420, 160), anim($('.ms', el), [{ opacity: 0 }, { opacity: 1 }], 380, 300),
       anim($('.shine', el), [{ transform: 'translateX(0) skewX(-18deg)' }, { transform: 'translateX(' + (mo.offsetWidth + 260) + 'px) skewX(-18deg)' }], 900, 380, EASE.inout)]);
@@ -647,6 +659,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     var el = $('#lower');
     el.innerHTML = html;
     el.style.opacity = 1;
+    ['.lt .k', '.lt .n', '.lt .s'].forEach(function (q, i) { fitLine($(q, el), [14, 28, 17][i]); });
     C.lower = lw;
     reportOutput();
     if (O.resume && O.resume.lower === lw.id) { O.resume.lower = null; return; }   // as it is — no entrance
@@ -813,7 +826,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
       var sets = (res && res.scores) || (sum.sets || []);
       var winnerSide = kind === 'setWinner' ? ((sum.sets || []).filter(function (x) { return x.set === d.set; })[0] || {}).winner : (res && res.winner);
       var rowHtml = function (s) {
-        return '<div class="r"><i class="st" style="background:' + sideColor(s) + '"></i><span class="n">' + esc(m.format === 'doubles' ? bugName(s) : sideName(s)) + '</span>'
+        return '<div class="r"><i class="st" style="background:' + sideColor(s) + '"></i><span class="n" data-short="' + esc(bugName(s)) + '">' + esc(m.format === 'doubles' ? bugName(s) : sideName(s)) + '</span>'
           + sets.filter(function (x) { return x.winner || x.A + x.B > 0; }).map(function (x) { var g = x.mtb && x.tb ? x.tb[s] : x[s]; return '<span class="g ' + (x.winner === s ? 'w' : '') + '">' + g + (x.tb && !x.mtb && x.winner && x.winner !== s ? '<sup>' + x.tb[s] + '</sup>' : '') + '</span>'; }).join('')
           + (kind !== 'setWinner' && sum.status !== 'completed' && sum.display ? '<span class="s">' + esc(sum.display[s]) + '</span>' : '') + '</div>';
       };
@@ -866,6 +879,22 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     return root;
   }
   // a name too long for its box is set smaller (never cut, never over its neighbour)
+  // one line of text, made smaller until it fits its box (minPx at the least)
+  function fitLine(el, minPx) {
+    if (!el) return true;
+    el.style.fontSize = '';
+    var size = parseFloat(getComputedStyle(el).fontSize), guard = 0;
+    while (el.scrollWidth > el.clientWidth + 1 && size > minPx && guard++ < 60) { size = Math.max(minPx, Math.floor(size * 0.95)); el.style.fontSize = size + 'px'; }
+    return el.scrollWidth <= el.clientWidth + 1;
+  }
+  // the names of a score table: one size for both rows, and the broadcast
+  // short form (initial + surname) for both when a full name cannot fit
+  function fitCells(root) {
+    var cells = Array.prototype.slice.call(root.querySelectorAll('.sett .r .n'));
+    if (!cells.length) return;
+    var fit = function () { var min = Infinity; cells.forEach(function (el) { fitLine(el, 40); min = Math.min(min, parseFloat(el.style.fontSize || getComputedStyle(el).fontSize)); }); cells.forEach(function (el) { el.style.fontSize = min + 'px'; }); return cells.every(function (el) { return el.scrollWidth <= el.clientWidth + 1; }); };
+    if (!fit() && cells.every(function (el) { return el.dataset.short; })) { cells.forEach(function (el) { el.textContent = el.dataset.short; }); fit(); }
+  }
   function fitText(root) {
     Array.prototype.slice.call(root.querySelectorAll('[data-fit]')).forEach(function (el) {
       var box = el.parentNode, max = box.clientWidth || 1600;
@@ -893,6 +922,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     host.appendChild(root);
     host.style.opacity = 1;
     fitText(root);
+    fitCells(root);
     C.failed = null;
     var bd = $('.backdrop', root);
     if (O.resume && O.resume.scene === g.id) { O.resume.scene = null; bd.style.opacity = 1; return true; }   // as it is — no entrance
@@ -935,7 +965,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     refreshScene.t = setTimeout(async function () {
       if (!C.scene) return;
       var root = await buildScene(C.scene);
-      if (root && C.scene) { var host = $('#gfx'); root.querySelector('.backdrop').style.opacity = 1; host.innerHTML = ''; host.appendChild(root); }
+      if (root && C.scene) { var host = $('#gfx'); root.querySelector('.backdrop').style.opacity = 1; host.innerHTML = ''; host.appendChild(root); fitText(root); fitCells(root); }
     }, 300);
   }
 

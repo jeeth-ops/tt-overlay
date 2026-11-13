@@ -217,7 +217,7 @@
   var EVENT_TYPES = BASE_TYPES.concat(Object.keys(META));
   var STATUS_TYPES = { PAUSE: 1, SUSPEND: 1, RESUME: 1, RETIRE: 1, WALKOVER: 1, DEFAULT: 1, ABANDON: 1 };
   // what a CORRECT of a point may change without moving the score
-  var DETAIL_FIELDS = { kind: 1, player: 1, stroke: 1, net: 1, rally: 1, loc: 1, speed: 1, serveDir: 1, note: 1, serve: 1, receiver: 1 };
+  var DETAIL_FIELDS = { kind: 1, player: 1, stroke: 1, net: 1, rally: 1, loc: 1, speed: 1, serveDir: 1, note: 1, serve: 1, receiver: 1, foot: 1 };
   var PATCHABLE = Object.assign({ winner: 1 }, DETAIL_FIELDS);
 
   /* =================================================================
@@ -885,7 +885,7 @@
   function describe(ns, entry, ev) {
     var b = entry.before || {};
     delete entry.winner; delete entry.kind; delete entry.player; delete entry.stroke; delete entry.net; delete entry.rally;
-    delete entry.loc; delete entry.speed; delete entry.serveDir; delete entry.note; delete entry.serve; delete entry.receiver;
+    delete entry.loc; delete entry.speed; delete entry.serveDir; delete entry.note; delete entry.serve; delete entry.receiver; delete entry.foot;
     switch (ev.type) {
       case 'POINT': {
         var kind = kindOf(ev), k = KINDS[kind];
@@ -909,6 +909,8 @@
         if (ev.speed != null && isFinite(Number(ev.speed)) && Number(ev.speed) > 0) entry.speed = Math.round(Number(ev.speed));
         if (ev.serveDir && has(SERVE_DIRS, ev.serveDir)) entry.serveDir = ev.serveDir;
         if (ev.note) entry.note = str(ev.note, 200);
+        // a double fault whose second fault was a foot fault
+        if (kind === 'DOUBLE_FAULT' && ev.foot) entry.foot = true;
         break;
       }
       case 'FAULT': entry.server = b.server || null; entry.serverSide = b.serverSide || null; entry.foot = !!ev.foot; if (ev.serveDir && has(SERVE_DIRS, ev.serveDir)) entry.serveDir = ev.serveDir; if (ev.speed) entry.speed = Math.round(num(ev.speed, 0)); break;
@@ -1318,7 +1320,7 @@
         var who = entry.player && entry.playerNamed ? pn(entry.player) : n(entry.side);
         var head;
         if (entry.kind === 'ACE') head = 'Ace by ' + pn(entry.server);
-        else if (entry.kind === 'DOUBLE_FAULT') head = 'Double fault — ' + pn(entry.server);
+        else if (entry.kind === 'DOUBLE_FAULT') head = 'Double fault' + (entry.foot ? ' (foot fault)' : '') + ' — ' + pn(entry.server);
         else if (entry.kind === 'SERVICE_WINNER') head = 'Service winner — ' + pn(entry.server);
         else if (k.winner) head = k.label + ' by ' + who + (entry.stroke ? ' (' + STROKES[entry.stroke].toLowerCase() + ')' : '');
         else if (k.error) head = k.label + ' by ' + (entry.player && entry.playerNamed ? pn(entry.player) : n(other(entry.side))) + ' — point ' + n(entry.side);

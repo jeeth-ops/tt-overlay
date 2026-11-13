@@ -93,7 +93,7 @@
   .call.p-set { background: color-mix(in srgb, var(--purple) 24%, transparent); }
   .call.p-match { background: color-mix(in srgb, var(--red) 24%, transparent); }
   .call.p-ends { background: color-mix(in srgb, var(--blue) 20%, transparent); }
-  .svc { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; }
+  .svc { display: grid; grid-template-columns: 1.35fr 1.15fr 1fr 1fr; gap: 8px; }
   .svc button { height: 52px; border-radius: 16px; font-weight: 800; font-size: 15px; background: var(--fill); display: flex; align-items: center; justify-content: center; gap: 7px; transition: transform .28s var(--bounce), background .18s; }
   .svc button:hover:not(:disabled) { background: var(--fill2); }
   .svc button:active:not(:disabled) { transform: scale(.95); }
@@ -184,6 +184,8 @@
     P.socket = await TN.connect();
     P.socket.on('connect', onConnect);
     P.socket.on('disconnect', () => { P.connected = false; renderChips(); });
+    // Offline → Reconnecting → Synced, said as it happens
+    if (P.socket.io) { P.socket.io.on('reconnect_attempt', () => renderChips()); P.socket.io.on('reconnect_failed', () => renderChips()); }
     P.socket.on('tn:update', onUpdate);
     P.socket.on('tn:lease', (d) => { if (d.matchId === P.matchId) { P.lease.holder = d.lease; checkLease(); } });
     P.socket.on('tn:match', (d) => { if (d.matchId === P.matchId) { const keep = { clipToken: P.match.clipToken, overlayKey: P.match.overlayKey, canManage: P.match.canManage }; Object.assign(P.match, d.match, keep); rebuildIfSetupChanged(); render(); } });
@@ -517,7 +519,7 @@
         <div class="board" id="board"></div>
         <div class="call" id="call"></div>
         <div id="setbreak"></div>
-        <div class="svc"><button class="flt" id="fault"></button><button class="ace" id="ace">Ace <kbd>E</kbd></button><button id="let">Let <kbd>T</kbd></button></div>
+        <div class="svc"><button class="flt" id="fault"></button><button class="ff" id="footf"></button><button class="ace" id="ace">Ace <kbd>E</kbd></button><button id="let">Let <kbd>T</kbd></button></div>
         <svg class="court" id="court" viewBox="-13.4 -7 26.8 14" aria-label="The court"></svg>
         <div class="tools"><button class="tool w" id="undo">↶ Undo <kbd class="tiny muted">Z</kbd></button><button class="tool w" id="redo">↷ Redo</button><button class="tool w" id="ends">⇄ Ends</button><button class="tool w" id="srvfix">◎ Server</button></div>
       </section>${sideCard('R')}</div>
@@ -526,7 +528,8 @@
       b.addEventListener('pointerdown', (e) => { const r = b.getBoundingClientRect(); b.style.setProperty('--px', (e.clientX - r.left) + 'px'); b.style.setProperty('--py', (e.clientY - r.top) + 'px'); });
       b.onclick = () => { const s = b.dataset.side; flashBtn(b); point(s); };
     });
-    $('#fault').onclick = fault;
+    $('#fault').onclick = () => fault(false);
+    $('#footf').onclick = () => fault(true);
     $('#ace').onclick = () => { const s = S(); if (s.serving) point(s.serving, { kind: 'ACE' }); };
     $('#let').onclick = () => send({ type: 'LET' });
     $('#undo').onclick = undo;
@@ -545,11 +548,12 @@
     if (ev.kind === 'DOUBLE_FAULT') ev.serve = 2;
     send(ev);
   }
-  function fault() {
+  // a fault (foot: called for a foot fault) — on the second serve, the double fault
+  function fault(foot) {
     const st = P.L.state, s = S();
     if (!s.serving) return;
-    if (st.serve === 2) point(other(s.serving), { kind: 'DOUBLE_FAULT' });
-    else send({ type: 'FAULT' });
+    if (st.serve === 2) point(other(s.serving), Object.assign({ kind: 'DOUBLE_FAULT' }, foot ? { foot: true } : {}));
+    else send(Object.assign({ type: 'FAULT' }, foot ? { foot: true } : {}));
   }
   function undo() {
     const last = P.L.lastUndoable();
@@ -575,10 +579,12 @@
     const f = $('#fault');
     f.className = 'flt' + (st.serve === 2 ? ' second' : '');
     f.innerHTML = st.serve === 2 ? 'Double fault <kbd>F</kbd>' : 'Fault <kbd>F</kbd>';
+    $('#footf').innerHTML = 'Foot fault <kbd>⇧F</kbd>';
+    $('#footf').title = st.serve === 2 ? 'A foot fault on the second serve: a double fault' : 'A foot fault: second serve';
     const playing = st.status === 'in_play';
     const ctl = P.lease.mine && !m.locked;
     $$('.point').forEach((b) => { b.disabled = !ctl || !playing; });
-    f.disabled = $('#ace').disabled = !ctl || !playing;
+    f.disabled = $('#footf').disabled = $('#ace').disabled = !ctl || !playing;
     $('#let').disabled = !ctl || !playing || !st.rules.lets;
     $('#undo').disabled = !ctl || !P.L.lastUndoable();
     $('#redo').disabled = !ctl || !P.L.lastRedoable();
@@ -701,8 +707,10 @@
     const e = h && P.L.entry(h.eventId);
     if (!h || h.side !== sd || !e || e.voided) { box.classList.remove('show'); return; }
     const srvSide = e.serverSide, isSrv = srvSide === sd, d = P.match.format === 'doubles', t = P.match.tracking || {};
-    const kinds = isSrv ? [['WINNER', 'Winner', '1'], ['FORCED_ERROR', 'Forced error', '2'], ['UNFORCED_ERROR', 'Unforced error', '3'], ['ACE', 'Ace', ''], ['SERVICE_WINNER', 'Service winner', '']]
-      : [['WINNER', 'Winner', '1'], ['FORCED_ERROR', 'Forced error', '2'], ['UNFORCED_ERROR', 'Unforced error', '3'], ['RETURN_WINNER', 'Return winner', ''], ['DOUBLE_FAULT', 'Double fault', '']];
+    // the kinds of winner (a passing shot, a volley, a smash) and anything else are kinds of their own
+    const more = [['PASSING_WINNER', 'Passing shot', ''], ['VOLLEY_WINNER', 'Volley winner', ''], ['SMASH_WINNER', 'Smash winner', ''], ['OTHER', 'Other', '']];
+    const kinds = (isSrv ? [['WINNER', 'Winner', '1'], ['FORCED_ERROR', 'Forced error', '2'], ['UNFORCED_ERROR', 'Unforced error', '3'], ['ACE', 'Ace', ''], ['SERVICE_WINNER', 'Service winner', '']]
+      : [['WINNER', 'Winner', '1'], ['FORCED_ERROR', 'Forced error', '2'], ['UNFORCED_ERROR', 'Unforced error', '3'], ['RETURN_WINNER', 'Return winner', ''], ['DOUBLE_FAULT', 'Double fault', '']]).concat(more);
     const strokes = [['FH', 'FH'], ['BH', 'BH'], ['VOLLEY', 'Volley'], ['SMASH', 'Smash'], ['DROP', 'Drop'], ['LOB', 'Lob']];
     const by = (k) => { const K = E.KINDS[k]; return K.by === 'loser' ? other(sd) : K.by === 'server' ? srvSide : sd; };
     const curPlayerSide = by(e.kind);
@@ -1004,6 +1012,7 @@
     const fr = (x, y, p) => (x == null ? null : `${x}/${y}${p != null ? ' · ' + Math.round(p) + '%' : ''}`);
     const rows = [
       ['Aces', A.serve.aces, B.serve.aces], ['Double faults', A.serve.doubleFaults, B.serve.doubleFaults],
+      ...((A.serve.footFaults || B.serve.footFaults) ? [['Foot faults', A.serve.footFaults, B.serve.footFaults]] : []),
       ['1st serve in', fr(A.serve.firstIn, A.serve.firstServes, A.serve.firstPct), fr(B.serve.firstIn, B.serve.firstServes, B.serve.firstPct), A.serve.firstPct, B.serve.firstPct],
       ['1st serve won', fr(A.serve.firstWon, A.serve.firstIn, A.serve.firstWonPct), fr(B.serve.firstWon, B.serve.firstIn, B.serve.firstWonPct), A.serve.firstWonPct, B.serve.firstWonPct],
       ['2nd serve won', fr(A.serve.secondWon, A.serve.secondPoints, A.serve.secondWonPct), fr(B.serve.secondWon, B.serve.secondPoints, B.serve.secondWonPct), A.serve.secondWonPct, B.serve.secondWonPct],
@@ -1080,7 +1089,7 @@
     let handled = true;
     if (k === 'ArrowLeft' || k === 'a' || k === 'A') { const b = $('.side[data-pos="L"] .point'); if (b && !b.disabled) { flashBtn(b); point(l); } }
     else if (k === 'ArrowRight' || k === 'l' || k === 'L') { const b = $('.side[data-pos="R"] .point'); if (b && !b.disabled) { flashBtn(b); point(r); } }
-    else if (k === 'f' || k === 'F') { if (!$('#fault').disabled) fault(); }
+    else if (k === 'f' || k === 'F') { if (e.shiftKey) { if (!$('#footf').disabled) fault(true); } else if (!$('#fault').disabled) fault(false); }
     else if (k === 'e' || k === 'E') { if (!$('#ace').disabled) $('#ace').click(); }
     else if (k === 't' || k === 'T') { if (!$('#let').disabled) send({ type: 'LET' }); }
     else if ((k === 'z' || k === 'Z') && e.shiftKey) redo();

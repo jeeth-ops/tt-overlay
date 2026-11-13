@@ -708,5 +708,34 @@ head('PERFORMANCE — undo is O(1), never a copy of the match');
   ok('a point is checked and applied in well under a millisecond', perPoint < 1, perPoint);
 }
 
+head('FOOT FAULTS — a fault like any other; on the second serve, a double fault');
+{
+  const Stats = require('../../tennis-stats.js');
+  const L = start('singles', {});
+  must(L, { type: 'FAULT', foot: true });
+  let tl = L.timeline[L.timeline.length - 1];
+  ok('a foot fault on the first serve: a fault — the second serve now', tl.type === 'FAULT' && tl.foot === true && L.state.serve === 2 && S(L).display.A === '0');
+  eq('…the commentary calls it a foot fault', E.commentary(L.setup, tl).text, 'Foot fault — second serve, Roger Alpha');
+  const df = pt(L, 'B', { kind: 'DOUBLE_FAULT', foot: true, serve: 2 });
+  tl = L.entry(df.event.eventId);
+  ok('a foot fault on the second serve: a double fault — the point to the receiver, marked a foot fault', tl.kind === 'DOUBLE_FAULT' && tl.foot === true && tl.side === 'B' && S(L).display.B === '15' && L.state.serve === 1);
+  ok('…the commentary says so', /^Double fault \(foot fault\) — Roger Alpha/.test(E.commentary(L.setup, tl).text), E.commentary(L.setup, tl).text);
+  const notDf = send(L, { type: 'POINT', winner: 'A', kind: 'WINNER', foot: true });
+  ok('a "foot" on a point that is not a double fault means nothing (the point stands, no foot fault)', notDf.ok && !L.entry(notDf.event.eventId).foot);
+  must(L, { type: 'FAULT' });
+  let st = Stats.compute({ setup: L.setup, state: L.state, timeline: L.timeline });
+  ok('statistics: 2 foot faults (the fault and the double fault), 1 double fault — the server’s, not the receiver’s', st.sides.A.serve.footFaults === 2 && st.sides.A.serve.doubleFaults === 1 && st.players[P.a1].serve.footFaults === 2 && st.sides.B.serve.footFaults === 0, st.sides.A.serve);
+  // the operator meant a plain double fault
+  must(L, { type: 'CORRECT', target: df.event.eventId, patch: { foot: null }, reason: 'not a foot fault' });
+  st = Stats.compute({ setup: L.setup, state: L.state, timeline: L.timeline });
+  ok('corrected: no longer a foot fault — still the double fault', !L.entry(df.event.eventId).foot && L.entry(df.event.eventId).kind === 'DOUBLE_FAULT' && st.sides.A.serve.footFaults === 1);
+  const last = L.lastUndoable();
+  must(L, { type: 'UNDO', target: last.eventId });
+  ok('undo the last fault: back to the first serve', L.state.serve === 1);
+  ok('incremental = replay with foot faults, corrections and undo', matchesReplay(L).ok);
+  const plain = start('singles', {});
+  ok('no foot fault recorded: the count is 0 (an untracked match shows no foot-fault row)', Stats.compute({ setup: plain.setup, state: plain.state, timeline: plain.timeline }).sides.A.serve.footFaults === 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

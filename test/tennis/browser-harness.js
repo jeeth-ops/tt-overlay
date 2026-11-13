@@ -112,4 +112,4 @@ async function start(opts) {
   return { port, mem, base, api, browser, open, shot, seed, pageErrors, OUT, U };
 }
 
-module.exports = { start, call, OUT, U, FAKE_FIREBASE };
+module.exports = { start, call, photo, OUT, U, FAKE_FIREBASE };

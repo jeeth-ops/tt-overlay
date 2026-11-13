@@ -27,7 +27,7 @@
   var GENERIC = { POINT: 1, OTHER: 1, PENALTY: 1 };
 
   function serveBlock() {
-    return { points: 0, won: 0, known: 0, firstIn: 0, firstWon: 0, secondPoints: 0, secondWon: 0, aces: 0, doubleFaults: 0, serviceWinners: 0, faults: 0,
+    return { points: 0, won: 0, known: 0, firstIn: 0, firstWon: 0, secondPoints: 0, secondWon: 0, aces: 0, doubleFaults: 0, serviceWinners: 0, faults: 0, footFaults: 0,
       games: 0, gamesWon: 0, bpFaced: 0, bpSaved: 0, speeds: { first: [], second: [], all: [] } };
   }
   function returnBlock() { return { points: 0, won: 0, known: 0, firstPoints: 0, firstWon: 0, secondPoints: 0, secondWon: 0, games: 0, gamesWon: 0, bpChances: 0, bpConverted: 0, returnWinners: 0 }; }
@@ -61,6 +61,7 @@
       if (e.type === 'RESUME') { if (openStop && e.at) interruptedMs += Math.max(0, e.at - openStop); openStop = null; return; }
       if (e.type === 'FAULT') {
         if (e.serverSide) { sides[e.serverSide].serve.faults++; if (players[e.server]) players[e.server].serve.faults++; }
+        if (e.serverSide && e.foot) { sides[e.serverSide].serve.footFaults++; if (players[e.server]) players[e.server].serve.footFaults++; }
         if (e.speed) { var sp = sides[e.serverSide].serve.speeds; sp.all.push(e.speed); sp.first.push(e.speed); cov.speed++; if (players[e.server]) { players[e.server].serve.speeds.all.push(e.speed); players[e.server].serve.speeds.first.push(e.speed); } }
         return;
       }
@@ -131,7 +132,7 @@
       var named = e.playerNamed && players[e.player] ? players[e.player] : null;
       if (named) named.byKind[k] = (named.byKind[k] || 0) + 1;
       if (k === 'ACE') { sv.serve.aces++; if (P) P.serve.aces++; }
-      else if (k === 'DOUBLE_FAULT') { sv.serve.doubleFaults++; if (P) P.serve.doubleFaults++; }
+      else if (k === 'DOUBLE_FAULT') { sv.serve.doubleFaults++; if (P) P.serve.doubleFaults++; if (e.foot) { sv.serve.footFaults++; if (P) P.serve.footFaults++; } }
       else if (k === 'SERVICE_WINNER') { sv.serve.serviceWinners++; if (P) P.serve.serviceWinners++; }
       else if (E.KINDS[k] && E.KINDS[k].winner) {
         sides[w].winners++; if (named) named.winners++;
@@ -188,7 +189,7 @@
       var sp = b.speeds;
       var out = {
         points: b.points, won: b.won, wonPct: pct(b.won, b.points),
-        aces: b.aces, doubleFaults: b.doubleFaults, serviceWinners: b.serviceWinners,
+        aces: b.aces, doubleFaults: b.doubleFaults, serviceWinners: b.serviceWinners, footFaults: b.footFaults,
         firstIn: available.serve ? b.firstIn : null, firstServes: available.serve ? b.known : null,
         firstPct: available.serve ? pct(b.firstIn, b.known) : null,
         firstWon: available.serve ? b.firstWon : null, firstWonPct: available.serve ? pct(b.firstWon, b.firstIn) : null,

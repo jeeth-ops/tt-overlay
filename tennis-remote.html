@@ -47,7 +47,8 @@
   .pbtn small { display: block; font-size: 12px; font-weight: 700; opacity: .85; margin-top: 4px; }
   .pbtn .big { font-size: 46px; line-height: 1; letter-spacing: -.04em; }
   .pbtn.srv::before { content: ''; position: absolute; top: 14px; right: 14px; width: 14px; height: 14px; border-radius: 50%; background: var(--optic); box-shadow: 0 0 12px var(--optic); }
-  .svc { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 8px; margin: 0 12px; }
+  .svc { display: grid; grid-template-columns: 1.25fr 1.1fr .9fr .9fr; gap: 8px; margin: 0 12px; }
+  .svc button { font-size: 14px; line-height: 1.1; padding: 0 6px; }
   .svc button, .ut button { height: 56px; border-radius: 18px; font-weight: 800; font-size: 15px; background: var(--fill); transition: transform .25s var(--bounce); touch-action: manipulation; }
   .svc button:active, .ut button:active { transform: scale(.94); }
   .svc .second { background: color-mix(in srgb, var(--orange) 22%, var(--fill)); color: color-mix(in srgb, var(--orange) 80%, var(--ink)); }
@@ -186,17 +187,20 @@
     const how = R.how && R.L.entry(R.how.eventId);
     const sideBtn = (sd) => `<button class="pbtn ${s.serving === sd ? 'srv' : ''}" data-p="${sd}" style="--c:${sd === 'A' ? 'var(--ca)' : 'var(--cb)'}" ${play ? '' : 'disabled'}><span><span class="big">${esc(s.display[sd])}</span><br>${esc(short(sd))}<small>Point</small></span></button>`;
     const isSrv = how && how.serverSide === how.side;
-    const kinds = how ? (isSrv ? [['WINNER', 'Winner'], ['FORCED_ERROR', 'Forced err.'], ['UNFORCED_ERROR', 'Unforced err.'], ['ACE', 'Ace']] : [['WINNER', 'Winner'], ['FORCED_ERROR', 'Forced err.'], ['UNFORCED_ERROR', 'Unforced err.'], ['RETURN_WINNER', 'Return winner']]) : [];
+    const more = [['PASSING_WINNER', 'Passing shot'], ['VOLLEY_WINNER', 'Volley'], ['SMASH_WINNER', 'Smash'], ['OTHER', 'Other']];
+    const kinds = how ? (isSrv ? [['WINNER', 'Winner'], ['FORCED_ERROR', 'Forced err.'], ['UNFORCED_ERROR', 'Unforced err.'], ['ACE', 'Ace']] : [['WINNER', 'Winner'], ['FORCED_ERROR', 'Forced err.'], ['UNFORCED_ERROR', 'Unforced err.'], ['RETURN_WINNER', 'Return winner']]).concat(more) : [];
     $('#app').innerHTML = `<div class="sb">${row('A')}${row('B')}<div class="cl">${esc(call || '')}${h && h.kind !== 'game' ? `<small>${esc((h.count > 1 ? h.count + ' × ' : '') + ({ match: 'Match point', set: 'Set point', break: 'Break point' })[h.kind])}</small>` : ''}</div></div>
       ${R.lease.mine ? '' : `<div class="lock"><button class="btn optic lg" id="take" style="width:100%">Score from this phone</button><p class="small muted" style="margin-top:6px;text-align:center">${esc(R.lease.holder && R.lease.holder.active ? (R.lease.holder.email || 'Another device') + ' is scoring now.' : 'Nobody is scoring right now.')} Graphics and clips below work either way.</p></div>`}
       <div class="pts">${sideBtn('A')}${sideBtn('B')}</div>
-      <div class="svc"><button id="flt" class="${st.serve === 2 ? 'second' : ''}" ${play ? '' : 'disabled'}>${st.serve === 2 ? 'Double fault' : 'Fault'}</button><button id="ace" ${play ? '' : 'disabled'}>Ace</button><button id="let" ${play && st.rules.lets ? '' : 'disabled'}>Let</button></div>
+      <div class="svc"><button id="flt" class="${st.serve === 2 ? 'second' : ''}" ${play ? '' : 'disabled'}>${st.serve === 2 ? 'Double fault' : 'Fault'}</button><button id="ffl" ${play ? '' : 'disabled'}>Foot fault</button><button id="ace" ${play ? '' : 'disabled'}>Ace</button><button id="let" ${play && st.rules.lets ? '' : 'disabled'}>Let</button></div>
       <div class="how ${how ? 'show' : ''}">${how ? `<div class="small muted"><b>How did ${esc(short(how.side))} win it?</b> (optional)</div><div class="chips">${kinds.map(([k, l]) => `<button class="chip ${how.kind === k ? 'sel' : ''}" data-k="${k}">${esc(l)}</button>`).join('')}</div>` : ''}</div>
       <div class="ut"><button id="undo" ${R.lease.mine && R.L.lastUndoable() ? '' : 'disabled'}>↶ Undo</button><button id="redo" ${R.lease.mine && R.L.lastRedoable() ? '' : 'disabled'}>↷ Redo</button><button id="more">⋯ Match</button></div>
       <div class="dock"><div class="ptabs"><button data-d="graphics" aria-selected="${R.dock === 'graphics'}">Graphics</button><button data-d="clips" aria-selected="${R.dock === 'clips'}">Clips</button><button data-d="stats" aria-selected="${R.dock === 'stats'}">Stats</button></div><div class="card" id="dock" style="margin-top:10px"></div></div>`;
     if ($('#take')) $('#take').onclick = () => takeControl(false);
     $$('[data-p]').forEach((b) => { b.onclick = () => point(b.dataset.p); });
-    $('#flt').onclick = () => { const ss = S(); if (!ss.serving) return; if (R.L.state.serve === 2) point(other(ss.serving), { kind: 'DOUBLE_FAULT' }); else send({ type: 'FAULT' }); };
+    const flt = (foot) => { const ss = S(); if (!ss.serving) return; const f = foot ? { foot: true } : {}; if (R.L.state.serve === 2) point(other(ss.serving), Object.assign({ kind: 'DOUBLE_FAULT' }, f)); else send(Object.assign({ type: 'FAULT' }, f)); };
+    $('#flt').onclick = () => flt(false);
+    $('#ffl').onclick = () => flt(true);
     $('#ace').onclick = () => { const ss = S(); if (ss.serving) point(ss.serving, { kind: 'ACE' }); };
     $('#let').onclick = () => send({ type: 'LET' });
     $('#undo').onclick = () => { const last = R.L.lastUndoable(); if (!last) return; if (R.L.state.status === 'completed') TN.prompt('Reopen the match?', 'Say why the last point is undone:', 'reason', 'Undo').then((reason) => { if (reason) send({ type: 'UNDO', target: last.eventId, reason }); }); else send({ type: 'UNDO', target: last.eventId }); };

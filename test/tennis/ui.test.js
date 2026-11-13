@@ -74,6 +74,9 @@ async function until(fn, ms, step) { const end = Date.now() + (ms || 8000); let 
     j = await until(async () => { const x = await server(); return x.summary.display.A === '40' ? x : null; });
     const lastPt = j && j.timeline.filter((y) => y.type === 'POINT' && !y.voided).pop();
     ok('E: an ace — 40-30, recorded as an ace by the server', j && lastPt.kind === 'ACE' && lastPt.side === 'A', lastPt && { kind: lastPt.kind, side: lastPt.side });
+    await panel.keyboard.press('Shift+F');
+    j = await until(async () => { const x = await server(); const e = x.timeline[x.timeline.length - 1]; return e && e.type === 'FAULT' && e.foot === true ? x : null; });
+    ok('Shift+F: a foot fault — recorded as one, the second serve now', !!j && j.summary.serve === 2, j && j.summary.serve);
     await h.shot(panel, 'ui-panel-live');
 
     head('2 · THE NETWORK DROPS — scored at once, kept, sent once');
@@ -108,6 +111,9 @@ async function until(fn, ms, step) { const end = Date.now() + (ms || 8000); let 
     const seq3 = (await server()).match.eventSeq;
     await panel.keyboard.press('ArrowLeft'); await sleep(600);
     ok('…a press on the laptop changes nothing on the server', (await server()).match.eventSeq === seq3);
+    await phone.tap('#ffl');
+    j = await until(async () => { const x = await server(); const e = x.timeline[x.timeline.length - 1]; return e && e.type === 'FAULT' && e.foot === true && x.summary.serve === 2 ? x : null; });
+    ok('the phone’s Foot fault: a foot fault on the server, the second serve', !!j);
     await phone.tap('[data-p="B"]');
     ok('the phone scores: 0-30 on the server', await until(async () => (await display()) === '0-30'), await display());
     ok('…and the laptop follows it live', await until(async () => /30/.test(await panel.textContent('#board')), 5000));

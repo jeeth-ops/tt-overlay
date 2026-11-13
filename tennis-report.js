@@ -159,6 +159,7 @@ function build(input) {
   const rows = [
     ['Aces', v(A.serve.aces), v(B.serve.aces)],
     ['Double faults', v(A.serve.doubleFaults), v(B.serve.doubleFaults)],
+    ...((A.serve.footFaults || B.serve.footFaults) ? [['Foot faults', v(A.serve.footFaults), v(B.serve.footFaults)]] : []),
     ['1st serve in', frac(A.serve.firstIn, A.serve.firstServes, A.serve.firstPct), frac(B.serve.firstIn, B.serve.firstServes, B.serve.firstPct)],
     ['1st serve points won', frac(A.serve.firstWon, A.serve.firstIn, A.serve.firstWonPct), frac(B.serve.firstWon, B.serve.firstIn, B.serve.firstWonPct)],
     ['2nd serve points won', frac(A.serve.secondWon, A.serve.secondPoints, A.serve.secondWonPct), frac(B.serve.secondWon, B.serve.secondPoints, B.serve.secondWonPct)],

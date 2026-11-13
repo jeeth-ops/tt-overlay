@@ -1004,6 +1004,7 @@ module.exports = function setupTennis(deps) {
       if (src.speed != null && Number.isFinite(Number(src.speed)) && Number(src.speed) > 0 && Number(src.speed) < 300) dst.speed = Math.round(Number(src.speed));
       if (src.serveDir != null) p('serveDir', E.SERVE_DIRS[src.serveDir] ? src.serveDir : undefined);
       if (src.note != null) p('note', str(src.note, 200));
+      if (src.foot === true) dst.foot = true;   // a double fault on a foot fault
     };
     switch (type) {
       case 'TOSS': put('winner', side(raw.winner)); put('choice', ['serve', 'receive', 'end', 'defer'].includes(raw.choice) ? raw.choice : undefined); put('firstServe', side(raw.firstServe)); put('left', side(raw.left)); break;
@@ -1027,7 +1028,7 @@ module.exports = function setupTennis(deps) {
         const patch = {};
         pointFields(p, patch);
         // a detail may be cleared (null): "no player", "generic point"
-        ['kind', 'player', 'stroke', 'net', 'rally', 'loc', 'speed', 'serveDir', 'note', 'receiver', 'serve'].forEach((k) => { if (p[k] === null) patch[k] = null; });
+        ['kind', 'player', 'stroke', 'net', 'rally', 'loc', 'speed', 'serveDir', 'note', 'receiver', 'serve', 'foot'].forEach((k) => { if (p[k] === null) patch[k] = null; });
         ev.patch = patch;
         break;
       }
