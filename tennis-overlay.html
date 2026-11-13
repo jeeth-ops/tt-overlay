@@ -328,6 +328,15 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
       if (!r.ok) { problem(r.error === 'not-found' ? 'match not found — check the link (a private match needs its key)' : 'could not load the match — retrying', r.error !== 'not-found'); joinRetry = setTimeout(join, r.error === 'not-found' ? 30000 : 4000); return; }
       if (r.now) O.offset = r.now - Date.now();
       O.match = r.match; O.summary = r.summary; O.seq = r.seq; O.tournament = r.tournament || O.tournament;
+      // (re)loaded while something was already up (vMix reloaded the input, the network came back):
+      // it is shown as it is — a scene past its entrance and a lower third without replaying them,
+      // a call-out already playing not again
+      var g0 = r.graphic, now0 = serverNow();
+      O.resume = {
+        scene: g0 && g0.scene && now0 - (g0.startedAt || 0) > 1200 ? g0.id : null,
+        lower: g0 && g0.lower && now0 - (g0.lower.startedAt || 0) > 1200 ? g0.lower.id : null
+      };
+      if (g0 && g0.moment && now0 - (g0.moment.startedAt || 0) > 1200 && O.shownMoments.indexOf(g0.moment.id) < 0) O.shownMoments.push(g0.moment.id);
       // what is on air first — an overlay that (re)loads mid-graphic never shows the bug before it
       setAir(r.graphic, true);
       if (r.style) applyStyle(r.style);
@@ -640,6 +649,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     el.style.opacity = 1;
     C.lower = lw;
     reportOutput();
+    if (O.resume && O.resume.lower === lw.id) { O.resume.lower = null; return; }   // as it is — no entrance
     var lt = $('.lt', el);
     return all([
       anim($('.ph', lt), [{ clipPath: 'inset(100% 0 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], 560, 0, EASE.out),
@@ -885,6 +895,7 @@ body.bd-scrim .backdrop{background:radial-gradient(1200px 700px at 50% 30%,rgba(
     fitText(root);
     C.failed = null;
     var bd = $('.backdrop', root);
+    if (O.resume && O.resume.scene === g.id) { O.resume.scene = null; bd.style.opacity = 1; return true; }   // as it is — no entrance
     var list = [anim(bd, [{ opacity: 0 }, { opacity: 1 }], 520)];
     var stagger = 160;
     Array.prototype.slice.call(root.querySelectorAll('.top,.half,.team,.card,.prof,.tbl,.sett,.foot,.vs,.press,.kick,.ttl')).forEach(function (el, i) {
