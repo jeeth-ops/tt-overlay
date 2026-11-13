@@ -10,7 +10,19 @@ const http = require('http');
 const { execFileSync } = require('child_process');
 const { bootServer } = require('../server-boot.js');
 
-const U = { work: { uid: 'u-work', email: 'workallsportslive@gmail.com' }, owner: { uid: 'u-owner', email: 'chhayajeeth@gmail.com' } };
+// work / owner: tournament (creator) accounts; guest: a signed-in visitor who is not one
+const U = { work: { uid: 'u-work', email: 'workallsportslive@gmail.com' }, owner: { uid: 'u-owner', email: 'chhayajeeth@gmail.com' }, guest: { uid: 'u-guest', email: 'guest.viewer@example.com' } };
+
+// o.captureSockets: every Socket.IO client the page makes is kept in
+// window.__sockets — a test can drop and restore the network for them.
+const CAPTURE_SOCKETS = `(function(){
+  var real;
+  Object.defineProperty(window, 'io', { configurable: true, get: function(){ return real; }, set: function(v){
+    var wrapped = function(){ var s = v.apply(this, arguments); (window.__sockets = window.__sockets || []).push(s); return s; };
+    Object.keys(v).forEach(function(k){ wrapped[k] = v[k]; });
+    real = wrapped;
+  } });
+})();`;
 const OUT = path.join(__dirname, '..', 'out', 'tennis');
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -73,6 +85,7 @@ async function start(opts) {
       window.__fakeUser = user;
       try { Object.keys(extra || {}).forEach((k) => localStorage.setItem(k, extra[k])); } catch (e) { /* first load */ }
     }, [who ? { email: U[who].email, uid: U[who].uid, token: 'tok-' + who } : null, o.init || {}]);
+    if (o.captureSockets) await page.addInitScript(CAPTURE_SOCKETS);
     await page.route('https://www.gstatic.com/**', (r) => r.fulfill({ contentType: 'application/javascript', body: FAKE_FIREBASE }));
     await page.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ contentType: 'text/css', body: '' }));
     await page.route('https://fonts.gstatic.com/**', (r) => r.abort());

@@ -422,11 +422,22 @@
   };
   TN.ctry = function (code) { return code ? '<span class="ctry">' + TN.esc(String(code).slice(0, 3)) + '</span>' : ''; };
   TN.sideName = function (side, fb) { return side ? side.name : (fb || 'To be decided'); };
+  // an empty draw slot names the match that fills it, as the draw names its rounds:
+  // "Winner of semi-final 2", "Loser of semi-final 1" (third place), "Winner of round of 32 · match 5"
   TN.slotLabel = function (m, s) {
     var src = m.source && m.source[s];
-    if (src && src.winnerOf) return 'Winner of ' + String(src.winnerOf).replace(/^.*KO:(\d+):(\d+)$/, 'R$1 · match $2');
-    if (src && src.loserOf) return 'Loser of ' + String(src.loserOf).replace(/^.*KO:(\d+):(\d+)$/, 'R$1 · match $2');
-    return 'To be decided';
+    var key = src && (src.winnerOf || src.loserOf);
+    if (!key) return 'To be decided';
+    var word = src.winnerOf ? 'Winner of ' : 'Loser of ';
+    var mm = /KO:(\d+):(\d+)$/.exec(String(key));
+    if (!mm) return word + 'an earlier match';
+    var here = String((m.stage && m.stage.round) || ''), rn = /^Round of (\d+)$/i.exec(here);
+    // how many play in the round that feeds this one (the third-place match is fed by the semi-finals)
+    var n = /^final$/i.test(here) || /third/i.test(here) ? 4 : /^semi/i.test(here) ? 8 : /^quarter/i.test(here) ? 16 : rn ? Number(rn[1]) * 2 : 0;
+    if (!n) return word + 'round ' + mm[1] + ' · match ' + mm[2];
+    if (n === 4) return word + 'semi-final ' + mm[2];
+    if (n === 8) return word + 'quarter-final ' + mm[2];
+    return word + 'round of ' + n + ' · match ' + mm[2];
   };
   // the set scores of a summary / result for one side: [{ g, tb, won, now }]
   TN.setCells = function (m, s) {
