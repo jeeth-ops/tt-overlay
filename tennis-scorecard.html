@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tennis Match Centre · AllSportsLive</title>
+<link rel="icon" href="/favicon-32x32.png">
+<link rel="stylesheet" href="/tennis-ui.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<!--
+  🎾 THE TENNIS MATCH CENTRE — one match, for everyone: the live score
+  (sets, games, points, the server) as it happens, without a refresh; the
+  set-by-set scorecard, statistics, point-by-point commentary, the game
+  log, the highlights, and the PDF scorecard once it is over. Upcoming:
+  the players, the time, the court, the format, where to watch.
+-->
+<style>
+  .mhead { margin-top: 18px; }
+  .score { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 16px 18px; border-radius: 22px; background: rgba(4, 12, 9, .66); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+  .srow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px 0; }
+  .srow + .srow { border-top: 1px solid rgba(255,255,255,.1); }
+  .srow .ball { width: 12px; height: 12px; border-radius: 50%; background: var(--optic); box-shadow: 0 0 12px var(--optic); transform: scale(0); transition: transform .45s var(--bounce); }
+  .srow.srv .ball { transform: scale(1); }
+  .srow .nm { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .srow .nm b { font-size: clamp(16px, 2.4vw, 22px); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow.won .nm b::after { content: '✓'; color: var(--optic); margin-left: 8px; }
+  .srow .sets { display: flex; gap: 4px; font-variant-numeric: tabular-nums; }
+  .srow .sets span { min-width: 28px; text-align: center; font-weight: 800; font-size: clamp(18px, 2.6vw, 24px); color: rgba(255,255,255,.5); position: relative; }
+  .srow .sets span.w { color: #fff; } .srow .sets span.cur { color: #fff; background: rgba(255,255,255,.1); border-radius: 8px; }
+  .srow .sets sup { font-size: 11px; position: absolute; top: -2px; right: -2px; color: rgba(255,255,255,.65); }
+  .srow .pts { min-width: 58px; height: 42px; border-radius: 12px; background: var(--optic); color: #0d1512; font-weight: 900; font-size: 22px; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+  .scall { text-align: center; font-weight: 800; color: #fff; padding-top: 8px; font-size: 15px; }
+  .scall small { display: block; color: var(--optic); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; }
+  .players { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: center; margin-bottom: 16px; }
+  .pl { display: flex; align-items: center; gap: 12px; min-width: 0; color: #fff; }
+  .pl.r { flex-direction: row-reverse; text-align: right; }
+  .pl .nmx { min-width: 0; } .pl .nmx b { display: block; font-size: clamp(16px, 2.2vw, 24px); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pl .nmx small { color: rgba(255,255,255,.75); font-weight: 600; font-size: 12.5px; }
+  .pl a { color: inherit; }
+  .vsb { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--optic); color: #0d1512; font-weight: 900; }
+  .info { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .info div { padding: 12px 14px; border-radius: 16px; background: var(--fill); }
+  .info small { display: block; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+  .info b { font-size: 14.5px; }
+  .games { display: grid; gap: 6px; }
+  .grow2 { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 13px; background: var(--fill); font-size: 13px; }
+  .grow2 .seq { display: flex; gap: 3px; flex-wrap: wrap; }
+  .grow2 .seq i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .grow2.brk { box-shadow: inset 3px 0 0 var(--red); }
+  .vclips { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .vclip { border-radius: 16px; background: var(--fill); padding: 12px; display: grid; gap: 6px; text-align: left; transition: transform .3s var(--spring), background .2s; }
+  .vclip:hover { background: var(--fill2); transform: translateY(-2px); }
+  .vclip b { font-size: 14px; } .vclip small { color: var(--mute); font-size: 12px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><span class="asl"></span><span class="bt"><b>Match <em>Centre</em></b><small>by All Sports Live</small></span></a>
+  <span class="grow"></span>
+  <span id="conn" class="chip"><span class="dot"></span>Connecting…</span>
+  <button class="theme-btn" data-theme-btn aria-label="Theme"></button>
+</header>
+<main class="wrap" id="app" style="padding-bottom:70px"><div class="skel" style="height:320px;margin-top:20px"></div></main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/tennis-common.js"></script>
+<script src="/tennis-engine.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { $, $$, esc, api } = TN;
+  const E = window.TennisEngine;
+  const mid = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const key = new URLSearchParams(location.search).get('key') || undefined;
+  const S = { match: null, tournament: null, summary: null, timeline: [], seq: 0, stats: null, clips: [], tab: TN.store.get('tn_mc_tab', 'overview'), socket: null, setup: null };
+
+  async function boot() {
+    const r = await api('GET', `/api/tennis/matches/${encodeURIComponent(mid)}?timeline=1${key ? '&key=' + encodeURIComponent(key) : ''}`);
+    if (!r.ok) { $('#app').innerHTML = '<div class="empty card" style="margin-top:30px"><b>Match not found</b>It may be private, or the link is wrong. <a href="/">All Sports Live</a></div>'; return; }
+    S.match = r.json.match; S.tournament = r.json.tournament; S.summary = r.json.summary || S.match.summary; S.timeline = r.json.timeline || []; S.seq = S.match.eventSeq || 0;
+    S.setup = E.normalizeSetup(setupOf(S.match));
+    document.title = `${sideName('A')} v ${sideName('B')} · Tennis · AllSportsLive`;
+    render();
+    loadStats(); loadClips();
+    S.socket = await TN.connect();
+    S.socket.on('connect', join);
+    S.socket.on('disconnect', () => conn('bad', 'Reconnecting…'));
+    S.socket.on('tn:update', onUpdate);
+    S.socket.on('tn:match', (d) => { if (d.matchId === mid) { Object.assign(S.match, d.match); S.setup = E.normalizeSetup(setupOf(S.match)); render(); } });
+    S.socket.on('tn:report', (d) => { if (d.matchId === mid) { S.match.report = Object.assign(S.match.report || {}, { status: d.status, version: d.version, url: `/api/tennis/matches/${mid}/report.pdf` }); render(); } });
+    S.socket.on('tn:clip', (d) => { if (d.matchId === mid) { clearTimeout(S.ct); S.ct = setTimeout(loadClips, 1200); } });
+  }
+  function conn(k, t) { $('#conn').className = 'chip ' + (k === 'ok' ? 'on' : k === 'bad' ? 'bad' : ''); $('#conn').innerHTML = `<span class="dot ${k === 'ok' ? 'ok' : k === 'bad' ? 'bad' : ''}"></span>${esc(t)}`; }
+  async function join() {
+    const r = await TN.ack(S.socket, 'tn:join', { matchId: mid, key, timeline: true });
+    if (!r.ok) return conn('bad', 'Offline');
+    S.match = Object.assign(S.match, r.match); S.summary = r.summary; S.timeline = r.timeline || S.timeline; S.seq = r.seq;
+    conn('ok', S.match.status === 'live' ? 'Live' : 'Up to date');
+    render();
+  }
+  function onUpdate(u) {
+    if (u.matchId !== mid || u.seq <= S.seq) return;
+    const gap = u.seq !== S.seq + 1;
+    S.seq = u.seq; S.summary = u.summary; S.match.status = u.status; S.match.summary = u.summary;
+    if (u.summary && u.summary.result) S.match.result = u.summary.result;
+    if (gap || u.full || u.touched) { join(); return; }
+    if (u.entry) S.timeline.push(u.entry);
+    render();
+    clearTimeout(S.st); S.st = setTimeout(loadStats, 800);
+  }
+  function setupOf(m) { const side = (s) => { const x = m.sides && m.sides[s]; return { name: x ? x.name : 'To be decided', players: x ? x.players : [] }; }; return { format: m.format, rules: m.rules, sides: { A: side('A'), B: side('B') } }; }
+  async function loadStats() { const r = await api('GET', `/api/tennis/matches/${encodeURIComponent(mid)}/stats${key ? '?key=' + encodeURIComponent(key) : ''}`); if (r.ok) { S.stats = r.json.stats; if (S.tab === 'stats') renderTab(); } }
+  async function loadClips() { const r = await api('GET', `/api/tennis/matches/${encodeURIComponent(mid)}/clips${key ? '?key=' + encodeURIComponent(key) : ''}`); if (r.ok) { S.clips = r.json.clips || []; if (S.tab === 'clips') renderTab(); renderTabs(); } }
+  const side = (s) => S.match.sides[s];
+  const sideName = (s) => (side(s) ? side(s).name : TN.slotLabel(S.match, s));
+  const courtLabel = (c) => (c ? (/court/i.test(c) ? c : 'Court ' + c) : '');
+
+  function render() {
+    const m = S.match, t = S.tournament, sum = S.summary || {};
+    const st = m.status;
+    const live = st === 'live' || st === 'paused' || st === 'suspended';
+    const ca = TN.sideColor(side('A'), '#0f766e'), cb = TN.sideColor(side('B'), '#b45309');
+    document.body.style.setProperty('--ca', ca); document.body.style.setProperty('--cb', cb === ca ? '#b45309' : cb);
+    const pl = (s) => { const x = side(s); if (!x) return `<div class="pl ${s === 'B' ? 'r' : ''}"><span class="av" style="--s:56px">?</span><div class="nmx"><b>${esc(TN.slotLabel(m, s))}</b><small>To be decided</small></div></div>`;
+      return `<div class="pl ${s === 'B' ? 'r' : ''}"><span class="row" style="gap:0">${x.players.map((p) => `<a href="/tennis/player/${esc(p.playerId)}">${TN.avatar(p, 56)}</a>`).join('')}</span><div class="nmx"><b>${esc(x.name)}</b><small>${esc(x.players.map((p) => [p.seed ? '[' + p.seed + ']' : '', p.country, p.ranking ? (p.ranking.label || '') + ' #' + p.ranking.value : ''].filter(Boolean).join(' ')).join(' · '))}</small></div></div>`; };
+    const showScore = st !== 'scheduled' && st !== 'ready';
+    const row = (s) => {
+      const cells = TN.setCells(m, s).map((c) => `<span class="${c.won ? 'w' : ''}${c.now ? ' cur' : ''}">${c.g}${c.tb != null ? `<sup>${c.tb}</sup>` : ''}</span>`).join('');
+      const pts = live && sum.display ? `<span class="pts">${esc(sum.display[s])}</span>` : '<span></span>';
+      return `<div class="srow ${sum.serving === s && live ? 'srv' : ''} ${m.result && m.result.winner === s ? 'won' : ''}"><i class="ball"></i><span class="nm"><b>${esc(m.format === 'doubles' ? (side(s) ? side(s).players.map((p) => TN.surname(p.name)).join(' / ') : TN.slotLabel(m, s)) : sideName(s))}</b></span><span class="sets">${cells}</span>${pts}</div>`;
+    };
+    const h = sum.headline;
+    const callLine = live ? `<div class="scall">${esc(st === 'paused' ? 'Play paused' : st === 'suspended' ? 'Match suspended' : sum.call || '')}${h && h.kind !== 'game' ? `<small>${esc((h.count > 1 ? h.count + ' × ' : '') + ({ match: 'Match point', set: 'Set point', break: 'Break point' })[h.kind])}</small>` : sum.changeover ? '<small>Change of ends</small>' : ''}</div>` : m.result ? `<div class="scall">${esc(m.result.winner ? sideName(m.result.winner) + ' won ' + TN.scoreLine(m.result, m.result.winner) : 'Abandoned')}${m.result.reason !== 'played' ? `<small>${esc(({ retired: 'Retirement', walkover: 'Walkover', default: 'Default', abandoned: 'Abandoned' })[m.result.reason] || '')}</small>` : ''}</div>` : '';
+    const when = m.scheduledAt ? TN.fmtDate(m.scheduledAt) : '';
+    $('#app').innerHTML = `<section class="cover mhead">${TN.coverArt(m.surface, t && t.broadcast && t.broadcast.accent)}<div class="in">
+        <div class="row wrapr" style="margin-bottom:12px;gap:8px">${TN.statusBadge(m)}<a class="chip" style="background:rgba(255,255,255,.14);color:#fff" href="/tennis/tournament/${esc(m.tournamentId)}">${esc(t ? t.name : 'Tournament')}</a>${m.eventName ? `<span class="chip" style="background:rgba(255,255,255,.1);color:#fff">${esc(m.eventName)}</span>` : ''}${m.stage && m.stage.round ? `<span class="chip" style="background:rgba(255,255,255,.1);color:#fff">${esc(m.stage.round)}</span>` : ''}</div>
+        <div class="players">${pl('A')}<span class="vsb">vs</span>${pl('B')}</div>
+        ${showScore ? `<div class="score">${row('A')}${row('B')}${callLine}</div>` : `<div class="score"><div class="scall" style="padding:6px 0">${esc(when ? 'Starts ' + when : 'Time to be announced')}<small>${esc([courtLabel(m.court), TN.surface(m.surface).label, E.normalizeRules(m.rules).label].filter(Boolean).join(' · '))}</small></div></div>`}
+      </div></section>
+      <div class="ptabs" style="margin-top:16px" role="tablist" id="tabs"></div>
+      <div class="card" style="margin-top:12px" id="tab"></div>`;
+    renderTabs(); renderTab();
+  }
+  function renderTabs() {
+    const tabs = [['overview', 'Overview'], ['stats', 'Statistics'], ['points', 'Point by point'], ['games', 'Games'], ['clips', 'Highlights' + (S.clips.length ? ' · ' + S.clips.filter((c) => !c.eventVoided && c.watchUrl).length : '')]];
+    if (!$('#tabs')) return;
+    $('#tabs').innerHTML = tabs.map(([k, l]) => `<button role="tab" data-t="${k}" aria-selected="${S.tab === k}">${esc(l)}</button>`).join('');
+    $$('[data-t]').forEach((b) => { b.onclick = () => { S.tab = b.dataset.t; TN.store.set('tn_mc_tab', S.tab); renderTabs(); renderTab(); }; });
+  }
+  function renderTab() {
+    const el = $('#tab');
+    if (!el) return;
+    if (S.tab === 'stats') return statsTab(el);
+    if (S.tab === 'points') return pointsTab(el);
+    if (S.tab === 'games') return gamesTab(el);
+    if (S.tab === 'clips') return clipsTab(el);
+    overviewTab(el);
+  }
+  function overviewTab(el) {
+    const m = S.match, t = S.tournament || {}, sum = S.summary || {};
+    const rep = m.report;
+    const dur = sum.startedAt && (sum.endedAt || null) ? sum.endedAt - sum.startedAt : null;
+    const sets = (m.result && m.result.scores) || sum.sets || [];
+    const info = [['Tournament', t.name], ['Event', m.eventName], ['Round', m.stage && m.stage.round], ['Date', m.scheduledAt ? TN.fmtDate(m.scheduledAt) : ''], ['Venue', [m.venue, courtLabel(m.court)].filter(Boolean).join(' · ')],
+      ['Surface', TN.surface(m.surface).label], ['Format', (m.format === 'doubles' ? 'Doubles · ' : 'Singles · ') + E.normalizeRules(m.rules).label], ['Chair umpire', m.officials && m.officials.umpire], ['Duration', dur && dur > 60000 ? Math.round(dur / 60000) + ' min' : '']].filter((x) => x[1]);
+    el.innerHTML = `${sets.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${m.format === 'doubles' ? 'Team' : 'Player'}</th>${sets.map((x) => `<th class="n">${x.mtb ? 'MTB' : 'Set ' + x.set}</th>`).join('')}<th class="n">Sets</th></tr></thead><tbody>${['A', 'B'].map((s) => `<tr><td><b>${esc(sideName(s))}</b></td>${sets.map((x) => { const g = x.mtb && x.tb ? x.tb[s] : x[s]; return `<td class="n" style="${x.winner === s ? 'font-weight:800' : 'color:var(--mute)'}">${g}${x.tb && !x.mtb && x.winner && x.winner !== s ? `<sup>${x.tb[s]}</sup>` : ''}</td>`; }).join('')}<td class="n"><b>${(sum.setsWon || { A: 0, B: 0 })[s]}</b></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <div class="info" style="margin-top:14px">${info.map(([k, v]) => `<div><small>${esc(k)}</small><b>${esc(v)}</b></div>`).join('')}</div>
+      <div class="row wrapr" style="margin-top:14px">${m.broadcastInfo && m.broadcastInfo.url ? `<a class="btn primary" href="${esc(m.broadcastInfo.url)}" target="_blank" rel="noopener">▶ Watch${m.broadcastInfo.channel ? ' on ' + esc(m.broadcastInfo.channel) : ''}</a>` : ''}
+        ${m.status === 'completed' ? (rep && (rep.status === 'ready' || rep.version) ? `<a class="btn" href="/api/tennis/matches/${esc(mid)}/report.pdf?download=1${key ? '&key=' + encodeURIComponent(key) : ''}">⬇ Scorecard PDF${rep.version > 1 ? ' (v' + rep.version + ')' : ''}</a>` : '<span class="chip">The scorecard PDF is being prepared…</span>') : ''}
+        ${m.format === 'singles' && m.sides.A && m.sides.B ? `<button class="btn" id="h2h">Head to head</button>` : ''}</div>
+      <div id="h2hbox"></div>`;
+    if ($('#h2h')) $('#h2h').onclick = async () => {
+      const a = m.sides.A.players[0].playerId, b = m.sides.B.players[0].playerId;
+      const r = await api('GET', `/api/tennis/h2h?a=${a}&b=${b}`);
+      if (!r.ok) return;
+      $('#h2hbox').innerHTML = `<div class="section-title">Head to head (recorded on All Sports Live)</div><div class="tiles"><div class="tile"><small>${esc(m.sides.A.players[0].name)}</small><b>${r.json.wins[a] || 0}</b></div><div class="tile"><small>${esc(m.sides.B.players[0].name)}</small><b>${r.json.wins[b] || 0}</b></div></div>`;
+    };
+  }
+  function statsTab(el) {
+    const st = S.stats;
+    if (!st || !st.coverage.points) { el.innerHTML = '<div class="empty"><b>No statistics yet</b>They appear once play has begun.</div>'; return; }
+    const A = st.sides.A, B = st.sides.B;
+    const fr = (x, y, p) => (x == null ? null : `${x}/${y}${p != null ? ' (' + Math.round(p) + '%)' : ''}`);
+    const groups = [
+      ['Serve', [['Aces', A.serve.aces, B.serve.aces], ['Double faults', A.serve.doubleFaults, B.serve.doubleFaults], ...((A.serve.footFaults || B.serve.footFaults) ? [['Foot faults', A.serve.footFaults, B.serve.footFaults]] : []), ['1st serve in', fr(A.serve.firstIn, A.serve.firstServes, A.serve.firstPct), fr(B.serve.firstIn, B.serve.firstServes, B.serve.firstPct), A.serve.firstPct, B.serve.firstPct],
+        ['1st serve points won', fr(A.serve.firstWon, A.serve.firstIn, A.serve.firstWonPct), fr(B.serve.firstWon, B.serve.firstIn, B.serve.firstWonPct), A.serve.firstWonPct, B.serve.firstWonPct], ['2nd serve points won', fr(A.serve.secondWon, A.serve.secondPoints, A.serve.secondWonPct), fr(B.serve.secondWon, B.serve.secondPoints, B.serve.secondWonPct), A.serve.secondWonPct, B.serve.secondWonPct],
+        ['Break points saved', fr(A.serve.bpSaved, A.serve.bpFaced, A.serve.bpSavedPct), fr(B.serve.bpSaved, B.serve.bpFaced, B.serve.bpSavedPct)], ['Service games won', fr(A.serve.gamesWon, A.serve.games, A.serve.gamesWonPct), fr(B.serve.gamesWon, B.serve.games, B.serve.gamesWonPct)],
+        ['Fastest serve', A.serve.fastestKmh ? A.serve.fastestKmh + ' km/h' : null, B.serve.fastestKmh ? B.serve.fastestKmh + ' km/h' : null, A.serve.fastestKmh, B.serve.fastestKmh]]],
+      ['Return', [['Return points won', fr(A.ret.won, A.ret.points, A.ret.wonPct), fr(B.ret.won, B.ret.points, B.ret.wonPct), A.ret.wonPct, B.ret.wonPct], ['Break points converted', fr(A.ret.bpConverted, A.ret.bpChances, A.ret.bpConvertedPct), fr(B.ret.bpConverted, B.ret.bpChances, B.ret.bpConvertedPct)], ['Return games won', fr(A.ret.gamesWon, A.ret.games, A.ret.gamesWonPct), fr(B.ret.gamesWon, B.ret.games, B.ret.gamesWonPct)]]],
+      ['Points', [['Winners', A.winners, B.winners], ['Unforced errors', A.unforcedErrors, B.unforcedErrors], ['Net points won', A.net ? fr(A.net.won, A.net.points, A.net.wonPct) : null, B.net ? fr(B.net.won, B.net.points, B.net.wonPct) : null], ['Total points won', A.pointsWon, B.pointsWon], ['Most points in a row', A.streak.points, B.streak.points], ['Tie-breaks won', A.tiebreaks.played ? A.tiebreaks.won + '/' + A.tiebreaks.played : null, B.tiebreaks.played ? B.tiebreaks.won + '/' + B.tiebreaks.played : null]]]
+    ];
+    const bar = (a, b, pa, pb) => { const x = pa != null ? pa : parseFloat(a) || 0, y = pb != null ? pb : parseFloat(b) || 0; const t = x + y; return t ? [Math.round(x / t * 100), Math.round(y / t * 100)] : [0, 0]; };
+    el.innerHTML = `<div class="row" style="margin-bottom:12px"><b class="grow" style="color:var(--ca)">${esc(sideName('A'))}</b><b style="color:var(--cb)">${esc(sideName('B'))}</b></div>` + groups.map(([g, rows]) => `<div class="section-title">${esc(g)}</div><div class="cmp">${rows.map(([l, a, b, pa, pb]) => { const [wa, wb] = bar(a, b, pa, pb); return `<div class="cmp-row"><b>${a == null ? '<span class="na">–</span>' : esc(String(a))}</b><span class="lbl">${esc(l)}</span><b>${b == null ? '<span class="na">–</span>' : esc(String(b))}</b><div class="bars"><i><span style="width:${wa}%"></span></i><i><span style="width:${wb}%"></span></i></div></div>`; }).join('')}</div>`).join('')
+      + `<p class="small muted" style="margin-top:14px">“–” means it was not recorded for this match (never a zero). ${!st.available.serve ? 'First / second serve were not tracked. ' : ''}${st.available.outcomes && st.coverage.classified < st.coverage.points ? `Winners and errors come from ${st.coverage.classified} of ${st.coverage.points} classified points.` : ''}</p>`;
+  }
+  function pointsTab(el) {
+    const tl = S.timeline.filter((e) => !e.voided && !e.invalid && !E.META[e.type]).slice().reverse();
+    if (!tl.length) { el.innerHTML = '<div class="empty"><b>No points yet</b>Commentary appears point by point as the match is played.</div>'; return; }
+    el.innerHTML = `<div class="comm">${tl.slice(0, 400).map((e) => { const c = E.commentary(S.setup, e); if (!c) return ''; const b = e.before || {}; return `<div class="ln ${c.tone}"><span class="tg">${b.set ? 'S' + b.set + (e.type === 'POINT' ? ' · G' + b.game : '') : ''}</span><span>${esc(c.text)}</span></div>`; }).join('')}</div>`;
+  }
+  function gamesTab(el) {
+    const st = S.stats;
+    if (!st || !st.games.length) { el.innerHTML = '<div class="empty"><b>No games yet</b></div>'; return; }
+    const by = {};
+    st.games.forEach((g) => { (by[g.set] = by[g.set] || []).push(g); });
+    el.innerHTML = Object.keys(by).map((sn) => `<div class="section-title">Set ${esc(sn)}</div><div class="games">${by[sn].map((g) => `<div class="grow2 ${g.break ? 'brk' : ''}"><b>${g.tiebreak ? (g.mtb ? 'MTB' : 'TB') : 'G' + g.n}</b><span class="seq" title="Each point: the colour of who won it">${g.points.map((p) => `<i style="background:${p.w === 'A' ? 'var(--ca)' : 'var(--cb)'}${p.bp ? ';box-shadow:0 0 0 2px var(--red)' : ''}"></i>`).join('')}</span>
+      <span class="small">${g.winner ? `${g.break ? '<b style="color:var(--red)">Break</b> · ' : ''}${esc(sideName(g.winner))}${g.games ? ' · ' + g.games.A + '-' + g.games.B : ''}` : '<span class="muted">in progress</span>'}</span></div>`).join('')}</div>`).join('') + '<p class="small muted" style="margin-top:10px">Ringed points were break points.</p>';
+  }
+  function clipsTab(el) {
+    const list = S.clips.filter((c) => !c.eventVoided && c.watchUrl);
+    if (!list.length) { el.innerHTML = '<div class="empty"><b>No highlights yet</b>Point clips appear here as the Tennis Clipper makes them.</div>'; return; }
+    const players = [].concat(side('A') ? side('A').players : [], side('B') ? side('B').players : []);
+    const filt = S.clipFilter || '';
+    const shown = list.filter((c) => !filt || c.players.some((p) => p.playerId === filt && p.role !== 'error'));
+    el.innerHTML = `<div class="row wrapr" style="margin-bottom:12px"><button class="chip ${!filt ? 'on' : ''}" data-cf="">All (${list.length})</button>${players.map((p) => `<button class="chip ${filt === p.playerId ? 'on' : ''}" data-cf="${esc(p.playerId)}">${esc(p.name)}</button>`).join('')}</div>
+      <div class="vclips">${shown.map((c, i) => `<button class="vclip" data-play="${i}"><b>▶ ${esc(c.kindLabel || 'Clip')}</b><small>${esc([c.set ? 'Set ' + c.set : '', c.game ? 'game ' + c.game : '', (c.players.find((p) => p.role !== 'won' && p.role !== 'error') || c.players[0] || {}).name].filter(Boolean).join(' · '))}</small><small>${c.actual && c.actual.durationSec ? Number(c.actual.durationSec).toFixed(1) + ' s' : ''}</small></button>`).join('')}</div>`;
+    $$('[data-cf]', el).forEach((b) => { b.onclick = () => { S.clipFilter = b.dataset.cf; clipsTab(el); }; });
+    $$('[data-play]', el).forEach((b) => { b.onclick = () => TN.playClips(shown.map((c) => ({ sources: [c.playbackUrl, c.watchUrl], download: c.watchUrl + '?download=1', title: (c.kindLabel || 'Clip') + (c.set ? ' · Set ' + c.set : ''), sub: (c.players[0] || {}).name || '' })), Number(b.dataset.play)); });
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
