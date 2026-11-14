@@ -1,6 +1,6 @@
-/* 🔽 CRICKET PANEL DROPDOWNS — one smooth glass dropdown for every <select>
-   in Cricket Panel and Cricket Panel 3 (each loads this file once, in its
-   <head>, before its own scripts).
+/* 🔽 CRICKET DROPDOWNS — one smooth glass dropdown for every <select>
+   in Cricket Panel, Cricket Panel 3 and the cricket scorecard (each loads
+   this file once, in its <head>, before its own scripts).
 
    The <select> itself stays where it is, as it is: the panel reads and sets
    its value and listens for its 'change', the tests drive it, the phone
@@ -115,7 +115,7 @@
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
 
   function eligible(sel) {
-    return !!(sel && sel.tagName === 'SELECT' && !sel.multiple && !(sel.size > 1) && !sel.disabled && !sel._proDD && !sel.closest('[data-native-select]'));
+    return !!(sel && sel.tagName === 'SELECT' && !sel.multiple && !(sel.size > 1) && !sel.disabled && !sel._proDD && !sel.classList.contains('em-native') && !sel.closest('[data-native-select]'));
   }
 
   var cur = null;          // the open list: { sel, pop, list, search, status, rows, active, q, mo }
@@ -201,7 +201,8 @@
     if (!sel.isConnected || (r.width === 0 && r.height === 0) || sel.disabled) { close(true); return; }
     if (r.bottom < 0 || r.top > innerHeight) { close(); return; }
     var vw = document.documentElement.clientWidth || innerWidth, vh = innerHeight, gap = 6, pad = 8;
-    var w = Math.min(Math.max(r.width, 220), vw - pad * 2);
+    // a list with badges / a second line gets room for them
+    var w = Math.min(Math.max(r.width, cur.rich ? 300 : 220), vw - pad * 2);
     var left = Math.max(pad, Math.min(r.left, vw - w - pad));
     pop.style.width = w + 'px';
     pop.style.maxHeight = 'none';
@@ -236,7 +237,8 @@
       + '<div class="lqs-list"></div><div class="lqs-status" hidden></div>';
     document.body.appendChild(pop);
     cur = { sel: sel, pop: pop, id: id, list: pop.querySelector('.lqs-list'), search: pop.querySelector('.lqs-search input'), status: pop.querySelector('.lqs-status'),
-      rows: [], active: -1, activeOpt: null, q: '', typed: '', typedAt: 0, drawn: false };
+      rows: [], active: -1, activeOpt: null, q: '', typed: '', typedAt: 0, drawn: false,
+      rich: Array.prototype.some.call(sel.options, function (o) { return o.hasAttribute('data-sub') || o.hasAttribute('data-badge'); }) };
     sel.classList.add('lqs-open');
     sel.setAttribute('aria-expanded', 'true');
     sel.setAttribute('aria-controls', pop.id);

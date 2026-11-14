@@ -2811,7 +2811,8 @@
   #wrap.sct-off > .sct-sec{ display:none !important; }
   #sc-panels[hidden]{ display:none; }
   #sc-panels{ display:flex; flex-direction:column; gap:14px; min-width:0; }
-  .sct-panel{ display:flex; flex-direction:column; gap:14px; min-width:0; animation:sctIn .26s ease both; }
+  /* (backwards, not both: a fill kept after the entrance holds the whole tab on one huge layer — blank strips on a fast scroll) */
+  .sct-panel{ display:flex; flex-direction:column; gap:14px; min-width:0; animation:sctIn .26s ease backwards; }
   .sct-panel[hidden]{ display:none; }
   @keyframes sctIn{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:none; } }
   @media (prefers-reduced-motion: reduce){ .sct-panel{ animation:none; } .sct-ink{ transition:none; } .sct-live::after{ animation:none; opacity:0; } }
@@ -2962,7 +2963,7 @@
   .sct-seg-b.sm{ min-width:120px; grid-template-areas:"o" "s"; grid-template-columns:1fr; padding:8px 12px; }
   .sct-seg-b.sm .o{ font-size:11px; text-transform:none; letter-spacing:0; color:var(--text); font-weight:800; }
   .sct-seg-b.sm .s{ justify-self:start; font-size:11.5px; color:var(--text-dim); font-family:inherit; font-weight:700; }
-  .sct-sumbody{ display:flex; flex-direction:column; gap:14px; min-width:0; animation:sctIn .26s ease both; }
+  .sct-sumbody{ display:flex; flex-direction:column; gap:14px; min-width:0; animation:sctIn .26s ease backwards; }
   @media (prefers-reduced-motion: reduce){ .sct-sumbody{ animation:none; } }
   .sct-inn-top{ display:flex; align-items:center; gap:12px; }
   .sct-inn-top .sct-logo{ width:46px; height:46px; border-radius:14px; }
@@ -3118,10 +3119,34 @@
 
   /* where the runs went */
   .sci-ww{ display:flex; flex-direction:column; gap:12px; }
-  .sci-ww .scl-field{ align-self:flex-start; min-width:220px; max-width:100%; }
+  .sci-ww-tools{ display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:10px; }
+  .sci-ww .scl-field{ min-width:240px; max-width:100%; }
+  .sci-seg-ctl{ display:inline-flex; gap:2px; padding:3px; border-radius:12px; background:var(--panel-2); border:1px solid var(--border); }
+  .sci-seg-ctl button{ border:0; background:transparent; color:var(--text-dim); font-family:inherit; font-size:12px; font-weight:800; padding:8px 13px; border-radius:9px; cursor:pointer; transition:background-color .2s, color .2s, box-shadow .2s; }
+  .sci-seg-ctl button:hover{ color:var(--text); }
+  .sci-seg-ctl button.on{ background:var(--panel); color:var(--text); box-shadow:0 1px 2px rgba(0,0,0,.18), 0 0 0 1px var(--border); }
+  .sci-seg-ctl button:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  /* the areas: soft wedges on the grass, their labels white */
+  .sci-zone{ stroke:rgba(255,255,255,.22); stroke-width:.6; cursor:help; transition:filter .15s, stroke .15s; }
+  .sci-zone.none{ fill:rgba(255,255,255,.035); }
+  .sci-zone:hover{ stroke:#fff; stroke-width:1.2; filter:brightness(1.12); }
+  .sci-zone-ring{ fill:none; stroke:rgba(255,255,255,.35); stroke-width:.6; stroke-dasharray:2 2.4; pointer-events:none; }
+  .sci-zone-lb{ pointer-events:none; }
+  .sci-zone-lb text{ font-size:7.4px; font-weight:800; fill:#fff; text-anchor:middle; paint-order:stroke; stroke:rgba(0,0,0,.38); stroke-width:1.6px; stroke-linejoin:round; letter-spacing:.02em; }
+  .sci-zone-lb text.v{ font-size:9px; }
+  .sci-zone-lb .p{ font-size:6.6px; fill:rgba(255,255,255,.82); }
+  .sci-zone-lb.none text{ fill:rgba(255,255,255,.55); }
+  .sci-heat-scale i{ display:inline-block; width:110px; height:8px; border-radius:99px; background:linear-gradient(90deg, rgba(253,224,71,.5), #f97316, #dc2626); }
+  /* the shot maps: thin lines, small ends — the shape of the innings, not a tangle */
+  .sci-ww .ow-halo{ display:none; }
+  .sci-ww .ow-line{ stroke-width:1.5 !important; stroke-linecap:round; opacity:.78; }
+  .sci-ww .ow-line.ow-s1{ stroke:rgba(255,255,255,.7) !important; stroke-width:1 !important; opacity:.5; }
+  .sci-ww .ow-end circle{ transform:scale(.42); }
+  .sci-ww .ow-end text{ display:none; }
+  .sci-ww-all .ow-end.ow-s1 circle{ transform:scale(.3); }
   .sci-ww-body{ display:grid; grid-template-columns:minmax(200px, 330px) minmax(0,1fr); gap:22px; align-items:center; }
   @media (max-width:680px){ .sci-ww-body{ grid-template-columns:minmax(0,1fr); } }
-  .sci-ww-field .ow-field{ width:100%; max-width:330px; margin:0 auto; filter:drop-shadow(0 14px 22px rgba(0,0,0,.25)); }
+  .sci-ww-field .ow-field{ width:100%; max-width:340px; margin:0 auto; box-shadow:0 16px 34px -18px rgba(0,0,0,.55); }
   .sci-ww-side{ display:flex; flex-direction:column; gap:14px; min-width:0; }
   .sci-offleg .lb{ display:flex; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--text-dim); margin-bottom:6px; }
   .sci-offleg .lb b{ color:var(--text); font-family:var(--font-display); font-size:15px; }
@@ -3164,9 +3189,16 @@
   .sci-ps .bar .x{ background:var(--border); }
 
   /* bowling spells */
-  .sci-sp{ display:grid; gap:4px; min-width:max-content; padding-bottom:4px; }
-  .sci-sp-row{ display:grid; grid-template-columns:minmax(110px, 150px) repeat(var(--n), 30px) 86px; gap:4px; align-items:center; }
-  .sci-sp-row .nm{ font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:6px; position:sticky; left:0; z-index:1; background:var(--panel); }
+  /* the names stay put in a column of their own; only the overs scroll beside them (nothing slides under a name) */
+  .sci-sp-wrap{ display:grid; grid-template-columns:minmax(92px, 150px) minmax(0,1fr); gap:0 8px; align-items:start; }
+  .sci-sp-names, .sci-sp{ display:grid; grid-template-rows:20px; grid-auto-rows:30px; gap:4px; }
+  .sci-sp-names{ min-width:0; padding-top:6px; }
+  .sci-sp-names > *{ align-self:center; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sci-sp-names .h{ font-size:10px; font-weight:800; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; }
+  .sci-sp-names .nm{ font-size:12px; font-weight:700; }
+  .sci-sp-wrap .sci-scroll{ padding-top:6px; }
+  .sci-sp{ min-width:max-content; padding:0 6px 6px 0; }
+  .sci-sp-row{ display:grid; grid-template-columns:repeat(var(--n), 30px) 86px; gap:4px; align-items:center; }
   .sci-sp-row.head > *{ font-size:10px; font-weight:800; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; }
   .sci-sp-row.head .c{ text-align:center; }
   .sci-sp-row .c{ height:28px; border-radius:8px; display:grid; place-items:center; font-size:11.5px; font-weight:800; font-variant-numeric:tabular-nums; position:relative; }
@@ -3198,12 +3230,12 @@
 
   /* motion: the entrance when the tab opens or the pick changes, a pulse on a new over */
   @media (prefers-reduced-motion: no-preference){
-    .sci-in .sci-card, .sci-in .sci-ctl{ animation:sciUp .55s cubic-bezier(.2,.8,.2,1) both; animation-delay:calc(var(--k, 0) * 55ms); }
-    .sci-in .sci-bar{ transform-box:fill-box; transform-origin:50% 100%; animation:sciGrow .7s cubic-bezier(.2,.8,.2,1) both; animation-delay:calc(var(--i, 0) * 11ms + 160ms); }
-    .sci-in .sci-line{ stroke-dasharray:1 1; animation:sciDraw 1.3s cubic-bezier(.4,0,.2,1) both .2s; }
-    .sci-in .sci-cmp .b i, .sci-in .sci-areas .b i, .sci-in .sci-fow .track i, .sci-in .sci-ps .bar{ animation:sciFill .8s cubic-bezier(.2,.8,.2,1) both .25s; }
-    .sci-in .sci-seg{ animation:sciFade .6s ease both .3s; }
-    .sci-in .sci-sp .c.on, .sci-in .sci-fow .fw{ animation:sciPop .45s cubic-bezier(.34,1.56,.64,1) both .3s; }
+    .sci-in .sci-card, .sci-in .sci-ctl{ animation:sciUp .55s cubic-bezier(.2,.8,.2,1) backwards; animation-delay:calc(var(--k, 0) * 55ms); }
+    .sci-in .sci-bar{ transform-box:fill-box; transform-origin:50% 100%; animation:sciGrow .7s cubic-bezier(.2,.8,.2,1) backwards; animation-delay:calc(var(--i, 0) * 11ms + 160ms); }
+    .sci-in .sci-line{ stroke-dasharray:1 1; animation:sciDraw 1.3s cubic-bezier(.4,0,.2,1) backwards .2s; }
+    .sci-in .sci-cmp .b i, .sci-in .sci-areas .b i, .sci-in .sci-fow .track i, .sci-in .sci-ps .bar{ animation:sciFill .8s cubic-bezier(.2,.8,.2,1) backwards .25s; }
+    .sci-in .sci-seg{ animation:sciFade .6s ease backwards .3s; }
+    .sci-in .sci-sp .c.on, .sci-in .sci-fow .fw{ animation:sciPop .45s cubic-bezier(.34,1.56,.64,1) backwards .3s; }
     .sci-new{ animation:sciPulse 1.1s ease-in-out 2; }
     @keyframes sciUp{ from{ opacity:0; transform:translateY(12px); } }
     @keyframes sciGrow{ from{ transform:scaleY(0); } }
@@ -3237,7 +3269,7 @@
   .scl-card{
     display:flex; flex-direction:column; text-align:left; padding:0; border-radius:var(--radius-sm); overflow:hidden; cursor:pointer;
     border:1px solid var(--border); background:var(--panel); color:var(--text); font:inherit; min-width:0;
-    transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease; animation:sctIn .3s ease both; animation-delay:calc(var(--i, 0) * 25ms);
+    transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease; animation:sctIn .3s ease backwards; animation-delay:calc(var(--i, 0) * 25ms);
   }
   .scl-card:hover:not([disabled]){ transform:translateY(-2px); box-shadow:0 10px 26px rgba(15,23,42,.12); border-color:color-mix(in srgb, var(--tc, var(--accent)) 40%, var(--border)); }
   .scl-card[disabled]{ cursor:default; }
@@ -3290,6 +3322,8 @@
   #sc-cm-host #commentary-page-body{ overflow:visible; max-width:none; padding:14px 2px 4px; }
   #sc-cm-host #commentary-page.ow-on #cm-filterbar, #sc-cm-host #commentary-page.ow-on #commentary-page-body{ max-width:none; }
 </style>
+<!-- 🔽 the page's dropdowns (Insights' batter, Clips' player and sort, …): the same glass list as the scoring panels; the <select>s stay as they are -->
+<script src="/cricket-select.js?v=2"></script>
 </head>
 <body>
 
@@ -11909,7 +11943,7 @@ startWatching();
      nothing is estimated. The control on top picks which team / innings
      every card shows; each chart reads out its detail on hover or tap; a
      tile or a key moment can be shared as a picture. */
-  const ins = { team: '', inn: 0, bat: '' };   // '' / 0: everything
+  const ins = { team: '', inn: 0, bat: '', ww: 'areas' };   // '' / 0: everything; the wagon wheel's view
   let insFresh = true;          // the next drawing plays the entrance
   const insSeen = {};           // innings no -> overs drawn last time (a new over pulses)
   let insShare = {};            // share id -> what its picture shows
@@ -12326,30 +12360,89 @@ startWatching();
     return icard('Momentum', `<div class="sci-scroll"><svg class="sci-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Scoring rhythm">${g}</svg></div>`, { k: 5, sub: `${E(d.short)}'s run rate over each three-over spell, against the innings' own rate · big dots mark wickets.` });
   }
 
-  /* ---- 2.2 where the runs went ---- */
+  /* ---- 2.2 where the runs went ----
+     Areas: the field cut into its eight areas, in the ring and in the deep,
+     each lit by the runs scored there (a right-hander's view: off side on
+     the left). Boundaries / All shots: the wagon wheel itself, thin lines. */
   const AREA = { fineleg: 'Fine leg', squareleg: 'Square leg', midwicket: 'Mid-wicket', midon: 'Mid-on / long-on', midoff: 'Mid-off / long-off', cover: 'Cover', point: 'Point', thirdman: 'Third man' };
+  const AREA_SHORT = { fineleg: 'Fine leg', squareleg: 'Sq. leg', midwicket: 'Mid-wkt', midon: 'Mid-on', midoff: 'Mid-off', cover: 'Cover', point: 'Point', thirdman: 'Third man' };
+  function wwAreasSvg(set){
+    const cells = {}, zoneTot = {};
+    let max = 1, total = 0;
+    set.forEach(b => {
+      const z = shotZone(b), r = batRuns(b); if(!z || r <= 0) return;
+      const k = z + '|' + (b.shot.depth === 'deep' ? 'deep' : 'inner'), c = cells[k] || (cells[k] = { runs: 0, n: 0, f: 0, s: 0 });
+      c.runs += r; c.n++; const v = bnd(b); if(v === 4) c.f++; else if(v === 6) c.s++;
+      zoneTot[z] = (zoneTot[z] || 0) + r; total += r;
+    });
+    Object.values(cells).forEach(c => { if(c.runs > max) max = c.runs; });
+    const P = (r, a) => { const t = a * Math.PI / 180; return [owF(r * Math.sin(t)), owF(-r * Math.cos(t))]; };
+    const sector = (r0, r1, a0, a1) => {
+      const [x0, y0] = P(r1, a0), [x1, y1] = P(r1, a1);
+      if(!r0) return `M0 0L${x0} ${y0}A${r1} ${r1} 0 0 1 ${x1} ${y1}Z`;
+      const [x2, y2] = P(r0, a1), [x3, y3] = P(r0, a0);
+      return `M${x3} ${y3}L${x0} ${y0}A${r1} ${r1} 0 0 1 ${x1} ${y1}L${x2} ${y2}A${r0} ${r0} 0 0 0 ${x3} ${y3}Z`;
+    };
+    // few runs: a pale gold glaze; many: a deep red
+    const heat = (t) => { const A = [253, 224, 71], B = [249, 115, 22], C = [220, 38, 38]; const mix = (p, q, u) => p.map((v, i) => Math.round(v + (q[i] - v) * u)); const c = t < .5 ? mix(A, B, t * 2) : mix(B, C, (t - .5) * 2); return `rgba(${c.join(',')},${(0.22 + t * 0.62).toFixed(2)})`; };
+    let g = '';
+    Object.keys(OW_FROM).forEach(z => {
+      const a0 = OW_FROM[z], a1 = a0 + 45;
+      [['inner', 9, 55], ['deep', 55, 100]].forEach(([dp, r0, r1]) => {
+        const c = cells[z + '|' + dp];
+        g += `<path class="sci-zone${c ? '' : ' none'}" d="${sector(r0, r1, a0 + 0.6, a1 - 0.6)}"${c ? ` fill="${heat(c.runs / max)}"` : ''} data-tip="${tip(`${AREA[z]} · ${dp === 'deep' ? 'in the deep' : 'inside the ring'}\n${c ? `${c.runs} run${c.runs === 1 ? '' : 's'} off ${plur(c.n, 'shot')}${c.f ? ` · ${c.f}×4` : ''}${c.s ? ` · ${c.s}×6` : ''}` : 'No runs here'}`)}"/>`;
+      });
+    });
+    g += '<circle r="55" class="sci-zone-ring"/><circle class="ow-rope" r="100"/>';
+    g += '<rect class="ow-pitch" x="-4.2" y="-15" width="8.4" height="30" rx="1"/><circle class="ow-bat" cx="0" cy="-11.5" r="2.4"/>';
+    Object.keys(OW_FROM).forEach(z => {
+      const [x, y] = P(80, OW_FROM[z] + 22.5), r = zoneTot[z] || 0;
+      g += `<g class="sci-zone-lb${r ? '' : ' none'}" transform="translate(${x} ${y})"><text y="-1.5">${E(AREA_SHORT[z])}</text><text y="8" class="v">${r}${total ? `<tspan class="p"> ${Math.round(r / total * 100)}%</tspan>` : ''}</text></g>`;
+    });
+    g += '<text class="ow-side" x="-110" y="-101" text-anchor="start">OFF</text><text class="ow-side" x="110" y="-101" text-anchor="end">LEG</text>';
+    return `<div class="ow-field sci-areas-field"><svg class="ow-svg" viewBox="-112 -112 224 224" role="img" aria-label="Runs by area of the field">${g}</svg></div>`;
+  }
   function insWheel(m, D){
     if(!m.balls.some(b => shotZone(b))) return '';   // the wagon wheel was never used in this match
     const balls = D.flatMap(d => d.seq.map(x => x.b));
-    const by = {};
-    balls.forEach(b => { const s = nm(b.striker), r = batRuns(b); if(!s || !shotZone(b)) return; const p = by[s] || (by[s] = { runs: 0, n: 0 }); p.runs += r; p.n++; });
-    const names = Object.keys(by).sort((a, b) => by[b].runs - by[a].runs);
-    const pick = ins.bat && by[ins.bat] ? ins.bat : '';
+    const tm = nameTeam(m), by = {};
+    balls.forEach(b => {
+      const s = nm(b.striker); if(!s) return;
+      const p = by[s] || (by[s] = { runs: 0, balls: 0, f: 0, s: 0, shots: 0 });
+      p.runs += batRuns(b); if(faced(b)) p.balls++;
+      const v = bnd(b); if(v === 4) p.f++; else if(v === 6) p.s++;
+      if(shotZone(b)) p.shots++;
+    });
+    const names = Object.keys(by).filter(n => by[n].shots).sort((a, b) => by[b].runs - by[a].runs);
+    const pick = ins.bat && by[ins.bat] && by[ins.bat].shots ? ins.bat : '';
+    const view = ins.ww === 'bnd' || ins.ww === 'all' ? ins.ww : 'areas';
     const set = pick ? balls.filter(b => nm(b.striker) === pick) : balls;
     const w = overWheelOf(set, null);
+    const shown = view === 'bnd' ? overWheelOf(set.filter(b => bnd(b)), null) : w;
     const zones = {};
     set.forEach(b => { const z = shotZone(b), r = batRuns(b); if(!z || r <= 0) return; const a = zones[z] || (zones[z] = { runs: 0, f: 0, s: 0 }); a.runs += r; const v = bnd(b); if(v === 4) a.f++; else if(v === 6) a.s++; });
     const zl = Object.keys(zones).sort((a, b) => zones[b].runs - zones[a].runs);
     const zmax = Math.max(1, ...zl.map(z => zones[z].runs));
     const tot = w.off + w.leg, offPct = tot ? Math.round(w.off / tot * 100) : 0;
     const label = pick ? `${pick}'s shots` : 'Shots of the innings shown';
-    const sel = `<label class="scl-field"><span>Batter</span><select data-sci-bat="1"><option value="">${D.length > 1 ? 'Every batter' : 'Every batter of the innings'}</option>${names.map(n => `<option value="${E(n)}"${n === pick ? ' selected' : ''}>${E(n)} (${by[n].runs})</option>`).join('')}</select></label>`;
+    // the batter picker: grouped by team, each with a badge and his figures
+    const groups = ['A', 'B'].map(k => ({ k, list: names.filter(n => (tm[n] || D[0].team) === k) })).filter(g => g.list.length);
+    const opt = (n) => { const r = by[n], k = tm[n] || D[0].team, c = tColor(teamOf(m, k), k), ini = n.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+      return `<option value="${E(n)}"${n === pick ? ' selected' : ''} data-badge="${E(ini)}" data-badge-color="${E(c)}" data-sub="${E(`${r.runs} run${r.runs === 1 ? '' : 's'} off ${r.balls} ball${r.balls === 1 ? '' : 's'}${r.f ? ` · ${r.f}×4` : ''}${r.s ? ` · ${r.s}×6` : ''}`)}">${E(n)} (${r.runs})</option>`; };
+    const sel = `<label class="scl-field"><span>Batter</span><select data-sci-bat="1"><option value="" data-sub="${E(`${names.length} batters with shots marked`)}">${D.length > 1 ? 'Every batter' : 'Every batter of the innings'}</option>${groups.length > 1 ? groups.map(g => `<optgroup label="${E(tShort(teamOf(m, g.k), g.k))}">${g.list.map(opt).join('')}</optgroup>`).join('') : names.map(opt).join('')}</select></label>`;
+    const seg = `<div class="sci-seg-ctl" role="group" aria-label="Wagon wheel view">${[['areas', 'Areas'], ['bnd', 'Boundaries'], ['all', 'All shots']].map(([k, l]) => `<button type="button" data-sci-ww="${k}" aria-pressed="${view === k}"${view === k ? ' class="on"' : ''}>${l}</button>`).join('')}</div>`;
+    const field = !w.shots.length ? overWheelSvg(w, 'No shots marked', label)
+      : view === 'areas' ? wwAreasSvg(set)
+      : overWheelSvg(shown, shown.shots.length ? '' : 'No boundaries', label);
     const side = w.shots.length ? `<div class="sci-ww-side">
         <div class="sci-offleg"><div class="lb"><span>Off side <b>${offPct}%</b></span><span><b>${100 - offPct}%</b> Leg side</span></div><div class="bar"><i class="off" style="width:${offPct}%"></i><i class="leg" style="width:${100 - offPct}%"></i></div><div class="sct-note">${w.off} runs to the off · ${w.leg} to the leg</div></div>
         <div class="sci-areas">${zl.map(z => `<div class="r"><span class="n">${E(AREA[z] || z)}</span><span class="b"><i style="width:${(zones[z].runs / zmax * 100).toFixed(1)}%"></i></span><b>${zones[z].runs}</b><small>${[zones[z].f ? zones[z].f + '×4' : '', zones[z].s ? zones[z].s + '×6' : ''].filter(Boolean).join(' ')}</small></div>`).join('')}</div>
         <div class="sct-note">${w.shots.length} of ${w.scoring} scoring shots were marked on the wagon wheel.</div>
       </div>` : `<div class="sci-ww-side"><div class="sct-note">No shots were marked on the wagon wheel ${pick ? 'for ' + E(pick) : 'for this innings'}.</div></div>`;
-    return icard('Where the runs went', `<div class="sci-ww">${sel}<div class="sci-ww-body"><div class="sci-ww-field">${overWheelSvg(w, w.shots.length ? '' : 'No shots marked', label)}</div>${side}</div><div class="sct-legend"><span><span class="sct-dot" style="--tc:#2f7ff0;border-radius:99px"></span>Four</span><span><span class="sct-dot" style="--tc:#9b4cf0;border-radius:99px"></span>Six</span><span><span class="sct-dot" style="--tc:#fff;border-radius:99px;box-shadow:inset 0 0 0 1px var(--border)"></span>Other runs</span></div></div>`, { k: 6 });
+    const legend = view === 'areas' && w.shots.length
+      ? `<div class="sct-legend sci-heat-scale"><span>Fewer runs</span><i></i><span>More runs</span><span class="sct-note">· hover or tap an area</span></div>`
+      : `<div class="sct-legend"><span><span class="sct-dot" style="--tc:#2f7ff0;border-radius:99px"></span>Four</span><span><span class="sct-dot" style="--tc:#9b4cf0;border-radius:99px"></span>Six</span>${view === 'all' ? `<span><span class="sct-dot" style="--tc:#fff;border-radius:99px;box-shadow:inset 0 0 0 1px var(--border)"></span>Other runs</span>` : ''}</div>`;
+    return icard('Where the runs went', `<div class="sci-ww sci-ww-${view}"><div class="sci-ww-tools">${sel}${seg}</div><div class="sci-ww-body"><div class="sci-ww-field">${field}</div>${side}</div>${legend}</div>`, { k: 6 });
   }
 
   /* ---- 2.3 fall of wickets and the partnerships ---- */
@@ -12388,13 +12481,13 @@ startWatching();
       });
       order.forEach(b => { Object.values(rows[b].overs).forEach(o => { if(o.legal >= 6 && !o.runs) rows[b].maidens++; }); });
       const heat = (r) => r <= 3 ? 'h0' : r <= 6 ? 'h1' : r <= 9 ? 'h2' : r <= 12 ? 'h3' : 'h4';
-      const head = `<div class="sci-sp-row head"><span class="nm">Bowler</span>${Array.from({ length: n }, (_, k) => `<span class="c">${k + 1}</span>`).join('')}<span class="fig">O-M-R-W</span></div>`;
+      const head = `<div class="sci-sp-row head">${Array.from({ length: n }, (_, k) => `<span class="c">${k + 1}</span>`).join('')}<span class="fig">O-M-R-W</span></div>`;
       const body = order.map(b => {
         const r = rows[b];
-        return `<div class="sci-sp-row"><span class="nm">${E(b)}</span>${Array.from({ length: n }, (_, k) => { const o = r.overs[k]; if(!o) return '<span class="c"></span>';
+        return `<div class="sci-sp-row">${Array.from({ length: n }, (_, k) => { const o = r.overs[k]; if(!o) return '<span class="c"></span>';
           return `<span class="c on ${heat(o.runs)}" data-tip="${tip(`Over ${k + 1} · ${b}\n${o.runs} run${o.runs === 1 ? '' : 's'}${o.w ? ` · ${plur(o.w, 'wicket')}` : ''}${o.f ? ` · ${plur(o.f, 'four')}` : ''}${o.s ? ` · ${plur(o.s, 'six', 'sixes')}` : ''}${o.outs.map(x => `\n✕ ${outBatter(x.b)} — ${howOut(x.b)}`).join('')}`)}">${o.runs}${o.w ? `<i>${o.w > 1 ? o.w : ''}W</i>` : ''}</span>`; }).join('')}<span class="fig">${Math.floor(r.legal / 6)}${r.legal % 6 ? '.' + r.legal % 6 : ''}-${r.maidens}-${r.runs}-<b>${r.w}</b></span></div>`;
       }).join('');
-      return `<div class="sci-sp-blk"><div class="sci-fow-h"><span class="sct-dot" style="--tc:${E(tColor(teamOf(m, d.team === 'A' ? 'B' : 'A'), d.team === 'A' ? 'B' : 'A'))}"></span><b>${E(tShort(teamOf(m, d.team === 'A' ? 'B' : 'A'), d.team === 'A' ? 'B' : 'A'))} bowling</b><span>to ${E(d.short)} · ${ordn(d.inn.no)} innings</span></div><div class="sci-scroll"><div class="sci-sp" style="--n:${n}">${head}${body}</div></div></div>`;
+      return `<div class="sci-sp-blk"><div class="sci-fow-h"><span class="sct-dot" style="--tc:${E(tColor(teamOf(m, d.team === 'A' ? 'B' : 'A'), d.team === 'A' ? 'B' : 'A'))}"></span><b>${E(tShort(teamOf(m, d.team === 'A' ? 'B' : 'A'), d.team === 'A' ? 'B' : 'A'))} bowling</b><span>to ${E(d.short)} · ${ordn(d.inn.no)} innings</span></div><div class="sci-sp-wrap"><div class="sci-sp-names"><span class="h">Bowler</span>${order.map(b => `<span class="nm" title="${E(b)}">${E(b)}</span>`).join('')}</div><div class="sci-scroll"><div class="sci-sp" style="--n:${n}">${head}${body}</div></div></div></div>`;
     }).join('');
     if(!blocks) return '';
     return icard('Bowling spells', blocks + `<div class="sct-legend sci-heat-lg"><span><i class="h0"></i>0–3</span><span><i class="h1"></i>4–6</span><span><i class="h2"></i>7–9</span><span><i class="h3"></i>10–12</span><span><i class="h4"></i>13+</span><span>runs in the over · W = wicket</span></div>`, { k: 8, sub: 'Who bowled each over and what it cost.' });
@@ -12558,6 +12651,7 @@ startWatching();
       const d = b.dataset;
       if(d.sciTeam != null){ ins.team = d.sciTeam; const m = model(); if(ins.inn && m && !m.innings.some(i => i.no === ins.inn && (!ins.team || i.team === ins.team))) ins.inn = 0; ins.bat = ''; insFresh = true; paint('insights', true); return; }
       if(d.sciInn != null){ ins.inn = Number(d.sciInn) || 0; ins.bat = ''; insFresh = true; paint('insights', true); return; }
+      if(d.sciWw){ ins.ww = d.sciWw; paint('insights', true); return; }
       if(d.sciPlay){ try { openVideoModal(d.sciPlay, d.title, d.url, d.poster); } catch(err){} return; }
       if(d.sciShare){
         const spec = insShare[d.sciShare];
