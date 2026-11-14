@@ -1,48 +1,46 @@
-/* 🦶 The All Sports Live footer — one modern footer for every public page
-   (scorecards, match and tournament pages of every sport).
+/* 🦶 The All Sports Live footer — one slim bar for every public page
+   (scorecards, match and tournament pages of every sport, the dashboards).
 
-   A page puts <footer class="asl-foot" data-asl-footer></footer> where it
-   wants it (straight in the HTML, or inside markup it renders later) and
-   loads this script once: every empty [data-asl-footer] is filled, also
-   ones that appear after a re-render. The look follows the page's theme:
-   dark by default, light under :root[data-theme="light"] — the switch every
-   AllSportsLive page already uses. Its CSS comes with it, added once. */
+   A page puts <footer class="asl-foot" data-asl-footer></footer> as a child
+   of <body>, after its content, and loads this script once: the footer is
+   drawn edge to edge (left to right), flush with the very bottom of the
+   page — on a short page, at the bottom of the screen. The look follows the
+   page's own theme: dark by default, light under :root[data-theme="light"]
+   (the switch every AllSportsLive page uses). Its CSS comes with it. */
 (function () {
   if (window.ASLFooter) return;
 
   var css = [
-    'footer.asl-foot{display:block;position:relative;max-width:1080px;margin:40px auto 18px;padding:0 16px;text-align:left;font:inherit;color:var(--af-ink);',
-    '  --af-ink:#e8eef6;--af-mute:rgba(232,238,246,.62);--af-faint:rgba(232,238,246,.42);--af-card:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.025));--af-line:rgba(255,255,255,.09);--af-chip:rgba(255,255,255,.06);--af-chip-h:rgba(255,255,255,.12);--af-shadow:0 24px 60px -30px rgba(0,0,0,.75);--af-a:#22c55e;--af-b:#f59e0b}',
-    ':root[data-theme="light"] footer.asl-foot{--af-ink:#0f172a;--af-mute:rgba(15,23,42,.62);--af-faint:rgba(15,23,42,.45);--af-card:linear-gradient(160deg,rgba(255,255,255,.92),rgba(255,255,255,.7));--af-line:rgba(15,23,42,.09);--af-chip:rgba(15,23,42,.05);--af-chip-h:rgba(15,23,42,.1);--af-shadow:0 20px 50px -28px rgba(15,23,42,.35);--af-a:#16a34a;--af-b:#d97706}',
+    'footer.asl-foot{display:block;position:relative;width:100%;max-width:none;margin:28px 0 0;padding:0;text-align:left;font:500 12.5px/1.3 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;color:var(--af-ink);',
+    '  background:var(--af-bg);border-top:1px solid var(--af-line);',
+    '  --af-ink:#e8eef6;--af-mute:rgba(232,238,246,.6);--af-faint:rgba(232,238,246,.42);--af-bg:rgba(10,14,20,.86);--af-line:rgba(255,255,255,.08);--af-chip:rgba(255,255,255,.06);--af-chip-h:rgba(255,255,255,.13);--af-a:#22c55e;--af-b:#f59e0b}',
+    ':root[data-theme="light"] footer.asl-foot{--af-ink:#0f172a;--af-mute:rgba(15,23,42,.6);--af-faint:rgba(15,23,42,.45);--af-bg:rgba(255,255,255,.9);--af-line:rgba(15,23,42,.08);--af-chip:rgba(15,23,42,.05);--af-chip-h:rgba(15,23,42,.1);--af-a:#16a34a;--af-b:#d97706}',
     'footer.asl-foot *{box-sizing:border-box}',
-    'footer.asl-foot .af-card{position:relative;overflow:hidden;border-radius:22px;padding:22px 24px 16px;background:var(--af-card);border:1px solid var(--af-line);box-shadow:var(--af-shadow)}',
-    // a thin moving light along the top edge: transform only, and still under reduced motion
-    'footer.asl-foot .af-card:before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,var(--af-a),var(--af-b),transparent);opacity:.9}',
-    'footer.asl-foot .af-card:after{content:"";position:absolute;left:-40%;top:0;width:40%;height:2px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.9),transparent);animation:afSweep 6s ease-in-out infinite}',
-    '@keyframes afSweep{0%{transform:translateX(0)}60%,100%{transform:translateX(350%)}}',
-    '@media (prefers-reduced-motion:reduce){footer.asl-foot .af-card:after{animation:none;display:none}}',
-    'footer.asl-foot .af-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between}',
-    'footer.asl-foot .af-brand{display:flex;align-items:center;min-width:0;margin:0 18px 14px 0;text-decoration:none;color:inherit}',
-    'footer.asl-foot .af-brand img{width:42px;height:42px;border-radius:12px;object-fit:cover;flex:none;margin-right:12px;box-shadow:0 6px 18px -8px rgba(0,0,0,.6)}',
-    'footer.asl-foot .af-brand b{display:block;font-size:16px;font-weight:800;letter-spacing:-.01em;line-height:1.2}',
+    // a thin brand line along the top edge, with a light moving along it (transform only; off with reduced motion)
+    'footer.asl-foot:before{content:"";position:absolute;left:0;right:0;top:-1px;height:2px;background:linear-gradient(90deg,transparent,var(--af-a) 20%,var(--af-b) 80%,transparent)}',
+    'footer.asl-foot .af-sweep{position:absolute;left:0;top:-1px;width:30%;height:2px;overflow:hidden;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent);animation:afSweep 7s ease-in-out infinite;transform:translateX(-100%)}',
+    '@keyframes afSweep{0%{transform:translateX(-100%)}55%,100%{transform:translateX(340%)}}',
+    '@media (prefers-reduced-motion:reduce){footer.asl-foot .af-sweep{display:none}}',
+    'footer.asl-foot .af-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:10px 24px}',
+    'footer.asl-foot .af-brand{display:flex;align-items:center;margin:3px 16px 3px 0;text-decoration:none;color:inherit;white-space:nowrap}',
+    'footer.asl-foot .af-brand img{width:24px;height:24px;border-radius:7px;object-fit:cover;flex:none;margin-right:8px}',
+    'footer.asl-foot .af-brand b{font-size:13px;font-weight:800;letter-spacing:-.01em}',
     'footer.asl-foot .af-brand b span{background:linear-gradient(90deg,var(--af-a),var(--af-b));-webkit-background-clip:text;background-clip:text;color:transparent}',
-    'footer.asl-foot .af-brand small{display:block;font-size:12.5px;color:var(--af-mute);margin-top:2px;line-height:1.35}',
-    'footer.asl-foot .af-social{display:flex;margin:0 0 14px}',
-    'footer.asl-foot .af-ic{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;margin-left:8px;color:var(--af-ink);background:var(--af-chip);border:1px solid var(--af-line);transition:transform .25s cubic-bezier(.34,1.56,.64,1),background .2s}',
-    'footer.asl-foot .af-ic:first-child{margin-left:0}',
-    'footer.asl-foot .af-ic:hover{transform:translateY(-2px);background:var(--af-chip-h)}',
-    'footer.asl-foot .af-ic svg{width:18px;height:18px}',
+    'footer.asl-foot .af-brand em{font-style:normal;color:var(--af-faint);margin-left:8px;font-size:12px}',
+    'footer.asl-foot .af-sports{display:flex;flex-wrap:wrap;align-items:center;margin:3px 0}',
+    'footer.asl-foot .af-sports a{display:inline-flex;align-items:center;height:24px;padding:0 9px;margin:2px 4px 2px 0;border-radius:99px;font-size:12px;font-weight:700;text-decoration:none;color:var(--af-mute);transition:color .2s,background .2s}',
+    'footer.asl-foot .af-sports a:hover{color:var(--af-ink);background:var(--af-chip-h)}',
+    'footer.asl-foot .af-sports a i{font-style:normal;margin-right:5px;font-size:12px}',
+    'footer.asl-foot .af-end{display:flex;align-items:center;margin:3px 0 3px 12px;color:var(--af-faint);white-space:nowrap}',
+    'footer.asl-foot .af-ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;margin-left:4px;color:var(--af-mute);background:var(--af-chip);transition:color .2s,background .2s,transform .25s cubic-bezier(.34,1.56,.64,1)}',
+    'footer.asl-foot .af-ic:hover{color:var(--af-ink);background:var(--af-chip-h);transform:translateY(-1px)}',
+    'footer.asl-foot .af-ic svg{width:14px;height:14px}',
     'footer.asl-foot .af-ic.yt:hover{color:#ef4444} footer.asl-foot .af-ic.ig:hover{color:#e1306c}',
-    'footer.asl-foot .af-sports{display:flex;flex-wrap:wrap;padding:14px 0 4px;border-top:1px solid var(--af-line)}',
-    'footer.asl-foot .af-sports a{display:inline-flex;align-items:center;height:30px;padding:0 12px;margin:0 8px 8px 0;border-radius:99px;font-size:12.5px;font-weight:700;text-decoration:none;color:var(--af-mute);background:var(--af-chip);border:1px solid var(--af-line);transition:color .2s,background .2s,transform .25s cubic-bezier(.34,1.56,.64,1)}',
-    'footer.asl-foot .af-sports a:hover{color:var(--af-ink);background:var(--af-chip-h);transform:translateY(-1px)}',
-    'footer.asl-foot .af-sports a i{font-style:normal;margin-right:6px}',
-    'footer.asl-foot .af-bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;padding-top:10px;font-size:12px;color:var(--af-faint)}',
-    'footer.asl-foot .af-bottom > span{margin:2px 0}',
-    'footer.asl-foot .af-live{display:inline-flex;align-items:center;font-weight:700;color:var(--af-mute)}',
-    'footer.asl-foot .af-live:before{content:"";width:7px;height:7px;border-radius:50%;margin-right:7px;background:var(--af-a);box-shadow:0 0 0 3px rgba(34,197,94,.18)}',
-    'footer.asl-foot a.af-home{color:var(--af-a);font-weight:700;text-decoration:none}',
-    '@media (max-width:560px){footer.asl-foot{margin-top:28px}footer.asl-foot .af-card{padding:18px 16px 14px;border-radius:18px}footer.asl-foot .af-social{width:100%}footer.asl-foot .af-bottom{display:block}footer.asl-foot .af-bottom > span{display:block}footer.asl-foot .af-bottom > span.af-live{display:flex;margin-top:6px}}',
+    'footer.asl-foot .af-copy{margin-right:10px}',
+    'footer.asl-foot .af-copy:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--af-a);box-shadow:0 0 0 3px rgba(34,197,94,.16)}',
+    // phones: two short rows — brand + icons, then the sports and the year
+    '@media (max-width:760px){footer.asl-foot .af-row{padding:8px 14px}footer.asl-foot .af-brand em{display:none}footer.asl-foot .af-sports{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto;margin:2px 0 0;scrollbar-width:none;-webkit-overflow-scrolling:touch}footer.asl-foot .af-sports::-webkit-scrollbar{display:none}footer.asl-foot .af-sports a{flex:none;padding:0 8px;font-size:11.5px;background:var(--af-chip)}footer.asl-foot .af-brand{margin:0 10px 0 0}footer.asl-foot .af-end{margin:0 0 0 auto}footer.asl-foot .af-end{margin-left:auto}footer.asl-foot .af-copy{font-size:11px}}',
+    '@media (max-width:400px){footer.asl-foot .af-copy{display:none}}',
     '@media print{footer.asl-foot{display:none}}'
   ].join('\n');
 
@@ -55,19 +53,14 @@
     ['🏓', 'Table Tennis', '/?sport=table-tennis#tournaments'], ['⚽', 'Football', '/?sport=football#tournaments']];
 
   function html() {
-    return '<div class="af-card">'
-      + '<div class="af-top">'
-      + '<a class="af-brand" href="/" aria-label="All Sports Live — home"><img src="/logo.png" alt="" width="42" height="42" loading="lazy" decoding="async">'
-      + '<span><b>All Sports <span>Live</span></b><small>Live scoring, TV-style broadcast graphics &amp; instant highlights</small></span></a>'
-      + '<nav class="af-social" aria-label="All Sports Live online">'
+    return '<i class="af-sweep" aria-hidden="true"></i><div class="af-row">'
+      + '<a class="af-brand" href="/" aria-label="All Sports Live — home"><img src="/logo.png" alt="" width="24" height="24" loading="lazy" decoding="async"><b>All Sports <span>Live</span></b><em>Live scoring &amp; broadcast graphics</em></a>'
+      + '<nav class="af-sports" aria-label="Sports">' + SPORTS.map(function (s) { return '<a href="' + s[2] + '"><i aria-hidden="true">' + s[0] + '</i>' + s[1] + '</a>'; }).join('') + '</nav>'
+      + '<div class="af-end"><span class="af-copy">© ' + new Date().getFullYear() + ' All Sports Live</span>'
       + '<a class="af-ic" href="/" title="Home" aria-label="Home">' + ICONS.home + '</a>'
       + '<a class="af-ic yt" href="https://www.youtube.com/@allsportslive" target="_blank" rel="noopener noreferrer" title="YouTube" aria-label="YouTube">' + ICONS.yt + '</a>'
       + '<a class="af-ic ig" href="https://www.instagram.com/all.sports.live" target="_blank" rel="noopener noreferrer" title="Instagram" aria-label="Instagram">' + ICONS.ig + '</a>'
-      + '</nav></div>'
-      + '<nav class="af-sports" aria-label="Sports">' + SPORTS.map(function (s) { return '<a href="' + s[2] + '"><i aria-hidden="true">' + s[0] + '</i>' + s[1] + '</a>'; }).join('') + '</nav>'
-      + '<div class="af-bottom"><span>© ' + new Date().getFullYear() + ' All Sports Live. All rights reserved.</span>'
-      + '<span class="af-live">Powered by&nbsp;<a class="af-home" href="/">All Sports Live</a></span></div>'
-      + '</div>';
+      + '</div></div>';
   }
 
   function addCss() {
@@ -77,6 +70,28 @@
     st.textContent = css;
     (document.head || document.documentElement).appendChild(st);
   }
+
+  // Flush with the bottom: the page's own bottom padding moves above the
+  // footer, and on a short page the footer drops to the bottom of the screen.
+  var feet = [];
+  function stick() {
+    feet.forEach(function (f) {
+      if (!f.isConnected) return;
+      var body = document.body;
+      if (f.parentNode === body && body.lastElementChild) {
+        var pad = parseFloat(getComputedStyle(body).paddingBottom) || 0;
+        if (pad) { f.dataset.pad = String(pad + (parseFloat(f.dataset.pad) || 0)); body.style.paddingBottom = '0px'; }
+      }
+      f.style.marginTop = '';
+      var base = parseFloat(getComputedStyle(f).marginTop) + (parseFloat(f.dataset.pad) || 0);
+      f.style.marginTop = base + 'px';
+      var room = window.innerHeight - (f.getBoundingClientRect().bottom + window.scrollY);
+      if (room > 0) f.style.marginTop = (base + room) + 'px';
+    });
+  }
+  var stickQueued = false;
+  function queueStick() { if (stickQueued) return; stickQueued = true; (window.requestAnimationFrame || setTimeout)(function () { stickQueued = false; stick(); }); }
+
   function mount(root) {
     addCss();
     var list = (root || document).querySelectorAll('[data-asl-footer]');
@@ -85,19 +100,20 @@
       list[i].innerHTML = html();
       list[i].setAttribute('data-filled', '1');
       if (!list[i].getAttribute('role')) list[i].setAttribute('role', 'contentinfo');
+      feet.push(list[i]);
     }
+    queueStick();
   }
   window.ASLFooter = { mount: mount };
 
   function start() {
     mount();
-    // pages that draw their footer later (after loading the match) get it too
+    window.addEventListener('resize', queueStick);
+    window.addEventListener('load', queueStick);
+    // the page draws its content later (after loading the match): keep the footer at the bottom
     if (window.MutationObserver && document.body) {
-      var pending = false;
       new MutationObserver(function () {
-        if (pending) return;
-        pending = true;
-        (window.requestAnimationFrame || setTimeout)(function () { pending = false; if (document.querySelector('[data-asl-footer]:not([data-filled="1"])')) mount(); });
+        if (document.querySelector('[data-asl-footer]:not([data-filled="1"])')) mount(); else queueStick();
       }).observe(document.body, { childList: true, subtree: true });
     }
   }
