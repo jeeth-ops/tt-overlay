@@ -21,13 +21,13 @@
     'footer.asl-foot .af-sweep{position:absolute;left:0;top:-1px;width:30%;height:2px;overflow:hidden;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent);animation:afSweep 7s ease-in-out infinite;transform:translateX(-100%)}',
     '@keyframes afSweep{0%{transform:translateX(-100%)}55%,100%{transform:translateX(340%)}}',
     '@media (prefers-reduced-motion:reduce){footer.asl-foot .af-sweep{display:none}}',
-    'footer.asl-foot .af-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:10px 24px}',
+    'footer.asl-foot .af-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;padding:10px 24px}',
     'footer.asl-foot .af-brand{display:flex;align-items:center;margin:3px 16px 3px 0;text-decoration:none;color:inherit;white-space:nowrap}',
     'footer.asl-foot .af-brand img{width:24px;height:24px;border-radius:7px;object-fit:cover;flex:none;margin-right:8px}',
     'footer.asl-foot .af-brand b{font-size:13px;font-weight:800;letter-spacing:-.01em}',
     'footer.asl-foot .af-brand b span{background:linear-gradient(90deg,var(--af-a),var(--af-b));-webkit-background-clip:text;background-clip:text;color:transparent}',
     'footer.asl-foot .af-brand em{font-style:normal;color:var(--af-faint);margin-left:8px;font-size:12px}',
-    'footer.asl-foot .af-sports{display:flex;flex-wrap:wrap;align-items:center;margin:3px 0}',
+    'footer.asl-foot .af-sports{display:flex;flex-wrap:wrap;align-items:center;margin:3px auto}',
     'footer.asl-foot .af-sports a{display:inline-flex;align-items:center;height:24px;padding:0 9px;margin:2px 4px 2px 0;border-radius:99px;font-size:12px;font-weight:700;text-decoration:none;color:var(--af-mute);transition:color .2s,background .2s}',
     'footer.asl-foot .af-sports a:hover{color:var(--af-ink);background:var(--af-chip-h)}',
     'footer.asl-foot .af-sports a i{font-style:normal;margin-right:5px;font-size:12px}',
@@ -36,11 +36,12 @@
     'footer.asl-foot .af-ic:hover{color:var(--af-ink);background:var(--af-chip-h);transform:translateY(-1px)}',
     'footer.asl-foot .af-ic svg{width:14px;height:14px}',
     'footer.asl-foot .af-ic.yt:hover{color:#ef4444} footer.asl-foot .af-ic.ig:hover{color:#e1306c}',
-    'footer.asl-foot .af-copy{margin-right:10px}',
-    'footer.asl-foot .af-copy:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--af-a);box-shadow:0 0 0 3px rgba(34,197,94,.16)}',
+    'footer.asl-foot .af-copy{margin:3px 14px 3px 0;font-size:11.5px;letter-spacing:.01em;color:var(--af-faint);white-space:nowrap}',
+    'footer.asl-foot .af-copy b{font-weight:700;color:var(--af-mute)}',
+    'footer.asl-foot .af-end{margin-left:0}',
     // phones: two short rows — brand + icons, then the sports and the year
     '@media (max-width:760px){footer.asl-foot .af-row{padding:8px 14px}footer.asl-foot .af-brand em{display:none}footer.asl-foot .af-sports{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto;margin:2px 0 0;scrollbar-width:none;-webkit-overflow-scrolling:touch}footer.asl-foot .af-sports::-webkit-scrollbar{display:none}footer.asl-foot .af-sports a{flex:none;padding:0 8px;font-size:11.5px;background:var(--af-chip)}footer.asl-foot .af-brand{margin:0 10px 0 0}footer.asl-foot .af-end{margin:0 0 0 auto}footer.asl-foot .af-end{margin-left:auto}footer.asl-foot .af-copy{font-size:11px}}',
-    '@media (max-width:400px){footer.asl-foot .af-copy{display:none}}',
+    '@media (max-width:760px){footer.asl-foot .af-copy{order:4;width:100%;margin:6px 0 0;padding-top:6px;border-top:1px solid var(--af-line);text-align:center;font-size:10.5px;white-space:normal}}',
     '@media print{footer.asl-foot{display:none}}'
   ].join('\n');
 
@@ -56,7 +57,8 @@
     return '<i class="af-sweep" aria-hidden="true"></i><div class="af-row">'
       + '<a class="af-brand" href="/" aria-label="All Sports Live — home"><img src="/logo.png" alt="" width="24" height="24" loading="lazy" decoding="async"><b>All Sports <span>Live</span></b><em>Live scoring &amp; broadcast graphics</em></a>'
       + '<nav class="af-sports" aria-label="Sports">' + SPORTS.map(function (s) { return '<a href="' + s[2] + '"><i aria-hidden="true">' + s[0] + '</i>' + s[1] + '</a>'; }).join('') + '</nav>'
-      + '<div class="af-end"><span class="af-copy">© ' + new Date().getFullYear() + ' All Sports Live</span>'
+      + '<small class="af-copy">© ' + new Date().getFullYear() + ' <b>All Sports Live</b>. All rights reserved.</small>'
+      + '<div class="af-end">'
       + '<a class="af-ic" href="/" title="Home" aria-label="Home">' + ICONS.home + '</a>'
       + '<a class="af-ic yt" href="https://www.youtube.com/@allsportslive" target="_blank" rel="noopener noreferrer" title="YouTube" aria-label="YouTube">' + ICONS.yt + '</a>'
       + '<a class="af-ic ig" href="https://www.instagram.com/all.sports.live" target="_blank" rel="noopener noreferrer" title="Instagram" aria-label="Instagram">' + ICONS.ig + '</a>'

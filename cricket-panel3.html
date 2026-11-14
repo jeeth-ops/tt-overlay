@@ -2575,19 +2575,137 @@
   </div>
 </div>
 
+<style id="nm-style">
+  /* ➕ CREATE NEW MATCH — a liquid-glass sheet: the two sides as cards with
+     a VS orb between them. Motion is transform / opacity only. */
+  #newmatch-modal-overlay{ background:rgba(4,7,14,.52); -webkit-backdrop-filter:blur(14px) saturate(1.2); backdrop-filter:blur(14px) saturate(1.2); }
+  #newmatch-modal-overlay.show #newmatch-modal{ animation:nmIn .45s cubic-bezier(.2,.9,.25,1.12) both; }
+  @keyframes nmIn{ from{ opacity:0; transform:translateY(16px) scale(.965); } to{ opacity:1; transform:none; } }
+  .wicket-modal.nm-modal{ position:relative; max-width:780px; width:100%; max-height:calc(100vh - 32px); overflow:auto; padding:22px 22px 18px; border-radius:26px;
+    background:linear-gradient(180deg, rgba(27,34,52,.95), rgba(14,19,31,.97)); border:1px solid rgba(255,255,255,.09);
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.07); }
+  .wicket-modal.nm-modal::before{ content:''; position:absolute; left:24px; right:24px; top:0; height:1px; background:linear-gradient(90deg, transparent, rgba(255,122,0,.75), rgba(168,85,247,.7), transparent); }
+  .nm-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .nm-kicker{ display:flex; align-items:center; gap:7px; font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; font-weight:800; color:var(--accent); }
+  .nm-kicker::before{ content:''; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px rgba(255,122,0,.16); }
+  .wicket-modal.nm-modal h3{ display:block; font-size:24px; font-weight:800; letter-spacing:-.02em; margin:6px 0 0; line-height:1.15; }
+  .nm-x{ width:36px; height:36px; border-radius:50%; padding:0; flex:none; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.05); color:var(--text);
+    font-size:13px; cursor:pointer; transition:transform .3s cubic-bezier(.34,1.56,.64,1), background .2s; }
+  .nm-x:hover{ background:rgba(255,255,255,.11); transform:rotate(90deg); }
+  .nm-sub{ font-size:12px; color:var(--text-dim); line-height:1.55; margin:8px 0 18px; }
+  .nm-sides{ display:grid; grid-template-columns:minmax(0,1fr) 46px minmax(0,1fr); align-items:stretch; }
+  .nm-side{ position:relative; display:flex; flex-direction:column; min-height:204px; border-radius:20px; padding:14px; --tc:#64748b;
+    background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.08); box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+    transition:transform .35s cubic-bezier(.34,1.56,.64,1), background .25s, border-color .25s; }
+  .nm-side:hover{ background:rgba(255,255,255,.05); }
+  .nm-side.chosen{ border-color:transparent; background:linear-gradient(160deg, rgba(255,255,255,.07), rgba(255,255,255,.025)); }
+  .nm-side.chosen::before{ content:''; position:absolute; inset:-1px; border-radius:21px; padding:1px; pointer-events:none;
+    background:linear-gradient(140deg, var(--tc), rgba(255,255,255,.12) 55%, transparent);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; }
+  .nm-side.chosen::after{ content:''; position:absolute; left:10%; right:10%; top:-30px; height:60px; border-radius:50%; background:var(--tc); opacity:.16; filter:blur(26px); pointer-events:none; }
+  .nm-side > *{ position:relative; z-index:1; }
+  .nm-side-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; min-height:18px; }
+  .nm-side-label{ font-size:10.5px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; color:var(--text-dim); }
+  .nm-link{ background:none; border:0; padding:0; color:var(--accent); font-weight:800; font-size:12px; cursor:pointer; }
+  .nm-vs{ display:flex; align-items:center; justify-content:center; }
+  .nm-vs span{ width:40px; height:40px; border-radius:50%; display:grid; place-items:center; font-weight:900; font-size:11.5px; letter-spacing:.06em; color:#fff;
+    background:linear-gradient(135deg, #ff8a1f, #f43f5e 60%, #a855f7); box-shadow:0 12px 26px -10px rgba(255,110,30,.85), inset 0 1px 0 rgba(255,255,255,.35); }
+  .nm-team{ display:flex; align-items:center; gap:12px; animation:nmPop .4s cubic-bezier(.2,.9,.25,1.12) both; }
+  @keyframes nmPop{ from{ opacity:0; transform:translateY(6px) scale(.98); } to{ opacity:1; transform:none; } }
+  .nm-badge{ width:50px; height:50px; border-radius:16px; flex:none; display:grid; place-items:center; overflow:hidden; font-weight:900; font-size:16px; letter-spacing:.02em; color:#fff;
+    background:linear-gradient(150deg, rgba(255,255,255,.24), rgba(0,0,0,.28)), var(--tc, #64748b); box-shadow:0 10px 22px -12px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.28); }
+  .nm-badge img{ width:100%; height:100%; object-fit:cover; background:#fff; }
+  .nm-team-empty .nm-badge{ background:rgba(255,255,255,.05); border:1.5px dashed rgba(255,255,255,.22); color:var(--text-dim); box-shadow:none; }
+  .nm-team-txt{ min-width:0; }
+  .nm-team-txt b{ display:block; font-size:16.5px; font-weight:800; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .nm-team-txt small{ display:block; font-size:11.5px; color:var(--text-dim); margin-top:3px; line-height:1.35; }
+  .nm-chips{ display:flex; flex-wrap:wrap; gap:5px; margin-top:12px; max-height:86px; overflow:auto; }
+  .nm-chip{ font-size:11px; font-weight:600; padding:4px 9px; border-radius:99px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.06); white-space:nowrap; }
+  .nm-chip-more{ color:var(--accent); }
+  .nm-note{ font-size:11px; color:var(--text-dim); margin-top:9px; line-height:1.4; }
+  .nm-acts{ display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; padding-top:14px; }
+  .nm-btn{ flex:1 1 auto; height:38px; padding:0 12px; border-radius:12px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.06); color:var(--text);
+    font-size:12.5px; font-weight:700; cursor:pointer; white-space:nowrap; transition:transform .28s cubic-bezier(.34,1.56,.64,1), background .2s, border-color .2s; }
+  .nm-btn:hover:not(:disabled){ background:rgba(255,255,255,.12); transform:translateY(-1px); }
+  .nm-btn:active:not(:disabled){ transform:scale(.97); }
+  .nm-btn:disabled{ opacity:.45; cursor:default; }
+  .nm-btn i{ font-style:normal; margin-left:6px; padding:1px 7px; border-radius:99px; background:rgba(255,255,255,.12); font-size:11px; }
+  .nm-btn-new{ background:linear-gradient(135deg, rgba(168,85,247,.26), rgba(59,130,246,.2)); border-color:rgba(168,85,247,.5); }
+  .nm-btn-new:hover:not(:disabled){ background:linear-gradient(135deg, rgba(168,85,247,.36), rgba(59,130,246,.28)); }
+  .nm-btn-icon{ flex:0 0 38px; padding:0; }
+  .nm-search{ display:flex; align-items:center; gap:8px; height:40px; padding:0 12px; border-radius:13px; background:rgba(0,0,0,.24); border:1px solid rgba(255,255,255,.1); transition:border-color .2s, box-shadow .2s; }
+  .nm-search:focus-within{ border-color:var(--accent); box-shadow:0 0 0 4px rgba(255,122,0,.15); }
+  .nm-search svg{ width:15px; height:15px; flex:none; color:var(--text-dim); }
+  #newmatch-modal .nm-search input{ flex:1; min-width:0; width:auto; height:auto; border:0; background:none; outline:none; color:var(--text); font-size:13px; padding:0; box-shadow:none; }
+  .nm-list{ margin-top:8px; max-height:216px; overflow:auto; display:flex; flex-direction:column; gap:3px; }
+  .nm-row{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:7px 8px; border-radius:12px; border:1px solid transparent; background:none; color:var(--text); cursor:pointer; transition:background .15s, transform .2s; }
+  .nm-row:hover:not(:disabled){ background:rgba(255,255,255,.07); }
+  .nm-row.on{ background:rgba(255,122,0,.12); border-color:rgba(255,122,0,.42); }
+  .nm-row:disabled{ opacity:.42; cursor:default; }
+  .nm-row .nm-badge{ width:34px; height:34px; border-radius:11px; font-size:11px; }
+  .nm-row-txt{ min-width:0; }
+  .nm-row-txt b{ display:block; font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .nm-row-txt small{ font-size:11px; color:var(--text-dim); }
+  .nm-none{ font-size:12px; color:var(--text-dim); padding:12px 6px; }
+  .nm-side.picking .nm-btn-new{ margin-top:10px; width:100%; flex:none; }
+  .nm-field{ position:relative; display:block; margin-top:16px; }
+  #newmatch-modal .nm-field input{ width:100%; height:52px; padding:21px 14px 7px; border-radius:15px; border:1px solid rgba(255,255,255,.1); background:rgba(0,0,0,.22);
+    color:var(--text); font-size:14px; outline:none; transition:border-color .2s, box-shadow .2s; }
+  #newmatch-modal .nm-field input:focus{ border-color:var(--accent); box-shadow:0 0 0 4px rgba(255,122,0,.15); }
+  .nm-field span{ position:absolute; left:15px; top:17px; font-size:13px; color:var(--text-dim); pointer-events:none; transition:top .2s, font-size .2s, letter-spacing .2s; }
+  .nm-field input:focus + span, .nm-field input:not(:placeholder-shown) + span{ top:8px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; font-weight:800; }
+  .nm-hint{ font-size:11.5px; color:var(--text-dim); margin:10px 2px 0; line-height:1.45; }
+  #newmatch-modal .ml-lockrow{ margin-top:12px; border-radius:16px; background:rgba(255,255,255,.03); border-color:rgba(255,255,255,.08); }
+  .nm-actions{ display:flex; gap:10px; margin-top:16px; }
+  #newmatch-modal .nm-actions button{ flex:1; height:48px; border-radius:15px; font-size:14px; font-weight:800; cursor:pointer; transition:transform .28s cubic-bezier(.34,1.56,.64,1), box-shadow .25s, background .2s; }
+  #newmatch-modal #newmatch-cancel{ background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); color:var(--text); }
+  #newmatch-modal #newmatch-cancel:hover{ background:rgba(255,255,255,.1); }
+  #newmatch-modal #newmatch-start{ border:0; color:#fff; background:linear-gradient(135deg, #ff8a1f, #ff5a36); box-shadow:0 16px 32px -14px rgba(255,110,30,.9), inset 0 1px 0 rgba(255,255,255,.3); }
+  #newmatch-modal #newmatch-start:hover:not(:disabled){ transform:translateY(-1px); box-shadow:0 20px 38px -14px rgba(255,110,30,1), inset 0 1px 0 rgba(255,255,255,.3); }
+  #newmatch-modal #newmatch-start:active:not(:disabled){ transform:scale(.98); }
+  #newmatch-modal #newmatch-start:disabled{ opacity:.7; cursor:progress; }
+  .nm-native{ position:absolute !important; width:1px !important; height:1px !important; opacity:0 !important; pointer-events:none !important; overflow:hidden; clip:rect(0 0 0 0); }
+  @media (max-width:640px){
+    .wicket-modal.nm-modal{ padding:18px 14px 14px; border-radius:22px; }
+    .wicket-modal.nm-modal h3{ font-size:20px; }
+    .nm-sides{ grid-template-columns:minmax(0,1fr); }
+    .nm-vs{ height:40px; }
+    .nm-side{ min-height:0; }
+  }
+  @media (prefers-reduced-motion:reduce){ #newmatch-modal-overlay.show #newmatch-modal, .nm-team{ animation:none; } }
+  html[data-theme="light"] #newmatch-modal-overlay{ background:rgba(15,23,42,.3); }
+  html[data-theme="light"] .wicket-modal.nm-modal{ background:linear-gradient(180deg, rgba(255,255,255,.97), rgba(245,247,251,.98)); border-color:rgba(15,23,42,.08); box-shadow:0 40px 90px -30px rgba(15,23,42,.38), inset 0 1px 0 #fff; }
+  html[data-theme="light"] .nm-x, html[data-theme="light"] .nm-btn, html[data-theme="light"] #newmatch-modal #newmatch-cancel{ background:#fff; border-color:rgba(15,23,42,.12); }
+  html[data-theme="light"] .nm-btn:hover:not(:disabled), html[data-theme="light"] .nm-x:hover, html[data-theme="light"] #newmatch-modal #newmatch-cancel:hover{ background:rgba(15,23,42,.05); }
+  html[data-theme="light"] .nm-btn i{ background:rgba(15,23,42,.08); }
+  html[data-theme="light"] .nm-btn-new{ background:linear-gradient(135deg, rgba(168,85,247,.13), rgba(59,130,246,.1)); border-color:rgba(168,85,247,.38); }
+  html[data-theme="light"] .nm-side{ background:rgba(15,23,42,.025); border-color:rgba(15,23,42,.08); box-shadow:none; }
+  html[data-theme="light"] .nm-side.chosen{ background:linear-gradient(160deg, #fff, rgba(255,255,255,.7)); border-color:transparent; }
+  html[data-theme="light"] .nm-side.chosen::before{ background:linear-gradient(140deg, var(--tc), rgba(15,23,42,.1) 55%, transparent); }
+  html[data-theme="light"] .nm-team-empty .nm-badge{ background:rgba(15,23,42,.03); border-color:rgba(15,23,42,.2); }
+  html[data-theme="light"] .nm-chip{ background:rgba(15,23,42,.05); border-color:rgba(15,23,42,.06); }
+  html[data-theme="light"] .nm-search, html[data-theme="light"] #newmatch-modal .nm-field input{ background:#fff; border-color:rgba(15,23,42,.12); }
+  html[data-theme="light"] .nm-row:hover:not(:disabled){ background:rgba(15,23,42,.05); }
+  html[data-theme="light"] #newmatch-modal .ml-lockrow{ background:rgba(15,23,42,.02); border-color:rgba(15,23,42,.08); }
+</style>
 <div class="wicket-modal-overlay" id="newmatch-modal-overlay">
-  <div class="wicket-modal wide" id="newmatch-modal">
-    <h3>➕ Create New Match</h3>
-    <div class="wm-sub" id="newmatch-sub">The saved match stays untouched. Choose the teams for the new match.</div>
-    <label>Team A</label>
-    <select id="newmatch-team-a"></select>
-    <div class="shortcut-hint" id="newmatch-preview-a" style="margin-top:6px;"></div>
-    <label style="margin-top:10px;">Team B</label>
-    <select id="newmatch-team-b"></select>
-    <div class="shortcut-hint" id="newmatch-preview-b" style="margin-top:6px;"></div>
-    <label style="margin-top:10px;">Match title (optional)</label>
-    <input type="text" id="newmatch-title" maxlength="60" placeholder="e.g. Semi Final, League Match 5" style="width:100%;">
-    <div class="shortcut-hint" id="newmatch-hint" style="margin-top:8px;"></div>
+  <div class="wicket-modal nm-modal" id="newmatch-modal" role="dialog" aria-modal="true" aria-labelledby="nm-title">
+    <div class="nm-head">
+      <div><div class="nm-kicker" id="nm-kicker">New match</div><h3 id="nm-title">Create New Match</h3></div>
+      <button type="button" class="nm-x" id="newmatch-x" aria-label="Close">✕</button>
+    </div>
+    <div class="nm-sub" id="newmatch-sub">The saved match stays untouched. Choose the teams for the new match.</div>
+    <!-- the two sides: a saved team, a team created right here (＋ Create New Team), or one typed in the panel -->
+    <div class="nm-sides">
+      <section class="nm-side" data-nm-side="a" aria-label="Team A"></section>
+      <div class="nm-vs" aria-hidden="true"><span>VS</span></div>
+      <section class="nm-side" data-nm-side="b" aria-label="Team B"></section>
+    </div>
+    <!-- what Start reads: the chosen team of each side (driven by the cards above) -->
+    <select id="newmatch-team-a" class="nm-native" tabindex="-1" aria-hidden="true"></select>
+    <select id="newmatch-team-b" class="nm-native" tabindex="-1" aria-hidden="true"></select>
+    <label class="nm-field"><input type="text" id="newmatch-title" maxlength="60" placeholder=" " autocomplete="off"><span>Match title — optional (e.g. Semi Final)</span></label>
+    <div class="nm-hint" id="newmatch-hint"></div>
     <label class="ml-lockrow" for="newmatch-lock">
       <span class="switch"><input type="checkbox" id="newmatch-lock"><span class="slider"></span></span>
       <span>🔒 Lock with a code <i style="font-style:normal;color:var(--text-dim);font-weight:500;">(optional)</i><small>Only a laptop that types this code can open and score this match.</small></span>
@@ -2597,9 +2715,9 @@
       <label class="ml-cf"><span>Type it again</span><input type="text" id="newmatch-lock-code2" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="same code"></label>
       <div class="ml-cf-hint" id="newmatch-lock-hint"></div>
     </div>
-    <div class="wm-actions" style="display:flex; gap:8px; margin-top:14px;">
-      <button type="button" class="small ghost" id="newmatch-cancel" style="flex:1;">Cancel</button>
-      <button type="button" class="small primary" id="newmatch-start" style="flex:1;">Start New Match</button>
+    <div class="nm-actions">
+      <button type="button" class="small ghost" id="newmatch-cancel">Cancel</button>
+      <button type="button" class="small primary" id="newmatch-start">Start New Match</button>
     </div>
   </div>
 </div>
@@ -22680,7 +22798,8 @@ function fillNewMatchTeamSelect(sel, other){
 async function openNewMatchModal(){
   const t = (currentMatchTournament() || state.leagueName || '').trim();
   const sub = document.getElementById('newmatch-sub');
-  sub.textContent = (t ? `Tournament: ${t}. ` : '') + 'Saved matches stay exactly as they are — nothing is deleted or overwritten. If the match on this panel has scoring, it is saved to its own tournament first (and can be resumed later); then a fresh match starts.';
+  sub.textContent = 'Saved matches stay exactly as they are — nothing is deleted or overwritten. If this panel’s match has scoring, it is saved to its tournament first (you can resume it later).';
+  document.getElementById('nm-kicker').textContent = t ? t : 'New match';
   // Teams are read from the tournament the dropdown is showing (state.leagueName),
   // which can differ from the live match's own tournament — sync THAT one.
   const readFrom = (state.leagueName || '').trim();
@@ -22690,35 +22809,139 @@ async function openNewMatchModal(){
   const b = document.getElementById('newmatch-team-b');
   fillNewMatchTeamSelect(a); fillNewMatchTeamSelect(b);
   document.getElementById('newmatch-hint').textContent = newMatchTeams.length
-    ? 'Pick a team to bring back its name, colours, logo and squad with the same player IDs — or leave "New team" and set it up yourself.'
-    : 'No teams saved in this tournament yet — both teams will be new; set them up in the panel.';
+    ? 'A saved team brings back its name, colours, logo and squad with the same player IDs. ＋ Create New Team saves a new one for every later match too.'
+    : 'No teams saved yet — ＋ Create New Team saves one (logo, colour, players), or type both teams in the panel.';
   document.getElementById('newmatch-title').value = '';
   document.getElementById('newmatch-lock').checked = false; // 🔒 the operator's choice, every time
   mlResetCodeFields('newmatch-lock');
-  renderNewMatchPreview('a'); renderNewMatchPreview('b');
+  nmPicking.a = nmPicking.b = false; nmQuery.a = nmQuery.b = '';
+  renderNewMatchSide('a'); renderNewMatchSide('b');
   document.getElementById('newmatch-modal-overlay').classList.add('show');
 }
 function closeNewMatchModal(){
   document.getElementById('newmatch-modal-overlay').classList.remove('show');
 }
 
-// Read-only roster preview of the team picked for a side (names only — the
-// permanent player ids are kept internally, never shown to the operator).
-function renderNewMatchPreview(sideLower){
-  const sel = document.getElementById('newmatch-team-' + sideLower);
-  const box = document.getElementById('newmatch-preview-' + sideLower);
-  if(!sel || !box) return;
-  const t = sel.value ? newMatchTeams.find(x => x.key === sel.value) : null;
-  if(!t){ box.innerHTML = ''; return; }
-  const names = list => list.map(p => escapeHtmlPanel(p.name)).join(', ') || '—';
-  const xi = t.players.filter(p => p.isXI !== false), bench = t.players.filter(p => p.isXI === false);
-  box.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${t.logoUrl ? `<img src="${escapeHtmlAttr(t.logoUrl)}" alt="" style="width:26px;height:26px;border-radius:6px;object-fit:cover;">` : ''}<b>${escapeHtmlPanel(t.name)}</b></div>`
-    + `<div><b>Playing XI (${xi.length}):</b> ${names(xi)}</div>`
-    + (bench.length ? `<div><b>Squad (${bench.length}):</b> ${names(bench)}</div>` : '')
-    + `<div style="opacity:.75;">Changes you make for this match apply to this match only.</div>`;
+/* ---- ➕ Create New Match: the two sides as cards ----
+   Each side is a saved team (searchable list), a team created right here
+   with ＋ Create New Team (the same editor as Schedule Upcoming Match — it
+   is saved to the account's teams with permanent player ids), or left as a
+   new team typed in the panel. The hidden selects stay what Start reads. */
+const nmPicking = { a: false, b: false };
+const nmQuery = { a: '', b: '' };
+const NM_SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>';
+function nmTeamOf(s){
+  const sel = document.getElementById('newmatch-team-' + s);
+  return sel && sel.value ? (newMatchTeams.find(x => x.key === sel.value) || null) : null;
 }
-document.getElementById('newmatch-team-a').addEventListener('change', () => renderNewMatchPreview('a'));
-document.getElementById('newmatch-team-b').addEventListener('change', () => renderNewMatchPreview('b'));
+function nmInitials(name){
+  const w = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return (w.length > 1 ? w[0][0] + w[1][0] : String(name || '?').slice(0, 2)).toUpperCase();
+}
+function nmColorOf(t){ return t && t.color ? umColor(t.color, '') : ''; }
+function nmBadge(t, letter){
+  const c = nmColorOf(t), logo = t ? umSafeLogo(t.logoUrl) : '';
+  return `<span class="nm-badge"${c ? ` style="--tc:${escapeHtmlAttr(c)}"` : ''}>${logo ? `<img src="${escapeHtmlAttr(logo)}" alt="">` : escapeHtmlPanel(t ? nmInitials(t.name) : letter)}</span>`;
+}
+function renderNewMatchPreview(s){ renderNewMatchSide(s); }
+function renderNewMatchSide(s){
+  const box = document.querySelector(`#newmatch-modal [data-nm-side="${s}"]`);
+  if(!box) return;
+  const S = s.toUpperCase();
+  const t = nmTeamOf(s);
+  const head = `<div class="nm-side-head"><span class="nm-side-label">Team ${S}</span>${nmPicking[s] ? `<button type="button" class="nm-link" data-nm-back="${s}">Done</button>` : ''}</div>`;
+  box.classList.toggle('picking', !!nmPicking[s]);
+  box.classList.toggle('chosen', !!t && !nmPicking[s]);
+  box.style.setProperty('--tc', nmColorOf(t) || '#ff7a00');
+  if(nmPicking[s]){
+    box.innerHTML = head + `<label class="nm-search">${NM_SEARCH_ICON}<input type="search" data-nm-search="${s}" placeholder="Search ${newMatchTeams.length} saved team${newMatchTeams.length === 1 ? '' : 's'}" value="${escapeHtmlAttr(nmQuery[s])}" autocomplete="off" spellcheck="false"></label>`
+      + `<div class="nm-list" data-nm-list="${s}"></div>`
+      + `<button type="button" class="nm-btn nm-btn-new" data-nm-new="${s}">＋ Create New Team</button>`;
+    renderNewMatchList(s);
+    setTimeout(() => { const i = box.querySelector('[data-nm-search]'); if(i) try{ i.focus(); }catch(e){} }, 0);
+    return;
+  }
+  if(!t){
+    const n = newMatchTeams.length;
+    box.innerHTML = head + `<div class="nm-team nm-team-empty">${nmBadge(null, S)}<div class="nm-team-txt"><b>New team</b><small>Type its name and players in the panel — or pick / create one</small></div></div>`
+      + `<div class="nm-acts"><button type="button" class="nm-btn" data-nm-pick="${s}"${n ? '' : ' disabled'}>${n ? `Choose saved team<i>${n}</i>` : 'No saved teams yet'}</button>`
+      + `<button type="button" class="nm-btn nm-btn-new" data-nm-new="${s}">＋ Create New Team</button></div>`;
+    return;
+  }
+  const xi = t.players.filter(p => p.isXI !== false), bench = t.players.filter(p => p.isXI === false);
+  const meta = [t.short, t.players.length + ' player' + (t.players.length === 1 ? '' : 's'), t.saved ? 'Saved team' : (t.created ? 'This match only — sign in to save teams' : 'From this tournament')].filter(Boolean);
+  box.innerHTML = head + `<div class="nm-team">${nmBadge(t, S)}<div class="nm-team-txt"><b>${escapeHtmlPanel(t.name)}</b><small>${meta.map(escapeHtmlPanel).join(' · ')}</small></div></div>`
+    + (t.players.length
+      ? `<div class="nm-chips">${xi.slice(0, 11).map(p => `<span class="nm-chip">${escapeHtmlPanel(p.name)}</span>`).join('')}${xi.length > 11 ? `<span class="nm-chip nm-chip-more">+${xi.length - 11}</span>` : ''}${bench.length ? `<span class="nm-chip nm-chip-more">+${bench.length} squad</span>` : ''}</div>`
+      : `<div class="nm-note">No players yet — add them with Edit team, or in the panel.</div>`)
+    + `<div class="nm-acts"><button type="button" class="nm-btn" data-nm-pick="${s}">Change</button><button type="button" class="nm-btn" data-nm-edit="${s}">Edit team</button>`
+    + `<button type="button" class="nm-btn nm-btn-icon" data-nm-clear="${s}" title="Back to a new team" aria-label="Back to a new team">✕</button></div>`;
+}
+function renderNewMatchList(s){
+  const list = document.querySelector(`#newmatch-modal [data-nm-list="${s}"]`);
+  if(!list) return;
+  const o = s === 'a' ? 'b' : 'a';
+  const otherKey = document.getElementById('newmatch-team-' + o).value;
+  const cur = document.getElementById('newmatch-team-' + s).value;
+  const q = nmQuery[s].trim().toLowerCase();
+  const rows = newMatchTeams.filter(t => !q || t.name.toLowerCase().includes(q) || String(t.short || '').toLowerCase().includes(q));
+  list.innerHTML = rows.length
+    ? rows.map(t => {
+        const taken = t.key === otherKey;
+        return `<button type="button" class="nm-row${t.key === cur ? ' on' : ''}" data-nm-select="${escapeHtmlAttr(t.key)}"${taken ? ` disabled title="Already Team ${o.toUpperCase()}"` : ''}>${nmBadge(t, '')}<span class="nm-row-txt"><b>${escapeHtmlPanel(t.name)}</b><small>${t.players.length} player${t.players.length === 1 ? '' : 's'}${taken ? ' · Team ' + o.toUpperCase() : (t.saved ? ' · saved' : '')}</small></span></button>`;
+      }).join('')
+    : `<div class="nm-none">No team called “${escapeHtmlPanel(nmQuery[s].trim())}” — create it below.</div>`;
+}
+function nmSetTeam(s, key){
+  const sel = document.getElementById('newmatch-team-' + s);
+  sel.value = key || '';
+  nmPicking[s] = false; nmQuery[s] = '';
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  renderNewMatchSide(s === 'a' ? 'b' : 'a');
+}
+// A team created (or edited) from this sheet — saved like any other team —
+// is added to the list and put on its side at once.
+function nmAdoptTeam(s, team){
+  const key = teamKeyOf(team && team.name);
+  if(!key) return;
+  const entry = { ...team, key, saved: !!team.teamId && team.saved !== false, created: true, players: (team.players || []).map(p => ({ ...p })) };
+  newMatchTeams = newMatchTeams.filter(x => x.key !== key).concat([entry]).sort((a, b) => a.name.localeCompare(b.name));
+  ['a', 'b'].forEach(x => { const sel = document.getElementById('newmatch-team-' + x); const v = sel.value; fillNewMatchTeamSelect(sel); sel.value = v; });
+  nmSetTeam(s, key);
+}
+function nmOpenEditor(s, base){
+  const o = nmTeamOf(s === 'a' ? 'b' : 'a');
+  openTeamEditor(s.toUpperCase(), base, { onSave: team => nmAdoptTeam(s, team), usedColors: [nmColorOf(o)].filter(Boolean) });
+}
+document.getElementById('newmatch-team-a').addEventListener('change', () => renderNewMatchSide('a'));
+document.getElementById('newmatch-team-b').addEventListener('change', () => renderNewMatchSide('b'));
+(function wireNewMatchSheet(){
+  const m = document.getElementById('newmatch-modal');
+  m.addEventListener('click', e => {
+    const at = a => e.target.closest('[' + a + ']');
+    let b;
+    if((b = at('data-nm-pick')) && !b.disabled){ const s = b.getAttribute('data-nm-pick'); nmPicking[s] = true; nmQuery[s] = ''; renderNewMatchSide(s); return; }
+    if((b = at('data-nm-back'))){ const s = b.getAttribute('data-nm-back'); nmPicking[s] = false; nmQuery[s] = ''; renderNewMatchSide(s); return; }
+    if((b = at('data-nm-select')) && !b.disabled){ nmSetTeam(b.closest('[data-nm-side]').getAttribute('data-nm-side'), b.getAttribute('data-nm-select')); return; }
+    if((b = at('data-nm-new'))){ nmOpenEditor(b.getAttribute('data-nm-new'), null); return; }
+    if((b = at('data-nm-edit'))){ const s = b.getAttribute('data-nm-edit'); nmOpenEditor(s, nmTeamOf(s)); return; }
+    if((b = at('data-nm-clear'))){ nmSetTeam(b.getAttribute('data-nm-clear'), ''); }
+  });
+  m.addEventListener('input', e => {
+    const i = e.target.closest('[data-nm-search]');
+    if(!i) return;
+    const s = i.getAttribute('data-nm-search');
+    nmQuery[s] = i.value; renderNewMatchList(s);
+  });
+  m.addEventListener('keydown', e => {
+    const i = e.target.closest('[data-nm-search]');
+    if(!i) return;
+    const s = i.getAttribute('data-nm-search');
+    if(e.key === 'Enter'){ e.preventDefault(); const first = m.querySelector(`[data-nm-list="${s}"] .nm-row:not(:disabled)`); if(first) nmSetTeam(s, first.getAttribute('data-nm-select')); }
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); nmPicking[s] = false; nmQuery[s] = ''; renderNewMatchSide(s); }
+  });
+  document.getElementById('newmatch-x').addEventListener('click', () => closeNewMatchModal());
+})();
 
 // Step 1 (async, touches NOTHING on the panel): resolve the picked team's
 // canonical roster. Saved ids are kept as-is; only players that have no saved
@@ -24569,8 +24792,8 @@ async function saveUpcomingMatch(){
 let teEdit = null;   // { side, teamId, name, short, color, logoUrl, players:[{ id, name, isXI, saved }], captainId, wkId }
 let teSuggestTimer = null;
 let teSuggestions = [];
-function openTeamEditor(side, base){
-  const usedColors = ['A', 'B'].map(s => umSides[s] && umColor(umSides[s].color)).filter(Boolean);
+function openTeamEditor(side, base, opts){
+  const usedColors = (opts && opts.usedColors) || ['A', 'B'].map(s => umSides[s] && umColor(umSides[s].color)).filter(Boolean);
   teEdit = base ? {
     side, teamId: base.teamId || null, name: base.name || '', short: base.short || '',
     color: umColor(base.color, UM_COLORS[0]), logoUrl: umSafeLogo(base.logoUrl),
@@ -24580,6 +24803,7 @@ function openTeamEditor(side, base){
     side, teamId: null, name: '', short: '', color: UM_COLORS.find(c => !usedColors.includes(c)) || UM_COLORS[0],
     logoUrl: '', players: [], captainId: null, wkId: null
   };
+  teEdit.onSave = (opts && opts.onSave) || null;   // Create New Match: the team goes on its side there
   umEl('te-kicker').textContent = `Team ${side}`;
   umEl('te-title').textContent = base ? 'Edit Team' : 'Create New Team';
   umEl('te-name').value = teEdit.name;
@@ -24589,6 +24813,11 @@ function openTeamEditor(side, base){
   renderTeamEditor();
   umEl('te-overlay').classList.add('show');
   setTimeout(() => { try{ umEl(base ? 'te-player-input' : 'te-name').focus(); }catch(e){} }, 0);
+}
+// a saved (or not-signed-in, match-only) team goes to whoever opened the editor
+function teAdopt(side, team){
+  const cb = teEdit && teEdit.onSave;
+  if(cb) cb(team); else umAdoptTeam(side, team);
 }
 function closeTeamEditor(){
   const o = umEl('te-overlay');
@@ -24711,7 +24940,7 @@ async function saveTeamEditor(){
   if(!currentOwnerUid()){
     // Not signed in: nothing can be saved to the account — the team is used
     // for this fixture only (with local player ids), and says so.
-    umAdoptTeam(side, { ...payload, teamId: null, saved: false, players: payload.players.map(p => ({ ...p, id: p.id || genPlayerId() })) });
+    teAdopt(side, { ...payload, teamId: null, saved: false, players: payload.players.map(p => ({ ...p, id: p.id || genPlayerId() })) });
     closeTeamEditor();
     toast('⚠️ Not signed in — this team is used for this match only and is not saved to your teams');
     return;
@@ -24727,7 +24956,7 @@ async function saveTeamEditor(){
     if(res.status === 409 && data && data.team){
       const existing = data.team;
       umEl('te-msg').innerHTML = `${escapeHtmlPanel(data.error || 'That team already exists')} <button type="button" class="small" id="te-use-existing">Use ${escapeHtmlPanel(existing.name)}</button>`;
-      umEl('te-use-existing').addEventListener('click', () => { umAdoptTeam(side, existing); closeTeamEditor(); });
+      umEl('te-use-existing').addEventListener('click', () => { teAdopt(side, existing); closeTeamEditor(); });
       return;
     }
     if(!res.ok || !data || !data.success || !data.team){
@@ -24736,7 +24965,7 @@ async function saveTeamEditor(){
         : `⚠️ ${(data && data.error) || 'Could not save the team'} — try again`;
       return;
     }
-    umAdoptTeam(side, data.team);
+    teAdopt(side, data.team);
     closeTeamEditor();
     toast(`✅ ${data.team.name} saved — it is now under Existing Teams for every match`);
   }catch(e){
