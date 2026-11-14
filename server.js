@@ -2427,10 +2427,11 @@ app.get('/api/leagues', requireAuthorizedCreator, async (req, res) => {
     if (!leaguesCollection) return res.json({ success: true, leagues: [] });
     try {
         const docs = await leaguesCollection.find({ ownerUid, leagueKey: { $ne: SINGLE_MATCHES_LEAGUE_KEY } })
-            .project({ leagueKey: 1, displayName: 1, updatedAt: 1 })
+            .project({ leagueKey: 1, displayName: 1, updatedAt: 1, completed: 1 })
             .sort({ updatedAt: -1 })
             .toArray();
-        const leagues = docs.map(d => ({ leagueKey: d.leagueKey, displayName: d.displayName || d.leagueKey }));
+        // latest first, with when each last changed and whether it is completed (the panel's list shows both)
+        const leagues = docs.map(d => ({ leagueKey: d.leagueKey, displayName: d.displayName || d.leagueKey, updatedAt: d.updatedAt || null, completed: !!d.completed }));
         res.json({ success: true, leagues });
     } catch (err) {
         console.log('Leagues list error:', err);

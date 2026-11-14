@@ -2651,6 +2651,8 @@
   }
 </style>
 <!-- interaction layer: how things move, never how they look at rest (shared with the other panel, nothing else is) -->
+<!-- 🔽 every dropdown of the panel: a glass list in the panel's style (the <select>s stay as they are) -->
+<script src="/cricket-select.js?v=1"></script>
 <link rel="stylesheet" href="/cricket-motion.css?v=2">
 </head>
 <body>
@@ -14168,6 +14170,31 @@ document.getElementById('tournament-select').addEventListener('mousedown', () =>
   // seconds ago and this device hasn't picked it up yet.
   syncKnownTournamentsFromServer();
 });
+// 🔄 The tournament list keeps itself current: when it opens (it fills in
+// while open, with a line at its foot saying so), when this window comes
+// back to the front, every minute while the panel is in view, and when
+// another tab of this browser changes it.
+(function(){
+  const sel = document.getElementById('tournament-select');
+  const say = (text, busy) => { if(window.CricketSelect) CricketSelect.status(sel, text, busy); };
+  sel.addEventListener('lqs-open', async () => {
+    if(!currentOwnerUid()){ say('Sign in to see your tournaments from every laptop'); return; }
+    say('Checking for new tournaments…', true);
+    const ok = await syncKnownTournamentsFromServer();
+    const n = getKnownTournaments().length;
+    say(ok ? `✓ Up to date · ${n} tournament${n === 1 ? '' : 's'}` : 'Offline — showing the tournaments saved on this laptop');
+  });
+  let last = 0;
+  const soon = () => {
+    if(document.hidden || !currentOwnerUid() || Date.now() - last < 4000) return;
+    last = Date.now();
+    syncKnownTournamentsFromServer();
+  };
+  window.addEventListener('focus', soon);
+  document.addEventListener('visibilitychange', soon);
+  setInterval(() => { if(!document.hidden && currentOwnerUid()) syncKnownTournamentsFromServer(); }, 60000);
+  window.addEventListener('storage', (e) => { if(e.key === knownTournamentsStorageKey()){ populateTournamentDropdown(); soon(); } });
+})();
 document.getElementById('tournament-select').addEventListener('change', (e) => {
   const val = e.target.value;
   const newWrap = document.getElementById('new-tournament-wrap');
@@ -14789,6 +14816,10 @@ function knownTournamentsStorageKey(){
 // fell back to "— Select tournament —". The in-memory copy always has it.
 const knownTournamentsMem = {}; // storage key -> names added/seen this session
 const knownTournamentsRemoved = {}; // storage key -> lower-case names removed this session
+// 🔄 The account's tournaments as the server last listed them (latest first),
+// and what it said about each (when it last changed, completed or not).
+const knownTournamentsServer = {}; // storage key -> names
+const knownTournamentsMeta = {};   // storage key -> { name key -> { updatedAt, completed } }
 function knownTournamentsMemList(){
   const k = knownTournamentsStorageKey();
   return knownTournamentsMem[k] || (knownTournamentsMem[k] = []);
@@ -14800,10 +14831,21 @@ function getKnownTournaments(){
     const parsed = raw ? JSON.parse(raw) : [];
     if(Array.isArray(parsed)) list = parsed.filter(n => typeof n === 'string' && n.trim());
   }catch(e){ list = []; }
-  const removed = knownTournamentsRemoved[knownTournamentsStorageKey()] || {};
+  const k = knownTournamentsStorageKey();
+  // Once the server has answered, its list IS this account's tournaments:
+  // one made on another laptop is there, one deleted there is gone. Beside
+  // it stays only what this laptop added this session and the server does
+  // not have yet. (Offline, the list saved on this laptop is used as before.)
+  const srv = knownTournamentsServer[k];
+  if(srv){
+    const mine = new Set(knownTournamentsMemList().map(n => teamKeyOf(n)));
+    list = srv.concat(list.filter(n => mine.has(teamKeyOf(n))));
+  }
+  const removed = knownTournamentsRemoved[k] || {};
   list = list.filter(n => !removed[teamKeyOf(n)]);
   knownTournamentsMemList().forEach(n => { if(!list.some(x => teamKeyOf(x) === teamKeyOf(n))) list.push(n); });
-  return list;
+  const seen = new Set();
+  return list.filter(n => { const key = teamKeyOf(n); if(seen.has(key)) return false; seen.add(key); return true; });
 }
 function rememberKnownTournament(name){
   const trimmed = (name || '').trim();
@@ -14830,14 +14872,43 @@ function removeKnownTournament(name){
   try{ localStorage.setItem(k, JSON.stringify(list)); }catch(e){}
   populateTournamentDropdown();
 }
+// The line under a tournament's name in the list: completed, and when it last changed.
+const TOURNAMENT_BADGE_COLOURS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#14b8a6'];
+function tournamentOptionLine(name){
+  const m = (knownTournamentsMeta[knownTournamentsStorageKey()] || {})[teamKeyOf(name)];
+  if(!m) return '';
+  const bits = [];
+  if(m.completed) bits.push('🏁 Completed');
+  const t = m.updatedAt ? new Date(m.updatedAt) : null;
+  if(t && !isNaN(t)){
+    const day = (d) => Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 864e5);
+    const ago = day(new Date()) - day(t);
+    bits.push(ago <= 0 ? 'Updated today' : ago === 1 ? 'Updated yesterday' : ago < 7 ? `Updated ${ago} days ago`
+      : `Updated ${t.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })}`);
+  }
+  return bits.join(' · ');
+}
+function tournamentBadgeOf(name){
+  const words = String(name).trim().split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w));
+  const ini = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || '?').slice(0, 2)).toUpperCase();
+  let h = 0; for(const c of teamKeyOf(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return { ini, colour: TOURNAMENT_BADGE_COLOURS[h % TOURNAMENT_BADGE_COLOURS.length] };
+}
 function populateTournamentDropdown(){
   const sel = document.getElementById('tournament-select');
   if(!sel) return;
   const current = sel.value;
   const names = getKnownTournaments();
-  sel.innerHTML = '<option value="">— Select tournament —</option>'
-    + names.map(n => `<option value="${escapeHtmlPanel(n)}">${escapeHtmlPanel(n)}</option>`).join('')
+  const html = '<option value="">— Select tournament —</option>'
+    + names.map(n => {
+      const b = tournamentBadgeOf(n), line = tournamentOptionLine(n);
+      return `<option value="${escapeHtmlPanel(n)}" data-badge="${escapeHtmlPanel(b.ini)}" data-badge-color="${b.colour}"${line ? ` data-sub="${escapeHtmlPanel(line)}"` : ''}>${escapeHtmlPanel(n)}</option>`;
+    }).join('')
     + '<option value="__new__">+ New Tournament…</option>';
+  // the same list again: leave it be (an open list does not flicker, the choice stays)
+  if(sel._tournamentHtml === html && sel.options.length) return;
+  sel._tournamentHtml = html;
+  sel.innerHTML = html;
   if(current === '__new__' || names.some(n => n.toLowerCase() === current.toLowerCase())){
     sel.value = current;
   }
@@ -14850,28 +14921,35 @@ function populateTournamentDropdown(){
 // existed on the server — the operator had to retype the exact name from
 // memory and hope it matched. Best-effort: offline/not-signed-in just
 // leaves the existing local list untouched.
-async function syncKnownTournamentsFromServer(){
-  if(!currentOwnerUid()) return;
-  try{
-    const res = await fetch(withUid('/api/leagues'));
-    const data = await res.json();
-    if(!data || !data.success || !Array.isArray(data.leagues)) return;
-    const list = getKnownTournaments();
-    let changed = false;
-    data.leagues.forEach(l => {
-      const name = (l.displayName || l.leagueKey || '').trim();
-      if(!name) return;
-      if(!list.some(n => n.toLowerCase() === name.toLowerCase())){
-        list.push(name);
-        rememberKnownTournament(name);
-        changed = true;
-      }
-    });
-    if(changed){
-      try{ localStorage.setItem(knownTournamentsStorageKey(), JSON.stringify(list)); }catch(e){}
+let knownTournamentsSyncing = null;
+function syncKnownTournamentsFromServer(){
+  if(!currentOwnerUid()) return Promise.resolve(false);
+  if(knownTournamentsSyncing) return knownTournamentsSyncing;
+  const k = knownTournamentsStorageKey();
+  knownTournamentsSyncing = (async () => {
+    try{
+      const res = await fetch(withUid('/api/leagues'), { cache: 'no-store' });
+      const data = await res.json();
+      if(!data || !data.success || !Array.isArray(data.leagues)) return false;
+      const names = [], meta = {};
+      data.leagues.forEach(l => {
+        const name = (l.displayName || l.leagueKey || '').trim();
+        if(!name || meta[teamKeyOf(name)]) return;
+        names.push(name);
+        meta[teamKeyOf(name)] = { updatedAt: l.updatedAt || null, completed: !!l.completed };
+      });
+      knownTournamentsServer[k] = names;
+      knownTournamentsMeta[k] = meta;
+      // a tournament deleted here and now gone from the server too may come back if it is made again
+      const removed = knownTournamentsRemoved[k];
+      if(removed) Object.keys(removed).forEach(key => { if(!meta[key]) delete removed[key]; });
+      try{ localStorage.setItem(k, JSON.stringify(getKnownTournaments())); }catch(e){}
       populateTournamentDropdown();
-    }
-  }catch(e){ /* offline/Mongo-not-configured — dropdown just keeps showing the local list */ }
+      return true;
+    }catch(e){ return false; /* offline/Mongo-not-configured — the dropdown keeps the list it has */ }
+    finally{ knownTournamentsSyncing = null; }
+  })();
+  return knownTournamentsSyncing;
 }
 
 const leagueCache = {}; // leagueKey -> matches[], refreshed from the server
