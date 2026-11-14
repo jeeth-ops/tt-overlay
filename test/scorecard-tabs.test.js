@@ -19,6 +19,10 @@
 //     the chase (target, need, balls left, required rate), runs per over,
 //     progression, where the runs came from, top performers, partnerships,
 //     fall of wickets, key moments — and an innings comparison
+//   • Insights: key moments, momentum, fall of wickets & partnerships,
+//     bowling spells, how the wickets fell (live and saved deliveries both),
+//     a read-out per over, a share button per tile, and the team / innings
+//     control narrowing every chart to the innings picked
 //   • MVP: the points and the real figures, never the sum behind the points
 //   • Clips: the match's public clips (the same list the Highlights card
 //     loads — no second request) by innings / team / category / player /
@@ -389,6 +393,16 @@ async function pixelDiff(page, a, b) {
     ok(new RegExp(`Boundaries ${fours + sixes} ${fours} fours · ${sixes} sixes`, 'i').test(ins), `Insights: ${fours + sixes} boundaries (${fours} fours, ${sixes} sixes) — counted from the deliveries`);
     ok((await page.$$('#sct-p-insights svg polyline')).length === 2 && /RR 12\.00/.test(ins) && /RR 13\.76/.test(ins), 'Insights: run-rate comparison for both innings (worm, RR 12.00 v 13.76)');
     ok(/Scoring breakdown/.test(ins) && /Batting analysis/.test(ins) && /Bowling analysis/.test(ins) && /Phases/.test(ins), 'Insights: scoring breakdown, phases, batting and bowling analysis');
+    const insTitles = await page.$$eval('#sct-p-insights .sci-card .sci-tt', (e) => e.map((x) => x.textContent));
+    ok(['Key moments', 'Run-rate comparison', 'Runs in each over', 'Momentum', 'Fall of wickets & partnerships', 'Bowling spells', 'How the wickets fell'].every((t) => insTitles.includes(t)), 'Insights: key moments, momentum, fall of wickets & partnerships, bowling spells, how the wickets fell', insTitles);
+    ok(/^3 wickets Caught 1 33% Bowled 1 33% LBW 1 33% Most in the field: Shivam Dube \(1\)/i.test(await txt(page, '#sct-p-insights .sci-dis')), 'Insights: how the wickets fell — caught, bowled, lbw, from the deliveries', await txt(page, '#sct-p-insights .sci-dis'));
+    ok((await page.$$('#sct-p-insights svg[aria-label="Runs in each over"] .sci-hit[data-tip]')).length === 3 && (await page.$$('#sct-p-insights .sci-tile .sci-share')).length === 4, 'Insights: each over reads out its detail on hover / tap; each tile can be shared as a picture');
+    await page.click('#sct-p-insights [data-sci-team="B"]');
+    await page.waitForTimeout(250);
+    ok((await page.$$('#sct-p-insights svg polyline')).length === 1 && JSON.stringify(await page.$$eval('#sct-p-insights [data-sci-inn]:disabled', (e) => e.map((x) => x.dataset.sciInn))) === '["1"]', 'Insights: one team picked → its innings alone (one run-rate line; the other side\'s innings not offered)');
+    await page.click('#sct-p-insights [data-sci-team=""]');
+    await page.waitForTimeout(250);
+    ok((await page.$$('#sct-p-insights svg polyline')).length === 2, 'Insights: both teams again → both innings');
     await page.screenshot({ path: path.join(OUT, `${mode.split(' ')[0]}-insights.png`), fullPage: true });
 
     await tab(page, 'mvp');
