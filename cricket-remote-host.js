@@ -430,14 +430,9 @@
     const L = [];
     const vis = $('visible-toggle');
     if(vis && vis.checked) L.push({ id: 'scorebug', label: 'Scorecard (score bug)', act: secAct('scorebug', vis, 'set', false) });
+    // each Broadcast Graphics tile takes its own graphic off again
     document.querySelectorAll('#card-broadcast-graphics .bcg-btn.on').forEach(b => {
-      let off = b;
-      const visible = (el) => el && shownUpTo(el, $('card-broadcast-graphics'));
-      if(b.id === 'bcg-toss-btn' && visible($('bcg-toss-hide'))) off = $('bcg-toss-hide');
-      if((b.id === 'bcg-bat-btn' || b.id === 'bcg-bowl-btn') && visible($('bcg-card-hide'))) off = $('bcg-card-hide');
-      if(b.id === 'bcg-xi-btn' && visible($('bcg-xi-stop'))) off = $('bcg-xi-stop');
-      if(b.id === 'bcg-intro-btn' && visible($('bcg-intro-stop'))) off = $('bcg-intro-stop');
-      L.push({ id: b.id, label: textOf(b.querySelector('b') || b), act: secAct('bcg', off, 'click') });
+      L.push({ id: b.id, label: textOf(b.querySelector('b') || b), act: secAct('bcg', b, 'click') });
     });
     const toggles = [['player-stat-toggle', 'Player stat card', 'player'], ['bowler-stat-toggle', 'Bowler stat card', 'bowler'], ['team-stat-toggle', 'Team stats card', 'team']];
     toggles.forEach(([id, label]) => { const t = $(id); if(t && t.checked) L.push({ id, label, act: secAct('statcards', t, 'set', false) }); });
@@ -767,8 +762,8 @@
   // A Broadcast Graphics start / stop is answered by the server: wait for
   // that answer, and when the panel says why nothing went on air ("no
   // Playing XI yet", "no toss result yet", …) the phone gets that reason.
-  const BCG_ACTIONS = new Set(['bcg-xi-btn', 'bcg-toss-btn', 'bcg-intro-btn', 'bcg-bat-btn', 'bcg-bowl-btn', 'bcg-toss-show', 'bcg-toss-hide',
-    'bcg-xi-stop', 'bcg-xi-skip', 'bcg-intro-stop', 'bcg-card-hide', 'show-toss-btn', 'hide-toss-btn']);
+  const BCG_ACTIONS = new Set(['bcg-xi-btn', 'bcg-toss-btn', 'bcg-intro-btn', 'bcg-bat-btn', 'bcg-bowl-btn',
+    'bcg-xi-skip', 'show-toss-btn', 'hide-toss-btn']);
   async function bcgAct(el, fn){
     const c = safe(() => bcgInit(), null);
     if(!c) return fn();
@@ -797,15 +792,6 @@
     const ex = secExclude(sec);
     for(let n = el; n && n !== root.parentElement; n = n.parentElement) if(ex.has(n)) return fail('bad-request', 'That control stays on the laptop.');
     if(cmd.sig && sigOf(el) !== cmd.sig) return fail('stale', 'The screen changed — try again.');
-    // TOSS on the phone is one tap: the laptop's tile only opens its options,
-    // so the phone presses Show Toss (or Hide Toss when it is on air) too.
-    if(el.id === 'bcg-toss-btn' && cmd.op === 'click'){
-      if(el.classList.contains('on')) return bcgAct($('bcg-toss-hide'), () => press($('bcg-toss-hide')));
-      return bcgAct($('bcg-toss-show'), () => {
-        if($('bcg-toss-ctx') && $('bcg-toss-ctx').hidden) el.click();
-        return press($('bcg-toss-show'));
-      });
-    }
     if(el.closest('#card-broadcast-graphics') || BCG_ACTIONS.has(el.id)) return bcgAct(el, () => applyOp(el, cmd));
     return applyOp(el, cmd);
   }

@@ -2380,6 +2380,203 @@
   html[data-theme="light"] .bcg-result.warn, html[data-theme="light"] .bcg-msg{ color:#92400e; }
   html[data-theme="light"] .bcg-msg.bad{ color:#b91c1c; }
 </style>
+<style id="bcg-liquid">
+  /* 🎬 BROADCAST GRAPHICS — liquid glass. Only how the card looks: the
+     markup, ids and states (.on / .open / .busy, aria-checked, [hidden]) are
+     the ones the script above drives. Red is still "on air". */
+  #card-broadcast-graphics{
+    --g-bg:linear-gradient(160deg, rgba(31,40,64,.78), rgba(14,19,33,.86));
+    --g-tile:rgba(255,255,255,.04); --g-tile-top:rgba(255,255,255,.075); --g-tile-h:rgba(255,255,255,.1);
+    --g-inset:rgba(6,9,18,.32); --g-track:rgba(0,0,0,.3); --g-line:rgba(255,255,255,.085); --g-line-h:rgba(255,255,255,.16);
+    --g-hi:rgba(255,255,255,.1); --g-shadow:0 28px 56px -34px rgba(0,0,0,.85); --g-tile-shadow:0 10px 24px -16px rgba(0,0,0,.7);
+    --g-thumb:linear-gradient(180deg,#ffa04a,#ff7a00); --g-thumb-ink:#1b0e00; --g-on:#ef4444; --g-on-ink:#fecaca;
+    position:relative; isolation:isolate; overflow:hidden;
+    padding:18px 18px 16px; border-radius:22px;
+    border:1px solid var(--g-line); border-left:1px solid var(--g-line);
+    background:
+      radial-gradient(120% 90% at 0% 0%, rgba(239,68,68,.11), transparent 46%),
+      radial-gradient(90% 80% at 100% 0%, rgba(99,102,241,.12), transparent 52%),
+      radial-gradient(80% 70% at 60% 100%, rgba(255,122,0,.06), transparent 60%),
+      var(--g-bg);
+    box-shadow:inset 0 1px 0 var(--g-hi), var(--g-shadow);
+    -webkit-backdrop-filter:blur(20px) saturate(160%); backdrop-filter:blur(20px) saturate(160%);
+    transition:box-shadow .5s ease, border-color .5s ease;
+  }
+  /* the tally light: a soft red strip down the left edge, lit while on air */
+  #card-broadcast-graphics::before{
+    content:''; position:absolute; left:0; top:18px; bottom:18px; width:3px; border-radius:0 3px 3px 0;
+    background:linear-gradient(180deg,#f87171,#ef4444 50%,#ff7a00); opacity:.45; transition:opacity .4s, box-shadow .4s;
+  }
+  #card-broadcast-graphics:has(.bcg-air.on){ border-color:rgba(239,68,68,.38); box-shadow:inset 0 1px 0 var(--g-hi), 0 0 0 1px rgba(239,68,68,.16), 0 30px 60px -34px rgba(239,68,68,.55); }
+  #card-broadcast-graphics:has(.bcg-air.on)::before{ opacity:1; box-shadow:0 0 16px 2px rgba(239,68,68,.55); }
+  #card-broadcast-graphics [hidden]{ display:none !important; }
+
+  /* header */
+  #card-broadcast-graphics .bcg-head{ margin-bottom:14px; }
+  #card-broadcast-graphics .bcg-head h2{ font-size:12.5px; letter-spacing:.09em; color:var(--text); font-weight:800; }
+  #card-broadcast-graphics .bcg-head h2 .note{ color:var(--text-dim); font-weight:500; letter-spacing:0; }
+  #card-broadcast-graphics .bcg-air{
+    gap:7px; padding:5px 12px 5px 10px; font-size:10.5px; letter-spacing:.1em;
+    background:var(--g-tile-top); border:1px solid var(--g-line); color:var(--text-dim);
+    box-shadow:inset 0 1px 0 var(--g-hi); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+    transition:background .35s, color .35s, border-color .35s;
+  }
+  #card-broadcast-graphics .bcg-air::before{ content:''; width:7px; height:7px; border-radius:50%; background:currentColor; opacity:.55; box-shadow:none; }
+  #card-broadcast-graphics .bcg-air.on{ background:linear-gradient(180deg, rgba(239,68,68,.3), rgba(239,68,68,.16)); color:var(--g-on-ink); border-color:rgba(239,68,68,.55); }
+  #card-broadcast-graphics .bcg-air.on::before{ background:#ef4444; opacity:1; animation:bcgLqPulse 1.6s ease-in-out infinite; }
+  @keyframes bcgLqPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(239,68,68,.55); } 60%{ box-shadow:0 0 0 6px rgba(239,68,68,0); } }
+
+  /* the three big tiles */
+  #card-broadcast-graphics .bcg-actions{ gap:12px; }
+  #card-broadcast-graphics .bcg-col{ gap:9px; }
+  #card-broadcast-graphics .bcg-col > .bcg-seg{ align-self:flex-start; }
+  #card-broadcast-graphics .bcg-opts{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  #card-broadcast-graphics .bcg-next{
+    border-radius:99px; padding:6px 13px; font-size:11px; font-weight:800; letter-spacing:.04em;
+    background:linear-gradient(180deg,#f05252,#c81e1e); border:0; color:#fff;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 8px 18px -8px rgba(239,68,68,.85);
+    animation:bcgLqIn .35s cubic-bezier(.2,.8,.2,1);
+  }
+  #card-broadcast-graphics .bcg-next:not(:disabled):hover{ background:linear-gradient(180deg,#f87171,#dc2626); }
+  /* a tile on air: "tap to hide" in its own words, with the time left */
+  #card-broadcast-graphics .bcg-btn.on .bcg-txt b::after{ content:'ON AIR'; margin-left:8px; padding:2px 7px; border-radius:99px; font-size:9.5px; letter-spacing:.1em; vertical-align:2px; background:#ef4444; color:#fff; }
+  #bcg-xi-btn{ --ic:#6366f1; } #bcg-toss-btn{ --ic:#f59e0b; } #bcg-intro-btn{ --ic:#a855f7; }
+  #bcg-bat-btn{ --ic:#ff7a00; } #bcg-bowl-btn{ --ic:#ec4899; }
+  #card-broadcast-graphics .bcg-btn{
+    position:relative; overflow:hidden; gap:12px; padding:14px 14px; border-radius:16px;
+    background:linear-gradient(180deg, var(--g-tile-top), var(--g-tile)); color:var(--text);
+    border:1px solid var(--g-line); box-shadow:inset 0 1px 0 var(--g-hi), var(--g-tile-shadow);
+    transition:transform .45s cubic-bezier(.34,1.56,.64,1), box-shadow .35s ease, border-color .35s ease, background .35s ease, opacity .2s;
+  }
+  #card-broadcast-graphics .bcg-btn::after{
+    content:''; position:absolute; inset:0; pointer-events:none; border-radius:inherit;
+    background:linear-gradient(115deg, transparent 32%, rgba(255,255,255,.1) 50%, transparent 68%);
+    transform:translateX(-110%); transition:transform .9s cubic-bezier(.2,.8,.2,1);
+  }
+  #card-broadcast-graphics .bcg-btn:not(:disabled):hover{
+    transform:translateY(-2px); background:linear-gradient(180deg, var(--g-tile-h), var(--g-tile-top));
+    border-color:color-mix(in srgb, var(--ic, #ff7a00) 45%, var(--g-line-h));
+    box-shadow:inset 0 1px 0 var(--g-hi), 0 16px 30px -18px color-mix(in srgb, var(--ic, #ff7a00) 70%, transparent);
+  }
+  #card-broadcast-graphics .bcg-btn:not(:disabled):hover::after{ transform:translateX(110%); }
+  #card-broadcast-graphics .bcg-btn:not(:disabled):active{ transform:scale(.975); transition-duration:.12s; }
+  #card-broadcast-graphics .bcg-ico{
+    width:40px; height:40px; border-radius:12px; font-size:19px;
+    background:linear-gradient(145deg, color-mix(in srgb, var(--ic, #64748b) 38%, transparent), color-mix(in srgb, var(--ic, #64748b) 12%, transparent));
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ic, #64748b) 45%, transparent), inset 0 1px 0 rgba(255,255,255,.2), 0 6px 14px -8px color-mix(in srgb, var(--ic, #64748b) 80%, transparent);
+    transition:background .35s, box-shadow .35s, transform .45s cubic-bezier(.34,1.56,.64,1);
+  }
+  #card-broadcast-graphics .bcg-btn:not(:disabled):hover .bcg-ico{ transform:scale(1.06) rotate(-3deg); }
+  #card-broadcast-graphics .bcg-txt{ gap:2px; }
+  #card-broadcast-graphics .bcg-txt b{ font-size:13px; font-weight:850; letter-spacing:.055em; }
+  #card-broadcast-graphics .bcg-txt small{ font-size:11px; font-weight:600; }
+  /* on air: the tile glows red, its icon pulses */
+  #card-broadcast-graphics .bcg-btn.on{
+    background:linear-gradient(135deg, rgba(239,68,68,.32), rgba(239,68,68,.1) 70%); border-color:rgba(239,68,68,.65);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.12), inset 0 0 0 1px rgba(239,68,68,.3), 0 16px 34px -16px rgba(239,68,68,.65);
+  }
+  #card-broadcast-graphics .bcg-btn.on .bcg-ico{ background:linear-gradient(145deg,#f87171,#dc2626); box-shadow:inset 0 1px 0 rgba(255,255,255,.3); animation:bcgLqPulse 1.6s ease-in-out infinite; }
+  #card-broadcast-graphics .bcg-btn.on small{ color:var(--g-on-ink); }
+  #card-broadcast-graphics .bcg-btn.open:not(.on){ border-color:color-mix(in srgb, var(--accent) 70%, transparent); box-shadow:inset 0 1px 0 var(--g-hi), 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  #card-broadcast-graphics .bcg-btn.busy{ opacity:.6; }
+  #card-broadcast-graphics .bcg-btn.sm{ padding:10px 12px; gap:10px; border-radius:14px; }
+  #card-broadcast-graphics .bcg-btn.sm .bcg-ico{ width:32px; height:32px; border-radius:10px; font-size:15px; }
+
+  /* segmented controls — a recessed track, the chosen one a raised orange thumb */
+  #card-broadcast-graphics .bcg-seg{
+    flex-wrap:nowrap; gap:2px; padding:3px; border-radius:99px; max-width:100%; overflow-x:auto; scrollbar-width:none;
+    background:var(--g-track); border:1px solid var(--g-line); box-shadow:inset 0 1px 3px rgba(0,0,0,.28);
+  }
+  #card-broadcast-graphics .bcg-seg::-webkit-scrollbar{ display:none; }
+  #card-broadcast-graphics .bcg-seg button, #card-broadcast-graphics .bcg-chips button{
+    flex:none; border:0; border-radius:99px; padding:5px 12px; font-size:11px; font-weight:800; letter-spacing:.05em;
+    background:transparent; color:var(--text-dim);
+    transition:background .3s cubic-bezier(.2,.8,.2,1), color .25s, box-shadow .3s, transform .3s cubic-bezier(.34,1.56,.64,1);
+  }
+  #card-broadcast-graphics .bcg-seg button:not([aria-checked="true"]):not([aria-disabled="true"]):not(:disabled):hover,
+  #card-broadcast-graphics .bcg-chips button:not([aria-checked="true"]):not(:disabled):hover{ color:var(--text); background:var(--g-tile-h); }
+  #card-broadcast-graphics .bcg-seg button[aria-checked="true"], #card-broadcast-graphics .bcg-chips button[aria-checked="true"]{
+    background:var(--g-thumb); color:var(--g-thumb-ink);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 4px 12px -4px rgba(255,122,0,.75);
+  }
+  #card-broadcast-graphics .bcg-seg button:not(:disabled):active, #card-broadcast-graphics .bcg-chips button:not(:disabled):active{ transform:scale(.94); }
+  #card-broadcast-graphics .bcg-seg button[aria-disabled="true"]{ opacity:.35; }
+  /* the toss's time, as a quiet pill under its tile */
+  #card-broadcast-graphics .bcg-col-note{
+    align-self:flex-start; display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:99px; font-size:11px;
+    background:var(--g-track); border:1px solid var(--g-line); color:var(--text-dim);
+  }
+  #card-broadcast-graphics .bcg-col-note::before{ content:''; width:6px; height:6px; border-radius:50%; background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.2); }
+
+  /* what opens under a tile */
+  #card-broadcast-graphics .bcg-ctx{
+    margin-top:12px; padding:12px 14px; border-radius:16px;
+    background:var(--g-inset); border:1px solid var(--g-line); box-shadow:inset 0 1px 0 var(--g-hi);
+    animation:bcgLqIn .42s cubic-bezier(.2,.8,.2,1);
+  }
+  @keyframes bcgLqIn{ from{ opacity:0; transform:translateY(-6px) scale(.985); } to{ opacity:1; transform:none; } }
+  #card-broadcast-graphics .bcg-chips{
+    gap:4px; padding:3px; border-radius:18px; background:var(--g-track); border:1px solid var(--g-line); box-shadow:inset 0 1px 3px rgba(0,0,0,.28); width:max-content; max-width:100%;
+  }
+  #card-broadcast-graphics .bcg-chips button[aria-checked="true"]::before{ content:'✓ '; }
+  #card-broadcast-graphics .bcg-custom{ padding-left:6px; }
+  #card-broadcast-graphics .bcg-custom input[type=number]{ border-radius:99px; border:1px solid var(--g-line); background:var(--g-tile-top); color:var(--text); padding:5px 10px; }
+  #card-broadcast-graphics .bcg-custom.on input{ border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  #card-broadcast-graphics .bcg-lbl{ letter-spacing:.12em; }
+  #card-broadcast-graphics .bcg-row button.small:not(.bcg-stop){
+    border-radius:99px; padding:7px 14px; background:linear-gradient(180deg, var(--g-tile-h), var(--g-tile-top)); border:1px solid var(--g-line-h); color:var(--text);
+    box-shadow:inset 0 1px 0 var(--g-hi);
+  }
+  #card-broadcast-graphics .bcg-row button.small.primary{ background:var(--g-thumb); border-color:transparent; color:var(--g-thumb-ink); box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 8px 18px -8px rgba(255,122,0,.8); }
+  #card-broadcast-graphics .bcg-stop{
+    border-radius:99px !important; padding:7px 14px !important; border-color:transparent !important;
+    background:linear-gradient(180deg,#f05252,#c81e1e) !important; color:#fff !important;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 8px 18px -8px rgba(239,68,68,.85);
+  }
+  #card-broadcast-graphics .bcg-stop:not(:disabled):hover{ background:linear-gradient(180deg,#f87171,#dc2626) !important; }
+  #card-broadcast-graphics .bcg-live{ font-size:12.5px; }
+  #card-broadcast-graphics .bcg-dot{ background:#ef4444; }
+
+  /* innings & scorecards: a glass tray of its own */
+  #card-broadcast-graphics .bcg-sc{
+    margin-top:14px; padding:12px 14px; gap:10px; border-top:1px solid var(--g-line); border-radius:18px;
+    background:var(--g-inset); border:1px solid var(--g-line); box-shadow:inset 0 1px 0 var(--g-hi);
+  }
+  #card-broadcast-graphics .bcg-sc-row{ gap:10px; }
+  #card-broadcast-graphics .bcg-auto{ display:inline-flex; align-items:center; gap:6px; padding:4px 11px 4px 9px; box-shadow:inset 0 1px 0 var(--g-hi); }
+  #card-broadcast-graphics .bcg-auto::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb, currentColor 22%, transparent); }
+  #card-broadcast-graphics .bcg-msg{ border-radius:12px; padding:8px 12px; }
+
+  /* ---- light: frosted white ---- */
+  html[data-theme="light"] #card-broadcast-graphics{
+    --g-bg:linear-gradient(160deg, rgba(255,255,255,.95), rgba(244,247,252,.92));
+    --g-tile:rgba(255,255,255,.75); --g-tile-top:#ffffff; --g-tile-h:#ffffff;
+    --g-inset:rgba(15,23,42,.028); --g-track:rgba(15,23,42,.055); --g-line:rgba(15,23,42,.09); --g-line-h:rgba(15,23,42,.16);
+    --g-hi:rgba(255,255,255,.9); --g-shadow:0 1px 2px rgba(15,23,42,.05), 0 26px 50px -32px rgba(15,23,42,.35); --g-tile-shadow:0 1px 2px rgba(15,23,42,.05), 0 8px 20px -14px rgba(15,23,42,.3);
+    --g-thumb:linear-gradient(180deg,#ff9234,#e86a00); --g-thumb-ink:#fff; --g-on-ink:#b91c1c;
+    background:
+      radial-gradient(120% 90% at 0% 0%, rgba(239,68,68,.07), transparent 46%),
+      radial-gradient(90% 80% at 100% 0%, rgba(99,102,241,.08), transparent 52%),
+      var(--g-bg);
+  }
+  html[data-theme="light"] #card-broadcast-graphics .bcg-seg,
+  html[data-theme="light"] #card-broadcast-graphics .bcg-chips{ box-shadow:inset 0 1px 2px rgba(15,23,42,.08); }
+  html[data-theme="light"] #card-broadcast-graphics .bcg-btn::after{ background:linear-gradient(115deg, transparent 32%, rgba(255,255,255,.75) 50%, transparent 68%); }
+  html[data-theme="light"] #card-broadcast-graphics .bcg-btn.on{ background:linear-gradient(135deg, rgba(239,68,68,.14), rgba(255,255,255,.9) 75%); box-shadow:inset 0 0 0 1px rgba(239,68,68,.25), 0 14px 30px -16px rgba(239,68,68,.5); }
+  html[data-theme="light"] #card-broadcast-graphics .bcg-air.on{ background:linear-gradient(180deg, rgba(239,68,68,.14), rgba(239,68,68,.07)); }
+  html[data-theme="light"] #card-broadcast-graphics .bcg-ico{ box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ic, #64748b) 30%, transparent), inset 0 1px 0 rgba(255,255,255,.8), 0 6px 14px -9px color-mix(in srgb, var(--ic, #64748b) 70%, transparent); }
+  html[data-theme="light"] #card-broadcast-graphics .bcg-btn.on .bcg-ico{ box-shadow:inset 0 1px 0 rgba(255,255,255,.4); }
+
+  @media (max-width: 760px){
+    #card-broadcast-graphics{ padding:14px 12px; border-radius:18px; }
+    #card-broadcast-graphics .bcg-head{ flex-wrap:wrap; }
+    #card-broadcast-graphics .bcg-sc{ padding:10px; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    #card-broadcast-graphics *, #card-broadcast-graphics *::before, #card-broadcast-graphics *::after{ animation:none !important; transition-duration:0s !important; }
+    #card-broadcast-graphics .bcg-btn:hover{ transform:none !important; }
+  }
+</style>
 <!-- interaction layer: how things move, never how they look at rest (shared with the other panel, nothing else is) -->
 <link rel="stylesheet" href="/cricket-motion.css?v=2">
 </head>
@@ -2612,7 +2809,7 @@
      show the same graphic on air (see BROADCAST GRAPHICS in the script). -->
 <div class="card bcg-card" id="card-broadcast-graphics">
   <div class="bcg-head">
-    <h2 id="bcg-title">🎬 Broadcast Graphics <span class="note">— full screen on the live overlay</span></h2>
+    <h2 id="bcg-title">🎬 Broadcast Graphics <span class="note">— tap to show · tap again to hide</span></h2>
     <span class="bcg-air" id="bcg-air" role="status" aria-live="polite">Off air</span>
   </div>
   <div class="bcg-actions" role="group" aria-labelledby="bcg-title">
@@ -2620,61 +2817,42 @@
       <button type="button" class="bcg-btn" id="bcg-xi-btn" aria-pressed="false" aria-describedby="bcg-xi-sub">
         <span class="bcg-ico" aria-hidden="true">👥</span><span class="bcg-txt"><b>PLAYING XI</b><small id="bcg-xi-sub">Both teams · 10 s each</small></span>
       </button>
-      <div class="bcg-seg" id="bcg-xi-mode" role="radiogroup" aria-label="Playing XI timing">
-        <button type="button" role="radio" aria-checked="true" data-v="auto" title="Team 1 for 10 s, then team 2 for 10 s, then off air">AUTO 10s</button>
-        <button type="button" role="radio" aria-checked="false" data-v="hold" title="Each team stays on air — team 2 on NEXT TEAM, off air on HIDE">HOLD</button>
+      <div class="bcg-opts">
+        <div class="bcg-seg" id="bcg-xi-mode" role="radiogroup" aria-label="Playing XI timing">
+          <button type="button" role="radio" aria-checked="true" data-v="auto" title="Team 1 for 10 s, then team 2 for 10 s, then off air">AUTO 10s</button>
+          <button type="button" role="radio" aria-checked="false" data-v="hold" title="Each team stays on air — team 2 on Next team, off air when you tap the tile again">HOLD</button>
+        </div>
+        <button type="button" class="bcg-next" id="bcg-xi-skip" hidden title="Bring the second team's XI on now">Next team ⏭</button>
       </div>
     </div>
     <div class="bcg-col">
-      <button type="button" class="bcg-btn" id="bcg-toss-btn" aria-expanded="false" aria-controls="bcg-toss-ctx" aria-describedby="bcg-toss-sub">
-        <span class="bcg-ico" aria-hidden="true">🪙</span><span class="bcg-txt"><b>TOSS</b><small id="bcg-toss-sub">Choose the time, then show</small></span>
+      <button type="button" class="bcg-btn" id="bcg-toss-btn" aria-pressed="false" aria-describedby="bcg-toss-sub">
+        <span class="bcg-ico" aria-hidden="true">🪙</span><span class="bcg-txt"><b>TOSS</b><small id="bcg-toss-sub">No toss result yet</small></span>
       </button>
-      <div class="bcg-col-note" id="bcg-toss-note">On screen: 10 s</div>
+      <div class="bcg-seg" id="bcg-dur-chips" role="radiogroup" aria-label="Toss time on screen">
+        <button type="button" role="radio" aria-checked="false" data-dur="hold" title="Stays on air until you tap TOSS again">HOLD</button>
+        <button type="button" role="radio" aria-checked="false" data-dur="5">5s</button>
+        <button type="button" role="radio" aria-checked="true" data-dur="10">10s</button>
+        <button type="button" role="radio" aria-checked="false" data-dur="15">15s</button>
+        <button type="button" role="radio" aria-checked="false" data-dur="30">30s</button>
+        <button type="button" role="radio" aria-checked="false" data-dur="60">60s</button>
+      </div>
     </div>
     <div class="bcg-col">
       <button type="button" class="bcg-btn" id="bcg-intro-btn" aria-pressed="false" aria-describedby="bcg-intro-sub">
         <span class="bcg-ico" aria-hidden="true">🎬</span><span class="bcg-txt"><b>MATCH INTRO</b><small id="bcg-intro-sub">Holds until you hide it</small></span>
       </button>
       <div class="bcg-seg" id="bcg-intro-dur" role="radiogroup" aria-label="Match intro time on screen">
-        <button type="button" role="radio" aria-checked="true" data-v="hold" title="The final picture stays until you press HIDE INTRO">HOLD</button>
+        <button type="button" role="radio" aria-checked="true" data-v="hold" title="The final picture stays until you tap MATCH INTRO again">HOLD</button>
         <button type="button" role="radio" aria-checked="false" data-v="15">15s</button>
         <button type="button" role="radio" aria-checked="false" data-v="30">30s</button>
         <button type="button" role="radio" aria-checked="false" data-v="60">60s</button>
       </div>
     </div>
   </div>
-  <div class="bcg-ctx" id="bcg-xi-ctx" hidden>
-    <div class="bcg-live"><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-xi-status">On air</span></div>
-    <div class="bcg-row">
-      <button type="button" class="small" id="bcg-xi-skip">⏭ NEXT TEAM</button>
-      <button type="button" class="small bcg-stop" id="bcg-xi-stop">■ HIDE PLAYING XI</button>
-    </div>
-  </div>
-  <div class="bcg-ctx" id="bcg-toss-ctx" hidden>
-    <div class="bcg-result" id="bcg-toss-result"></div>
-    <div class="bcg-lbl" id="bcg-dur-lbl">On screen for</div>
-    <div class="bcg-chips" id="bcg-dur-chips" role="radiogroup" aria-labelledby="bcg-dur-lbl">
-      <button type="button" role="radio" aria-checked="false" data-dur="5">5 s</button>
-      <button type="button" role="radio" aria-checked="true" data-dur="10">10 s</button>
-      <button type="button" role="radio" aria-checked="false" data-dur="15">15 s</button>
-      <button type="button" role="radio" aria-checked="false" data-dur="30">30 s</button>
-      <button type="button" role="radio" aria-checked="false" data-dur="60">60 s</button>
-      <button type="button" role="radio" aria-checked="false" data-dur="hold" title="Stays on air until you press Hide Toss">Hold until hidden</button>
-      <label class="bcg-custom" id="bcg-dur-custom-wrap">or <input type="number" id="bcg-dur-custom" min="1" max="3600" step="1" placeholder="sec" aria-label="Custom time on screen, in seconds"> s</label>
-    </div>
-    <div class="bcg-row">
-      <button type="button" class="small primary" id="bcg-toss-show">🪙 Show Toss</button>
-      <button type="button" class="small bcg-stop" id="bcg-toss-hide" hidden>■ Hide Toss</button>
-    </div>
-    <div class="bcg-live" id="bcg-toss-live" hidden><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-toss-status">On air</span></div>
-  </div>
-  <div class="bcg-ctx" id="bcg-intro-ctx" hidden>
-    <div class="bcg-live"><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-intro-status">On air</span></div>
-    <div class="bcg-row"><button type="button" class="small bcg-stop" id="bcg-intro-stop">■ HIDE INTRO</button></div>
-  </div>
   <div class="bcg-sc" role="group" aria-labelledby="bcg-sc-title">
     <div class="bcg-sc-head">
-      <span class="bcg-lbl" id="bcg-sc-title">📋 Innings &amp; scorecards</span>
+      <span class="bcg-lbl" id="bcg-sc-title">📋 Scorecards</span>
       <span class="bcg-auto" id="bcg-auto" title="The batting / bowling cards that come up by themselves after each over">Over-end cards: AUTO</span>
     </div>
     <div class="bcg-sc-row">
@@ -2689,14 +2867,12 @@
         <span class="bcg-ico" aria-hidden="true">🎯</span><span class="bcg-txt"><b>BOWL SCORECARD</b><small id="bcg-bowl-sub">—</small></span>
       </button>
       <div class="bcg-seg" id="bcg-card-dur" role="radiogroup" aria-label="Scorecard time on screen">
-        <button type="button" role="radio" aria-checked="true" data-v="hold" title="Pinned until you press HIDE SCORECARD">HOLD</button>
+        <button type="button" role="radio" aria-checked="true" data-v="hold" title="Pinned until you tap the scorecard again">HOLD</button>
         <button type="button" role="radio" aria-checked="false" data-v="15">15s</button>
         <button type="button" role="radio" aria-checked="false" data-v="30">30s</button>
         <button type="button" role="radio" aria-checked="false" data-v="60">60s</button>
       </div>
-      <button type="button" class="small bcg-stop" id="bcg-card-hide" hidden>■ HIDE SCORECARD</button>
     </div>
-    <div class="bcg-live" id="bcg-card-live" hidden><span class="bcg-dot" aria-hidden="true"></span><span id="bcg-card-status">On air</span></div>
   </div>
   <div class="bcg-msg" id="bcg-msg" role="alert" hidden></div>
 </div>
@@ -9889,7 +10065,7 @@ document.getElementById('show-toss-btn').title = 'Full-screen toss, for the time
 var bcgCtl = null;
 var BCG_PREF_DEFAULTS = { innings: null, xiMode: 'auto', tossDur: 10, introDur: null, cardDur: null };
 function bcgInit(){
-  if(!bcgCtl) bcgCtl = { g: null, seq: -Infinity, prefs: { ...BCG_PREF_DEFAULTS }, pseq: -Infinity, offset: 0, pending: null, tossOpen: false, tick: null, msg: '', msgBad: false };
+  if(!bcgCtl) bcgCtl = { g: null, seq: -Infinity, prefs: { ...BCG_PREF_DEFAULTS }, pseq: -Infinity, offset: 0, pending: null, tick: null, msg: '', msgBad: false };
   return bcgCtl;
 }
 var BCG_FROM = /panel3/i.test(location.pathname) ? 'Cricket Panel 3' : 'Cricket Panel';
@@ -10060,7 +10236,7 @@ function bcgStart(mode, viaToast, kind){
   if(p.error){ bcgSay(p.error, false); bcgRender(); if(viaToast) toast(p.error, 4000); return; }
   const c = bcgInit(), cmd = { action: 'start', mode, data: p.data };
   if(mode === 'playingXI') cmd.xiMode = c.prefs.xiMode;
-  if(mode === 'toss'){ cmd.durationSec = c.prefs.tossDur; c.tossOpen = true; }
+  if(mode === 'toss') cmd.durationSec = c.prefs.tossDur;
   if(mode === 'matchIntro') cmd.durationSec = c.prefs.introDur;
   if(mode === 'scorecard') cmd.durationSec = c.prefs.cardDur;
   if(bcgSend(cmd, viaToast) && p.note) bcgSay(p.note, false);
@@ -10085,7 +10261,6 @@ function bcgApply(st){
   }
   if(typeof st.serverNow === 'number') c.offset = st.serverNow - Date.now();
   c.g = st.gid && BCG_NAMES[st.mode] ? st : null;
-  if(c.g && c.g.mode === 'toss') c.tossOpen = true;
   bcgRender();
 }
 function bcgApplyPrefs(p){
@@ -10137,79 +10312,54 @@ function bcgRender(){
     if(b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed', String(on));
     b.querySelector('small').textContent = sub;
   };
-  // PLAYING XI — AUTO 10 s each, or HOLD (NEXT TEAM / HIDE)
+  // PLAYING XI — AUTO 10 s each, or HOLD (Next team; the tile again hides it)
   const xa = bcgLineup('A').length, xb = bcgLineup('B').length;
   const xiOn = bcgOn('playingXI'), xiHold = xiOn ? !!(g.xi && g.xi.hold) : P.xiMode === 'hold';
-  button('bcg-xi-btn', xiOn, xiOn ? 'On air — press to hide'
-    : (xa && xb) ? `${teamObj('A').short || name('A')} ${xa} · ${teamObj('B').short || name('B')} ${xb} · ${xiHold ? 'held' : '10 s each'}` : 'Tick the XI in Team Squads');
-  bcgSeg('bcg-xi-mode', xiHold ? null : 'auto', busy);
-  bcgEl('bcg-xi-ctx').hidden = !xiOn;
+  let xiSub = (xa && xb) ? `${teamObj('A').short || name('A')} ${xa} · ${teamObj('B').short || name('B')} ${xb} · ${xiHold ? 'held' : '10 s each'}` : 'Tick the XI in Team Squads';
+  let xiFirst = false;
   if(xiOn){
     const x = g.xi, t = g.data && g.data.teams || [];
-    const first = x.swapAt == null || now < x.swapAt;
+    xiFirst = x.swapAt == null || now < x.swapAt;
     const t1 = (t[0] && t[0].name) || 'Team 1', t2 = (t[1] && t[1].name) || 'Team 2';
-    bcgEl('bcg-xi-status').textContent = first
-      ? (x.swapAt == null ? `${t1} on screen — held: NEXT TEAM brings ${t2}` : `${t1} on screen — ${secs(x.swapAt - now)} s, then ${t2}`)
-      : (x.endAt == null ? `${t2} on screen — held until you hide it` : `${t2} on screen — ${secs(x.endAt - now)} s left`);
-    bcgEl('bcg-xi-skip').hidden = !first;
-    bcgEl('bcg-xi-skip').disabled = busy;
-    bcgEl('bcg-xi-stop').disabled = busy;
+    xiSub = xiFirst
+      ? (x.swapAt == null ? `${t1} on screen · tap to hide` : `${t1} · ${secs(x.swapAt - now)} s, then ${t2} · tap to hide`)
+      : (x.endAt == null ? `${t2} on screen · tap to hide` : `${t2} · ${secs(x.endAt - now)} s left · tap to hide`);
   }
+  button('bcg-xi-btn', xiOn, xiSub);
+  bcgSeg('bcg-xi-mode', xiHold ? null : 'auto', busy);
+  bcgEl('bcg-xi-skip').hidden = !(xiOn && xiFirst);
+  bcgEl('bcg-xi-skip').disabled = busy;
   // TOSS
   const tossOn = bcgOn('toss');
   const tw = state.toss && (state.toss.winner === 'A' || state.toss.winner === 'B') ? state.toss.winner : '';
   const tossDur = tossOn ? (g.toss.durationSec == null ? null : g.toss.durationSec) : P.tossDur;
-  button('bcg-toss-btn', tossOn, tossOn ? 'On air' : tw ? `${name(tw)} won — choose the time` : 'No toss result yet');
-  bcgEl('bcg-toss-note').textContent = `On screen: ${tossDur == null ? 'Hold until hidden' : `${tossDur} s`}`;
-  bcgEl('bcg-toss-btn').classList.toggle('open', !!c.tossOpen);
-  bcgEl('bcg-toss-btn').setAttribute('aria-expanded', String(!!c.tossOpen));
-  bcgEl('bcg-toss-ctx').hidden = !c.tossOpen;
-  if(c.tossOpen){
-    const res = bcgEl('bcg-toss-result');
-    if(tw){
-      res.className = 'bcg-result';
-      res.innerHTML = `<b>${escapeHtmlPanel(name(tw))}</b> won the toss · elected to ${state.toss.decision === 'BOWL' ? 'bowl' : 'bat'} first`;
-      const shown = tossOn && g.data ? (g.data.winner === 'B' ? g.data.teamB : g.data.teamA) : null;
-      if(shown && (shown.name !== name(tw) || g.data.decision !== (state.toss.decision === 'BOWL' ? 'BOWL' : 'BAT'))){
-        res.innerHTML += ' <span class="note">— the overlay shows the earlier result: Hide and Show again to update it</span>';
-      }
-    } else {
-      res.className = 'bcg-result warn';
-      res.innerHTML = '⚠ No toss result recorded yet. <button type="button" class="small ghost" id="bcg-toss-goto">Open the 🪙 Toss card</button>';
-    }
-    const dur = tossDur == null ? 'hold' : tossDur;
-    bcgEl('bcg-dur-chips').querySelectorAll('button[data-dur]').forEach(b => {
-      const v = b.dataset.dur === 'hold' ? 'hold' : +b.dataset.dur;
-      b.setAttribute('aria-checked', String(v === dur));
-      b.tabIndex = v === dur || (!BCG_DURS.includes(dur) && dur !== 'hold' && v === 10) ? 0 : -1;
-      b.disabled = busy;
-    });
-    const custom = bcgEl('bcg-dur-custom'), isCustom = dur !== 'hold' && !BCG_DURS.includes(dur);
-    bcgEl('bcg-dur-custom-wrap').classList.toggle('on', isCustom);
-    if(document.activeElement !== custom) custom.value = isCustom ? String(dur) : '';
-    bcgEl('bcg-toss-show').hidden = tossOn;
-    bcgEl('bcg-toss-show').disabled = busy;
-    bcgEl('bcg-toss-hide').hidden = !tossOn;
-    bcgEl('bcg-toss-hide').disabled = busy;
-    bcgEl('bcg-toss-live').hidden = !tossOn;
-    if(tossOn){
-      const x = g.toss;
-      bcgEl('bcg-toss-status').textContent = x.expiresAt == null ? 'On air — stays until you hide it'
-        : now < x.readyAt ? `On air — ${x.durationSec} s once it has come in` : `On air — ${secs(x.expiresAt - now)} s left`;
-    }
+  let tossSub = tw ? `${name(tw)} won · ${state.toss.decision === 'BOWL' ? 'bowl' : 'bat'} first` : 'No toss result yet — set it in the 🪙 Toss card';
+  if(tossOn){
+    const x = g.toss;
+    tossSub = x.expiresAt == null ? 'On air · tap to hide'
+      : now < x.readyAt ? `On air · ${x.durationSec} s · tap to hide` : `On air · ${secs(x.expiresAt - now)} s left · tap to hide`;
+    const shown = g.data ? (g.data.winner === 'B' ? g.data.teamB : g.data.teamA) : null;
+    if(tw && shown && (shown.name !== name(tw) || g.data.decision !== (state.toss.decision === 'BOWL' ? 'BOWL' : 'BAT'))) tossSub = 'On air · the earlier result — tap to hide, then show again';
   }
+  button('bcg-toss-btn', tossOn, tossSub);
+  const dur = tossDur == null ? 'hold' : tossDur;
+  bcgEl('bcg-dur-chips').querySelectorAll('button[data-dur]').forEach(b => {
+    const v = b.dataset.dur === 'hold' ? 'hold' : +b.dataset.dur;
+    b.setAttribute('aria-checked', String(v === dur));
+    b.tabIndex = v === dur || (!BCG_DURS.includes(dur) && dur !== 'hold' && v === 10) ? 0 : -1;
+    b.disabled = busy;
+  });
   // MATCH INTRO — HOLD until hidden, or a time
   const inOn = bcgOn('matchIntro');
   const introDur = inOn ? (g.intro && g.intro.durationSec != null ? g.intro.durationSec : null) : P.introDur;
-  button('bcg-intro-btn', inOn, inOn ? 'On air — press to hide' : introDur == null ? 'Holds until you hide it' : `On screen ${introDur} s`);
-  bcgSeg('bcg-intro-dur', introDur, busy);
-  bcgEl('bcg-intro-ctx').hidden = !inOn;
+  let introSub = introDur == null ? 'Stays until you tap it again' : `On screen ${introDur} s`;
   if(inOn){
     const x = g.intro || {};
-    bcgEl('bcg-intro-status').textContent = now < x.readyAt ? 'On air — the intro is playing'
-      : x.expiresAt == null ? 'On air — holding the final picture until you hide it' : `On air — ${secs(x.expiresAt - now)} s left`;
-    bcgEl('bcg-intro-stop').disabled = busy;
+    introSub = now < x.readyAt ? 'On air · playing · tap to hide'
+      : x.expiresAt == null ? 'On air · holding · tap to hide' : `On air · ${secs(x.expiresAt - now)} s left · tap to hide`;
   }
+  button('bcg-intro-btn', inOn, introSub);
+  bcgSeg('bcg-intro-dur', introDur, busy);
   // INNINGS + SCORECARDS
   const list = bcgInningsList(), shown = bcgShownInnings();
   const seg = bcgEl('bcg-inn');
@@ -10229,18 +10379,15 @@ function bcgRender(){
   const entry = (list.find(i => i.no === shown) || {}).entry;
   const cardOn = bcgOn('scorecard'), kindOn = cardOn && g.data ? g.data.kind : '';
   const innText = `${bcgOrd(shown)} inn`;
-  button('bcg-bat-btn', kindOn === 'bat', kindOn === 'bat' ? 'On air — press to hide' : entry ? `${name(entry.team)} · ${innText}` : `${innText} — not played yet`);
-  button('bcg-bowl-btn', kindOn === 'bowl', kindOn === 'bowl' ? 'On air — press to hide' : entry ? `${name(entry.team === 'A' ? 'B' : 'A')} · ${innText}` : `${innText} — not played yet`);
-  const cardDur = cardOn ? (g.card && g.card.durationSec != null ? g.card.durationSec : null) : P.cardDur;
-  bcgSeg('bcg-card-dur', cardDur, busy);
-  bcgEl('bcg-card-hide').hidden = !cardOn;
-  bcgEl('bcg-card-hide').disabled = busy;
-  bcgEl('bcg-card-live').hidden = !cardOn;
+  let cardSub = '';
   if(cardOn){
     const x = g.card || {}, d = g.data || {};
-    const what = `${d.kind === 'bowl' ? 'Bowling' : 'Batting'} card · ${bcgOrd(d.inningsNo)} innings · ${d.kind === 'bowl' ? d.bowling && d.bowling.name : d.batting && d.batting.name}`;
-    bcgEl('bcg-card-status').textContent = `${what} — ${x.expiresAt == null ? 'pinned until you hide it' : `${secs(x.expiresAt - now)} s left`}`;
+    cardSub = `On air · ${bcgOrd(d.inningsNo)} inn · ${x.expiresAt == null ? 'tap to hide' : `${secs(x.expiresAt - now)} s left · tap to hide`}`;
   }
+  button('bcg-bat-btn', kindOn === 'bat', kindOn === 'bat' ? cardSub : entry ? `${name(entry.team)} · ${innText}` : `${innText} — not played yet`);
+  button('bcg-bowl-btn', kindOn === 'bowl', kindOn === 'bowl' ? cardSub : entry ? `${name(entry.team === 'A' ? 'B' : 'A')} · ${innText}` : `${innText} — not played yet`);
+  const cardDur = cardOn ? (g.card && g.card.durationSec != null ? g.card.durationSec : null) : P.cardDur;
+  bcgSeg('bcg-card-dur', cardDur, busy);
   // the automatic between-overs cards: running, or waiting for the screen
   const auto = bcgEl('bcg-auto');
   auto.className = 'bcg-auto' + (cardOn ? ' manual' : g ? ' wait' : '');
@@ -10259,23 +10406,13 @@ function bcgRender(){
 
 bcgEl('bcg-xi-btn').addEventListener('click', () => bcgOn('playingXI') ? bcgStop('playingXI') : bcgStart('playingXI'));
 bcgEl('bcg-intro-btn').addEventListener('click', () => bcgOn('matchIntro') ? bcgStop('matchIntro') : bcgStart('matchIntro'));
-bcgEl('bcg-toss-btn').addEventListener('click', () => {
-  const c = bcgInit();
-  c.tossOpen = bcgOn('toss') || !c.tossOpen;
-  bcgRender();
-});
-bcgEl('bcg-xi-stop').addEventListener('click', () => bcgStop('playingXI'));
+bcgEl('bcg-toss-btn').addEventListener('click', () => bcgOn('toss') ? bcgStop('toss') : bcgStart('toss'));
 bcgEl('bcg-xi-skip').addEventListener('click', () => { const g = bcgInit().g; if(g && g.mode === 'playingXI') bcgSend({ action: 'skip', mode: 'playingXI', gid: g.gid }); });
-bcgEl('bcg-intro-stop').addEventListener('click', () => bcgStop('matchIntro'));
-bcgEl('bcg-toss-show').addEventListener('click', () => bcgStart('toss'));
-bcgEl('bcg-toss-hide').addEventListener('click', () => bcgStop('toss'));
-bcgEl('bcg-toss-ctx').addEventListener('click', (e) => { if(e.target.closest('#bcg-toss-goto')) msGoto('card-toss'); });
 // a scorecard button: shows that card for the innings picked — pressed again it hides
 ['bat', 'bowl'].forEach(kind => bcgEl(`bcg-${kind}-btn`).addEventListener('click', () => {
   const g = bcgInit().g;
   if(g && g.mode === 'scorecard' && g.data && g.data.kind === kind) bcgStop('scorecard'); else bcgStart('scorecard', false, kind);
 }));
-bcgEl('bcg-card-hide').addEventListener('click', () => bcgStop('scorecard'));
 // the radio rows: each one is a shared choice
 const BCG_SEG_PREF = { 'bcg-xi-mode': 'xiMode', 'bcg-intro-dur': 'introDur', 'bcg-card-dur': 'cardDur', 'bcg-inn': 'innings' };
 Object.keys(BCG_SEG_PREF).forEach(id => {
@@ -10311,17 +10448,6 @@ bcgEl('bcg-dur-chips').addEventListener('keydown', (e) => {
   next.focus();
   next.click();
 });
-(function(){
-  const input = bcgEl('bcg-dur-custom');
-  const take = () => {
-    if(input.value === '') return;
-    const v = Math.round(+input.value);
-    if(v >= 1 && v <= 3600) bcgSetPref({ tossDur: v });
-    else { bcgSay('Type 1 to 3600 seconds — or pick Hold until hidden.', false); bcgRender(); }
-  };
-  input.addEventListener('change', take);
-  input.addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); input.blur(); } });
-})();
 bcgRender();
 
 

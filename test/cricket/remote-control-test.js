@@ -480,7 +480,7 @@ async function suite(file, opts){
   ok(T('the TOSS tile on the phone now reads the result'), tossTile() && /Shivaji Strikers won/.test(tossTile().textContent), tossTile() && tossTile().textContent);
   P.tap(tossTile());
   await until(() => !L.$('#bcg-toss-btn').classList.contains('on') && L.$('#bcg-toss-btn').classList.contains('on') || L.$('#bcg-toss-btn').classList.contains('on'), 4000);
-  ok(T('TOSS tile from the phone → the toss graphic goes on air (one tap)'), L.$('#bcg-toss-btn').classList.contains('on'), L.$('#bcg-msg').textContent + ' | ctx hidden: ' + L.$('#bcg-toss-ctx').hidden);
+  ok(T('TOSS tile from the phone → the toss graphic goes on air (one tap)'), L.$('#bcg-toss-btn').classList.contains('on'), L.$('#bcg-msg').textContent);
   await until(() => tossTile() && tossTile().classList.contains('on'), 4000);
   ok(T('…phone shows TOSS ON AIR'), tossTile() && tossTile().classList.contains('on'));
   const tossOff = [...P.$$('#oa-list .oa-row')].find(r => /TOSS/.test(r.textContent));

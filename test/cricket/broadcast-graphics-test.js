@@ -367,9 +367,9 @@ async function chain(){
       if(skip){ await until(() => btn(P3, 'bcg-xi-btn'), v => v.on); await P3.page.click('#bcg-xi-skip'); await until(ov, v => v.phase === 'team2'); }
       await sleep(wait);
       await until(() => btn(P3, 'bcg-xi-btn'), v => v.on);
-      await P3.page.click('#bcg-xi-stop');
+      await P3.page.click('#bcg-xi-btn');
       o = await until(ov, v => !v.on, 4000);
-      eq(`stop from Cricket Panel 3 ${label} → gone at once, both panels off air`, [o.on, o.scenes, await air(P1), await air(P3)], [false, 0, 'Off air', 'Off air']);
+      eq(`PLAYING XI tapped again in Cricket Panel 3 ${label} → gone at once, both panels off air`, [o.on, o.scenes, await air(P1), await air(P3)], [false, 0, 'Off air', 'Off air']);
     }
 
     // —— skip, then the overlay reloaded mid-graphic ——
@@ -388,45 +388,42 @@ async function chain(){
     });
     o = await until(ov, v => v.phase === 'team2' && v.team === 'Chennai Super Kings', 5000);
     eq('the overlay reloaded mid-graphic → team two, where the graphic is — never team one again', [o.phase, o.team, (await OV.page.evaluate(() => window.__seen)).includes('team1')], ['team2', 'Chennai Super Kings', false]);
-    await P1.page.click('#bcg-xi-stop');
+    await P1.page.click('#bcg-xi-btn');
     await until(ov, v => !v.on, 4000);
 
     // —— TOSS from Cricket Panel 3: Hold, a new time while it is up, the end by itself ——
-    await P3.page.click('#bcg-toss-btn');
     await P3.page.click('#bcg-dur-chips button[data-dur="hold"]');
     await until(() => P3.page.evaluate(() => document.querySelector('#bcg-dur-chips [aria-checked="true"]').dataset.dur), v => v === 'hold', 3000);
-    eq('the toss card: the recorded result, Hold picked', await P3.page.evaluate(() => [document.getElementById('bcg-toss-result').textContent, document.querySelector('#bcg-dur-chips [aria-checked="true"]').dataset.dur]),
-      ['Chennai Super Kings won the toss · elected to bowl first', 'hold']);
-    await P3.page.click('#bcg-toss-show');
+    eq('the TOSS tile: the recorded result, Hold picked under it', await P3.page.evaluate(() => [document.getElementById('bcg-toss-sub').textContent, document.querySelector('#bcg-dur-chips [aria-checked="true"]').dataset.dur]),
+      ['Chennai Super Kings won · bowl first', 'hold']);
+    await P3.page.click('#bcg-toss-btn');
     o = await until(ov, v => v.mode === 'toss');
     const tossText = await OV.page.evaluate(() => [document.querySelector('#bcg .toss-name').textContent, document.querySelector('#bcg .toss-dec').textContent, [...document.querySelectorAll('#bcg .toss-fix b')].map(b => b.textContent)]);
-    eq('SHOW TOSS (Cricket Panel 3) → the overlay: the recorded winner and choice, both teams', tossText, ['Chennai Super Kings', 'ELECTED TO BOWL FIRST', ['Mumbai Indians', 'Chennai Super Kings']]);
+    eq('TOSS tapped (Cricket Panel 3) → the overlay: the recorded winner and choice, both teams', tossText, ['Chennai Super Kings', 'ELECTED TO BOWL FIRST', ['Mumbai Indians', 'Chennai Super Kings']]);
     eq('…Cricket Panel shows it on air, held', [await air(P1), o.hold], ['On air · Toss', 'until-hidden']);
     await sleep(5000);
     eq('Hold: still up 5 s later — no hidden time limit', (await ov()).mode, 'toss');
     await until(() => btn(P1, 'bcg-toss-btn'), v => v.on);
-    await P1.page.click('#bcg-toss-btn');
     await P1.page.click('#bcg-dur-chips button[data-dur="5"]');
     o = await until(ov, v => v.hold === '5', 3000);
     eq('5 s picked in Cricket Panel while it is up → the overlay holds it 5 s from now', o.hold, '5');
-    const left = await until(() => P1.page.evaluate(() => document.getElementById('bcg-toss-status').textContent), t => /On air — [1-5] s left/.test(t), 2000);
-    ok('…the panel counts it down', /On air — [1-5] s left/.test(left), left);
+    const left = await until(() => P1.page.evaluate(() => document.getElementById('bcg-toss-sub').textContent), t => /On air · [1-5] s left · tap to hide/.test(t), 2000);
+    ok('…the tile counts it down', /On air · [1-5] s left · tap to hide/.test(left), left);
     o = await until(ov, v => !v.on, 8000);
     eq('…and it goes off air by itself, everywhere', [o.on, await air(P1), await air(P3)], [false, 'Off air', 'Off air']);
 
     // —— hide during its entrance ——
     await P1.page.click('#bcg-dur-chips button[data-dur="30"]');
-    await P1.page.click('#bcg-toss-show');
+    await P1.page.click('#bcg-toss-btn');
     await until(ov, v => v.mode === 'toss');
     await until(() => btn(P3, 'bcg-toss-btn'), v => v.on);
     await P3.page.click('#bcg-toss-btn');
-    await P3.page.click('#bcg-toss-hide');
     o = await until(ov, v => !v.on, 3000);
-    eq('HIDE TOSS (Cricket Panel 3) during its entrance → gone at once', [o.on, o.scenes], [false, 0]);
+    eq('TOSS tapped again (Cricket Panel 3) during its entrance → gone at once', [o.on, o.scenes], [false, 0]);
 
     // —— a graphic replacing another; the old timer cannot take the new one down ——
     await P1.page.click('#bcg-dur-chips button[data-dur="5"]');
-    await P1.page.click('#bcg-toss-show');
+    await P1.page.click('#bcg-toss-btn');
     await until(ov, v => v.mode === 'toss');
     await P3.page.click('#bcg-intro-btn');
     o = await until(ov, v => v.mode === 'matchIntro' && v.scenes === 1, 3000);
@@ -458,9 +455,9 @@ async function chain(){
     await until(ov, v => v.mode === 'matchIntro');
     await sleep(900);
     await until(() => btn(P3, 'bcg-intro-btn'), v => v.on);
-    await P3.page.click('#bcg-intro-stop');
+    await P3.page.click('#bcg-intro-btn');
     o = await until(ov, v => !v.on, 3000);
-    eq('STOP INTRO (Cricket Panel 3) in its opening → gone at once', [o.on, o.scenes], [false, 0]);
+    eq('MATCH INTRO tapped again (Cricket Panel 3) in its opening → gone at once', [o.on, o.scenes], [false, 0]);
 
     // —— PLAYING XI on HOLD: each team stays until NEXT TEAM / HIDE ——
     const xiMode = (P) => P.page.evaluate(() => document.querySelector('#bcg-xi-mode [aria-checked="true"]').dataset.v);
@@ -472,7 +469,7 @@ async function chain(){
     await sleep(12500);
     o = await ov();
     eq('12.5 s later: still team one — no 10 s timer behind HOLD', [o.phase, o.team], ['team1', 'Mumbai Indians']);
-    eq('…NEXT TEAM and HIDE PLAYING XI offered in both panels', await Promise.all([P1, P3].map(P => P.page.evaluate(() => [!document.getElementById('bcg-xi-skip').hidden, !document.getElementById('bcg-xi-stop').hidden]))), [[true, true], [true, true]]);
+    eq('…Next team offered, the PLAYING XI tile on air (tap to hide) in both panels', await Promise.all([P1, P3].map(P => P.page.evaluate(() => [!document.getElementById('bcg-xi-skip').hidden, document.getElementById('bcg-xi-btn').classList.contains('on'), /tap to hide/.test(document.getElementById('bcg-xi-sub').textContent)]))), [[true, true, true], [true, true, true]]);
     await P3.page.click('#bcg-xi-skip');
     o = await until(ov, v => v.phase === 'team2' && v.team === 'Chennai Super Kings');
     eq('NEXT TEAM (Cricket Panel 3) → team two, the graphic still up', [o.on, o.phase, o.hold], [true, 'team2', 'hold']);
@@ -489,9 +486,9 @@ async function chain(){
     await P3.page.click('#bcg-xi-btn');
     await until(ov, v => v.phase === 'team1');
     await until(() => btn(P1, 'bcg-xi-btn'), v => v.on);
-    await P1.page.click('#bcg-xi-stop');
+    await P1.page.click('#bcg-xi-btn');
     o = await until(ov, v => !v.on, 3000);
-    eq('HIDE PLAYING XI (Cricket Panel) while held → gone, nothing left', [o.on, o.scenes], [false, 0]);
+    eq('PLAYING XI tapped again (Cricket Panel) while held → gone, nothing left', [o.on, o.scenes], [false, 0]);
     await P1.page.click('#bcg-xi-mode button[data-v="auto"]');
     await until(() => xiMode(P3), v => v === 'auto', 3000);
 
@@ -557,9 +554,10 @@ async function chain(){
     await sleep(1500);
     eq('an over ends while the card is pinned → its automatic over-end card waits (the pinned card stays)',
       [await OV.page.evaluate(() => getComputedStyle(document.getElementById('over-summary-card')).display), (await card()) && (await card()).kind], ['none', 'bat']);
-    await P3.page.click('#bcg-card-hide');
+    await until(() => btn(P3, 'bcg-bat-btn'), v => v.on);
+    await P3.page.click('#bcg-bat-btn');
     o = await until(ov, v => !v.on, 4000);
-    eq('HIDE SCORECARD (Cricket Panel 3) → gone, both panels back to AUTO', [o.on, await P1.page.evaluate(() => document.getElementById('bcg-auto').textContent)], [false, 'Over-end cards: AUTO']);
+    eq('BAT SCORECARD tapped again (Cricket Panel 3) → gone, both panels back to AUTO', [o.on, await P1.page.evaluate(() => document.getElementById('bcg-auto').textContent)], [false, 'Over-end cards: AUTO']);
     await sleep(1500);
     await P1.page.evaluate(() => emitOverSummary(7, 9, 1, ['W', '4', '1', '1', '2', '1']));
     const shown = await until(() => OV.page.evaluate(() => document.getElementById('over-summary-card').style.display), v => v === 'flex', 3000);
@@ -617,9 +615,9 @@ async function chain(){
     await sleep(400);
     eq('no XI ticked for a side → the card says so, nothing goes on air', [await msg(P1), (await ov()).on],
       ['Chennai Super Kings has no Playing XI yet — add the players and tick "XI" in Team Squads below.', false]);
-    await P1.page.click('#bcg-toss-show');
+    await P1.page.click('#bcg-toss-btn');
     await sleep(400);
-    eq('no toss result recorded → the card says so, nothing goes on air', [await msg(P1), (await ov()).on, await P1.page.evaluate(() => document.getElementById('bcg-toss-result').textContent.trim().startsWith('⚠ No toss result recorded yet'))],
+    eq('no toss result recorded → the card says so, nothing goes on air', [await msg(P1), (await ov()).on, await P1.page.evaluate(() => document.getElementById('bcg-toss-sub').textContent.startsWith('No toss result yet'))],
       ['No toss result recorded yet — pick who won in the 🪙 Toss card.', false, true]);
 
     // —— an output that asks for reduced motion: the same graphics, fading instead of moving ——
