@@ -2475,6 +2475,181 @@
     #card-broadcast-graphics .bcg-btn:hover{ transform:none !important; }
   }
 </style>
+<style id="ui-liquid">
+  /* ⚙️ SETUP + 🎮 LIVE CONTROL — liquid glass, dark and light. Only how the
+     two columns look: every id, class and state the script uses is the
+     panel's own. Panel 3's scoring console (score, ball outcome)
+     keeps its own look. */
+  .layout > .col-setup, .layout > .col-live{
+    --lq-card:linear-gradient(165deg, rgba(31,40,64,.8), rgba(14,19,33,.9));
+    --lq-tile:rgba(255,255,255,.04); --lq-tile-top:rgba(255,255,255,.075); --lq-tile-h:rgba(255,255,255,.11);
+    --lq-field:rgba(3,7,16,.4); --lq-field-h:rgba(3,7,16,.55); --lq-inset:inset 0 1px 2px rgba(0,0,0,.28);
+    --lq-line:rgba(255,255,255,.085); --lq-line-h:rgba(255,255,255,.17); --lq-hi:rgba(255,255,255,.09);
+    --lq-shadow:0 26px 50px -32px rgba(0,0,0,.85); --lq-tile-shadow:0 10px 22px -16px rgba(0,0,0,.75);
+    --lq-thumb:linear-gradient(180deg,#ffa04a,#ff7a00); --lq-thumb-ink:#1b0e00; --lq-knob:#f8fafc;
+  }
+  .layout > .col-setup{ --lq-c:var(--col-setup); }
+  .layout > .col-live{ --lq-c:var(--col-live); }
+  html[data-theme="light"] .layout > .col-setup, html[data-theme="light"] .layout > .col-live{
+    --lq-card:linear-gradient(165deg, rgba(255,255,255,.98), rgba(245,248,252,.95));
+    --lq-tile:rgba(255,255,255,.82); --lq-tile-top:#ffffff; --lq-tile-h:#ffffff;
+    --lq-field:rgba(15,23,42,.035); --lq-field-h:#ffffff; --lq-inset:inset 0 1px 2px rgba(15,23,42,.06);
+    --lq-line:rgba(15,23,42,.1); --lq-line-h:rgba(15,23,42,.2); --lq-hi:rgba(255,255,255,.95);
+    --lq-shadow:0 1px 2px rgba(15,23,42,.05), 0 24px 46px -30px rgba(15,23,42,.32); --lq-tile-shadow:0 1px 2px rgba(15,23,42,.05), 0 8px 18px -12px rgba(15,23,42,.28);
+    --lq-thumb:linear-gradient(180deg,#ff9234,#e86a00); --lq-thumb-ink:#ffffff; --lq-knob:#ffffff;
+  }
+
+  /* the column headbands: a glossy pill in the column's colour */
+  :root .layout > :is(.col-setup, .col-live) > .col-label{
+    position:relative; overflow:hidden; padding:10px 14px; border-radius:14px; margin-bottom:12px; letter-spacing:.14em;
+    background:linear-gradient(135deg, color-mix(in srgb, var(--lq-c) 88%, #fff 12%), var(--lq-c) 55%, color-mix(in srgb, var(--lq-c) 80%, #000 20%));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset 0 -1px 0 rgba(0,0,0,.12), 0 14px 28px -16px color-mix(in srgb, var(--lq-c) 90%, transparent);
+  }
+  :root .layout > :is(.col-setup, .col-live) > .col-label::after{ content:''; position:absolute; inset:0 0 52% 0; background:linear-gradient(180deg, rgba(255,255,255,.22), transparent); pointer-events:none; }
+
+  /* every card: frosted glass, a soft rail in the column's colour */
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)){
+    position:relative; border-radius:20px; padding:16px 16px 14px;
+    border:1px solid var(--lq-line); border-left:1px solid var(--lq-line);
+    background:radial-gradient(110% 70% at 0% 0%, color-mix(in srgb, var(--lq-c) 12%, transparent), transparent 55%), var(--lq-card);
+    box-shadow:inset 0 1px 0 var(--lq-hi), var(--lq-shadow);
+  }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome))::before{
+    content:''; position:absolute; left:0; top:20px; bottom:20px; width:3px; border-radius:0 3px 3px 0; pointer-events:none;
+    background:linear-gradient(180deg, var(--lq-c), color-mix(in srgb, var(--lq-c) 35%, transparent)); opacity:.9;
+  }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) h2{ font-size:12.5px; font-weight:800; letter-spacing:.09em; }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) label{ font-weight:600; letter-spacing:.01em; }
+
+  /* fields */
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) :is(input[type=text], input[type=number], input[type=url], input[type=date], select, .pro-dd-trigger):not(.pc-name):not(.ms-hidden){
+    border-radius:12px; padding:9px 12px; background:var(--lq-field); border:1px solid var(--lq-line); color:var(--text); box-shadow:var(--lq-inset);
+  }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) :is(input[type=text], input[type=number], input[type=url], input[type=date], select, .pro-dd-trigger):not(.pc-name):not(.ms-hidden):hover{ border-color:var(--lq-line-h); }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) :is(input[type=text], input[type=number], input[type=url], input[type=date], select, .pro-dd-trigger):not(.pc-name):not(.ms-hidden):focus, :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) .pro-dd-trigger:focus-visible{
+    outline:none; background:var(--lq-field-h); border-color:color-mix(in srgb, var(--lq-c) 75%, transparent);
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--lq-c) 24%, transparent), var(--lq-inset);
+  }
+  :root .layout .ms-stream #stream-url{ padding-right:38px; }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) input[type=color]{ height:38px; padding:4px; border-radius:12px; background:var(--lq-field); border:1px solid var(--lq-line); box-shadow:var(--lq-inset); cursor:pointer; }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) input[type=color]::-webkit-color-swatch{ border:0; border-radius:8px; }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) input[type=color]::-moz-color-swatch{ border:0; border-radius:8px; }
+
+  /* plain buttons: glass pills; the main action of a card in orange */
+  :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button:not(.ms-fmt):not(.ms-link):not(.pc-swap):not(.tc-create-btn):not([data-bh]):not(.primary):not(.ms-start):not(.pro-dd-trigger){
+    border-radius:12px; color:var(--text); border:1px solid var(--lq-line);
+    background:linear-gradient(180deg, var(--lq-tile-top), var(--lq-tile)); box-shadow:inset 0 1px 0 var(--lq-hi), var(--lq-tile-shadow);
+  }
+  :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button:not(.ms-fmt):not(.ms-link):not(.pc-swap):not(.tc-create-btn):not([data-bh]):not(.primary):not(.ms-start):not(.pro-dd-trigger).ghost{ background:var(--lq-tile); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button:not(.ms-fmt):not(.ms-link):not(.pc-swap):not(.tc-create-btn):not([data-bh]):not(.primary):not(.ms-start):not(.pro-dd-trigger):not(:disabled):hover{ border-color:var(--lq-line-h); background:linear-gradient(180deg, var(--lq-tile-h), var(--lq-tile-top)); transform:translateY(-1px); }
+  :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button.primary, :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) .ms-start{
+    border-radius:12px; border:1px solid transparent; background:var(--lq-thumb); color:var(--lq-thumb-ink);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 10px 22px -10px rgba(255,122,0,.8);
+  }
+  :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button.primary:not(:disabled):hover, :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) .ms-start:not(:disabled):hover{ filter:brightness(1.06); transform:translateY(-1px); }
+
+  /* switches: an iOS-style toggle — a white knob that glides */
+  :root .layout > :is(.col-setup, .col-live) .switch{ width:44px; height:26px; flex:none; }
+  :root .layout > :is(.col-setup, .col-live) .switch .slider{ border-radius:99px; background:var(--lq-field); border:1px solid var(--lq-line-h); box-shadow:var(--lq-inset); }
+  :root .layout > :is(.col-setup, .col-live) .switch .slider:before{ width:20px; height:20px; left:2px; top:2px; background:var(--lq-knob); box-shadow:0 2px 6px rgba(0,0,0,.35), 0 0 0 .5px rgba(0,0,0,.08); }
+  :root .layout > :is(.col-setup, .col-live) .switch input:checked + .slider{ background:var(--lq-thumb); border-color:transparent; box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 6px 14px -6px rgba(255,122,0,.75); }
+  :root .layout > :is(.col-setup, .col-live) .switch input:checked + .slider:before{ transform:translateX(18px); background:#ffffff; }
+  :root .layout > :is(.col-setup, .col-live) .switch input:focus-visible + .slider{ outline:2px solid var(--accent); outline-offset:2px; }
+  /* a setting row: label on the left, the switch on the right, on a glass strip */
+  :root .layout .ms-toggle, :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) .toggle-row{
+    margin-top:8px; padding:9px 10px 9px 12px; border-radius:14px; gap:12px;
+    background:var(--lq-tile); border:1px solid var(--lq-line); box-shadow:inset 0 1px 0 var(--lq-hi);
+  }
+
+  /* ---- ⚙️ MATCH SETUP ---- */
+  :root .layout .ms-head{ margin-bottom:10px; }
+  :root .layout .ms-state{ display:inline-flex; align-items:center; gap:6px; padding:4px 11px 4px 9px; box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :root .layout .ms-state:not(:empty)::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb, currentColor 22%, transparent); }
+  :root .layout .ms-state:empty{ display:none; }
+  :root .layout .ms-sec{ position:relative; border-top:0; margin-top:12px; padding-top:14px; }
+  :root .layout .ms-sec:first-of-type{ margin-top:0; padding-top:4px; }
+  :root .layout .ms-sec:not(:first-of-type)::before{ content:''; position:absolute; left:0; right:0; top:0; height:1px; background:linear-gradient(90deg, transparent, var(--lq-line-h), transparent); }
+  :root .layout .ms-sec-t{ margin-bottom:8px; letter-spacing:.12em; }
+  :root .layout .ms-sec-t > b{
+    width:22px; height:22px; font-size:11px; color:#fff;
+    background:linear-gradient(145deg, color-mix(in srgb, var(--lq-c) 80%, #fff 20%), color-mix(in srgb, var(--lq-c) 85%, #000 15%));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.35), 0 6px 12px -6px color-mix(in srgb, var(--lq-c) 90%, transparent);
+  }
+  :root .layout .ms-kv{ padding:9px 10px 9px 12px; border-radius:14px; background:var(--lq-tile); border:1px solid var(--lq-line); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :root .layout .ms-link{ padding:4px 11px; border-radius:99px; background:linear-gradient(180deg, var(--lq-tile-h), var(--lq-tile-top)); border:1px solid var(--lq-line-h); color:var(--text); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :root .layout .ms-link:hover{ border-color:color-mix(in srgb, var(--lq-c) 70%, transparent); }
+  :root .layout .ms-day-tag{ border-radius:10px; background:var(--lq-tile); border-color:var(--lq-line); }
+  /* the format: one segmented control — a recessed track, the chosen one raised in orange */
+  :root .layout .ms-formats{ gap:4px; padding:4px; border-radius:16px; background:var(--lq-field); border:1px solid var(--lq-line); box-shadow:var(--lq-inset); }
+  :root .layout .ms-fmt{ padding:9px 2px; border-radius:12px; border:0; background:transparent; color:var(--text); box-shadow:none; }
+  :root .layout .ms-fmt:not(.on):hover{ background:var(--lq-tile-h); }
+  :root .layout .ms-fmt.on{ background:var(--lq-thumb); border:0; color:var(--lq-thumb-ink); box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 8px 18px -8px rgba(255,122,0,.85); }
+  :root .layout .ms-fmt.on small{ color:var(--lq-thumb-ink); opacity:.8; }
+  :root .layout .ms-rules span{ padding:3px 10px; background:var(--lq-tile); border-color:var(--lq-line); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  /* the two teams: glass cards lit in each team's colour, a VS orb between them */
+  :root .layout .ms-teams{ gap:0; }
+  :root .layout .ms-team{
+    padding:14px; border-radius:18px; border:1px solid color-mix(in srgb, var(--c-acc) 42%, var(--lq-line));
+    background:radial-gradient(120% 85% at 0% 0%, color-mix(in srgb, var(--c-acc) 32%, transparent), transparent 62%), linear-gradient(180deg, var(--lq-tile-top), var(--lq-tile));
+    box-shadow:inset 0 1px 0 var(--lq-hi), 0 18px 34px -24px color-mix(in srgb, var(--c-acc) 80%, transparent);
+  }
+  :root .layout .ms-team-top{ gap:12px; }
+  :root .layout .ms-logo{ width:48px !important; height:48px !important; border-radius:14px !important; box-shadow:0 0 0 1px rgba(255,255,255,.14), 0 10px 20px -10px rgba(0,0,0,.6); }
+  :root .layout .ms-team-name{ font-size:16px; letter-spacing:-.01em; }
+  :root .layout .ms-swatch{ width:14px; height:14px; box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 25%, transparent), 0 0 12px color-mix(in srgb, var(--c) 70%, transparent); }
+  :root .layout .ms-team-fields{ margin-top:8px; }
+  :root .layout .ms-vs{ position:relative; z-index:1; margin:-9px 0; }
+  :root .layout .ms-vs span{
+    width:36px; height:36px; padding:0; display:grid; place-items:center; border-radius:50%; font-size:10.5px; letter-spacing:.06em; color:#fff;
+    background:linear-gradient(135deg,#ff7a00,#ec4899); border:3px solid var(--panel); box-shadow:0 8px 18px -6px rgba(236,72,153,.65);
+  }
+  :root .layout .ms-pl{ background:var(--lq-tile); border-color:var(--lq-line); }
+  :root .layout .ms-rv{ border-radius:16px; padding:12px; background:var(--lq-tile); border:1px solid var(--lq-line); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :root .layout .ms-rv-logo{ width:40px; height:40px; border-radius:12px; box-shadow:0 8px 16px -8px rgba(0,0,0,.6); }
+  :root .layout .ms-start{ height:46px; border-radius:14px; font-size:14.5px; letter-spacing:.02em; }
+
+  /* ---- 🎮 LIVE CONTROL ---- */
+  :root .layout .pc-team{ padding:4px 12px; box-shadow:inset 0 1px 0 rgba(255,255,255,.25), 0 6px 14px -8px color-mix(in srgb, var(--tc) 80%, transparent); }
+  :root .layout .pc-openers{ border-radius:16px; }
+  :root .layout .pc-bat{
+    padding:12px 14px 10px 16px; border-radius:18px; border:1px solid var(--lq-line);
+    background:linear-gradient(180deg, var(--lq-tile-top), var(--lq-tile)); box-shadow:inset 0 1px 0 var(--lq-hi), var(--lq-tile-shadow);
+    transition:border-color .3s, box-shadow .3s, background .3s;
+  }
+  :root .layout .pc-bat::before{ top:14px; bottom:14px; width:3px; border-radius:0 3px 3px 0; }
+  :root .layout .pc-bat.on-strike{
+    border-color:color-mix(in srgb, var(--tc-acc) 55%, transparent);
+    background:radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--tc-acc) 30%, transparent), transparent 65%), linear-gradient(180deg, var(--lq-tile-top), var(--lq-tile));
+    box-shadow:inset 0 1px 0 var(--lq-hi), 0 18px 34px -20px color-mix(in srgb, var(--tc-acc) 85%, transparent);
+  }
+  :root .layout .pc-bat.on-strike .pc-role{ display:inline-flex; align-items:center; gap:6px; }
+  :root .layout .pc-stats .pc-runs{ font-size:26px; letter-spacing:-.02em; }
+  :root .layout input.pc-name{ border-radius:10px; }
+  :root .layout input.pc-name:focus{ background:var(--lq-field); box-shadow:0 0 0 3px color-mix(in srgb, var(--tc-acc) 25%, transparent); }
+  :root .layout .bh-pick button{ background:var(--lq-tile); border:1px solid var(--lq-line); color:var(--text-dim); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :root .layout .bh-pick button:not(.on):hover{ color:var(--text); border-color:var(--lq-line-h); }
+  :root .layout .bh-pick button.on{ background:linear-gradient(180deg,#34d399,#16a34a); border-color:transparent; color:#fff; box-shadow:inset 0 1px 0 rgba(255,255,255,.35), 0 6px 14px -6px rgba(22,163,74,.8); }
+  :root .layout .pc-swap{
+    margin:8px 0; padding:9px 12px; border-radius:14px; border:1px solid var(--lq-line); color:var(--text);
+    background:linear-gradient(180deg, var(--lq-tile-top), var(--lq-tile)); box-shadow:inset 0 1px 0 var(--lq-hi);
+  }
+  :root .layout .pc-swap:hover{ border-style:solid; border-color:rgba(251,191,36,.6); box-shadow:inset 0 1px 0 var(--lq-hi), 0 10px 22px -12px rgba(251,191,36,.7); }
+  :root .layout .pc-swap kbd{ border-color:var(--lq-line-h); background:var(--lq-field); }
+  :root .layout .pc-part{ border-radius:14px; padding:10px 14px; background:var(--lq-tile); border:1px solid var(--lq-line); box-shadow:inset 0 1px 0 var(--lq-hi); }
+  :root .layout > :is(.col-setup, .col-live) > .card:where(:not(#card-score, #card-ball-outcome)) .stat{ border-radius:14px; background:var(--lq-tile); border:1px solid var(--lq-line); box-shadow:inset 0 1px 0 var(--lq-hi); }
+
+  /* light: a softer team glow, white glass */
+  :root[data-theme="light"] .layout .ms-team{ background:radial-gradient(120% 85% at 0% 0%, color-mix(in srgb, var(--c-acc) 16%, transparent), transparent 62%), linear-gradient(180deg, #ffffff, rgba(255,255,255,.85)); }
+  :root[data-theme="light"] .layout .pc-bat.on-strike{ background:radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--tc-acc) 14%, transparent), transparent 65%), linear-gradient(180deg, #ffffff, rgba(255,255,255,.85)); }
+  :root[data-theme="light"] .layout .ms-logo, :root[data-theme="light"] .layout .ms-rv-logo{ box-shadow:0 0 0 1px rgba(15,23,42,.08), 0 8px 18px -10px rgba(15,23,42,.45); }
+  :root[data-theme="light"] .layout .ms-vs span{ border-color:#ffffff; }
+  :root[data-theme="light"] .layout .switch .slider:before{ box-shadow:0 2px 6px rgba(15,23,42,.25), 0 0 0 .5px rgba(15,23,42,.1); }
+
+  @media (prefers-reduced-motion: reduce){
+    :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button:not(.ms-fmt):not(.ms-link):not(.pc-swap):not(.tc-create-btn):not([data-bh]):not(.primary):not(.ms-start):not(.pro-dd-trigger):hover, :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) button.primary:hover, :is(#card-match-setup, #card-toss, #card-match-type, #card-theme, #card-new-batsman, #card-players, #card-bowler) .ms-start:hover{ transform:none !important; }
+  }
+</style>
 <!-- interaction layer: how things move, never how they look at rest (shared with the other panel, nothing else is) -->
 <link rel="stylesheet" href="/cricket-motion.css?v=2">
 </head>
